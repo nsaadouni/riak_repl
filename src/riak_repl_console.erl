@@ -38,6 +38,11 @@
          show_local_cluster_id/1,
          delete_block_provider_redirect/1
      ]).
+-export([
+    add_filtered_bucket/2,
+    remove_filtered_bucket/2,
+    reset_filtered_buckets/0
+]).
 
 add_listener(Params) ->
     lager:warning(?V2REPLDEP, []),
@@ -1047,3 +1052,20 @@ simple_parse(Str) ->
     {ok, AbsForm} = erl_parse:parse_exprs(Tokens),
     {value, Value, _Bs} = erl_eval:exprs(AbsForm, erl_eval:new_bindings()),
     Value.
+
+add_filtered_bucket(ClusterName, BucketName) ->
+    Ring = get_ring(),
+    riak_core_ring_manager:ring_trans(fun riak_repl_ring:add_filtered_bucket/1,
+        {Ring, {ClusterName, BucketName}}),
+    ok.
+
+remove_filtered_bucket(ClusterName, BucketName) ->
+    Ring = get_ring(),
+    riak_core_ring_manager:ring_trans(fun riak_repl_ring:remove_filtered_bucket/1,
+        {Ring, {ClusterName, BucketName}}),
+    ok.
+
+reset_filtered_buckets() ->
+    Ring = get_ring(),
+    riak_core_ring_manager:ring_trans(fun riak_repl_ring:reset_filtered_buckets/1, Ring),
+    ok.
