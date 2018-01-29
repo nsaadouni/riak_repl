@@ -299,7 +299,7 @@ cluster_mgr_read_cluster_targets_from_ring() ->
 
 cluster_mgr_write_filtered_bucket_config_to_ring(ClusterName, FilteredBucketConfig) ->
     lager:debug("Saving filtered bucket config to the ring: ~p -> ~p", [ClusterName, FilteredBucketConfig]),
-    riak_core_ring_manager:ring_trans(fun riak_repl_ring:set_filtered_bucket_config/2,
+    riak_core_ring_manager:ring_trans(fun riak_repl_ring:set_filtered_bucket_config/1,
         {ClusterName, FilteredBucketConfig}).
 
 cluster_mgr_read_filtered_bucket_config_from_ring() ->

@@ -447,6 +447,7 @@ del_list_trans(Item, ListName, Ring) ->
     end.
 
 %% Lookup the list name in the repl config, return empty list if not found
+-spec get_list(term(), ring()) -> term().
 get_list(ListName, Ring) ->
     RC = get_repl_config(ensure_config(Ring)),
     case dict:find(ListName, RC) of
@@ -505,6 +506,8 @@ get_nat_map(Ring) ->
 get_ensured_repl_config(Ring) ->
     get_repl_config(ensure_config(Ring)).
 
+% Wrapper to check whether the ring has changed after setting a new metadata item
+-spec check_metadata_has_changed(ring(), riak_repl_dict(), riak_repl_dict()) -> {ignore, {atom(), atom()}} | {new_ring, ring()}.
 check_metadata_has_changed(Ring, RC, RC2) ->
     case RC == RC2 of
         true ->
@@ -524,13 +527,13 @@ set_filtered_bucket_config({Ring, FilterBucketConfig}) ->
 
     check_metadata_has_changed(Ring, RC, RC2).
 
--spec get_filtered_bucket_config(Ring :: riak_core:ring()) -> [{atom(), [binary()]}].
+% Get the filtered bucket config from the ring
+-spec get_filtered_bucket_config(Ring :: ring()) -> [{string(), [binary()]}].
 get_filtered_bucket_config(Ring) ->
-    RC = get_ensured_repl_config(Ring),
-    get_list(filteredbuckets, RC).
+    get_list(filteredbuckets, Ring).
 
-%% get the list of buckets to replicate to the cluster 'ClusterName'
--spec get_filtered_bucket_config_for_cluster(riak_core:ring(), atom()) -> {atom(), [binary()]}.
+%% Get the list of buckets to replicate to the cluster 'ClusterName' from the ring config
+-spec get_filtered_bucket_config_for_cluster(ring(), string()) -> {atom(), [binary()]}.
 get_filtered_bucket_config_for_cluster(Ring, ClusterName) ->
     case get_filtered_bucket_config(Ring) of
         [] ->
@@ -544,6 +547,7 @@ get_filtered_bucket_config_for_cluster(Ring, ClusterName) ->
             end
     end.
 
+% Replace filtered bucket config for the given cluster in the ring config
 replace_filtered_config_for_cluster(Ring, ClusterName, NewConfig) ->
     RC = get_ensured_repl_config(Ring),
 
@@ -561,6 +565,7 @@ replace_filtered_config_for_cluster(Ring, ClusterName, NewConfig) ->
           end,
     check_metadata_has_changed(Ring, RC, RC2).
 
+% Add a bucket to our list of filtered buckets in the Ring config
 add_filtered_bucket({Ring, {ToClusterName, BucketName}}) ->
     ClusterName = riak_core_connection:symbolic_clustername(),
     do_add_filtered_bucket(Ring, ClusterName, ToClusterName, BucketName).
@@ -583,6 +588,7 @@ do_add_filtered_bucket(Ring, _FromClusterName, ToClusterName, BucketName) ->
     RC2 = replace_filtered_config_for_cluster(Ring, ToClusterName, NewBuckets),
     check_metadata_has_changed(Ring, RC, RC2).
 
+% Remove a bucket from the list of filtered buckets
 remove_filtered_bucket({Ring, {Cluster, Bucket}}) ->
     RC = get_ensured_repl_config(Ring),
 
@@ -592,6 +598,7 @@ remove_filtered_bucket({Ring, {Cluster, Bucket}}) ->
     RC2 = replace_filtered_config_for_cluster(Ring, Cluster, Config2),
     check_metadata_has_changed(Ring, RC, RC2).
 
+% Reset the list of filtered buckets which is stored on the ring - this erases all config!
 reset_filtered_buckets(Ring) ->
     RC = get_ensured_repl_config(Ring),
     % We can just delete the entire set of data as our add function deals with the key missing
@@ -607,6 +614,7 @@ set_bucket_filtering_state({Ring, Status}) when is_boolean(Status) ->
     RC2 = dict:store(bucket_filtering_enabled, Status, RC),
     check_metadata_has_changed(Ring, RC, RC2).
 
+%% Return a boolean which tells you if bucket filtering is enabled or not
 get_bucket_filtering_state(Ring) ->
     RC = get_ensured_repl_config(Ring),
     case dict:find(bucket_filtering_enabled, RC) of

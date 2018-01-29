@@ -108,6 +108,8 @@
 
 -export([ensure_valid_ip_addresses/1]).
 
+-export([get_bucket_filtering_enabled/0]).
+
 %%%===================================================================
 %%% API
 %%%===================================================================
@@ -328,7 +330,7 @@ handle_call(get_bucket_filtering_enabled, _From, State) ->
 handle_call({get_bucket_filtering_enabled, ClusterName}, _From, State) ->
     case State#state.is_leader of
         true ->
-            ok;
+            {reply, State#state.bucket_filtering_enabled, State};
         false ->
             NoLeaderResult = {ok, []},
             proxy_call({get_bucket_filtering_enabled, ClusterName},

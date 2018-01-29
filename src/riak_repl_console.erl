@@ -43,7 +43,8 @@
     remove_filtered_bucket/2,
     reset_filtered_buckets/0,
     enable_bucket_filtering/0,
-    disable_bucket_filtering/0
+    disable_bucket_filtering/0,
+    get_bucket_filtering_config/0
 ]).
 
 add_listener(Params) ->
@@ -1080,3 +1081,32 @@ disable_bucket_filtering() ->
     Ring = get_ring(),
     riak_core_ring_manager:ring_trans(fun riak_repl_ring:set_bucket_filtering_state/1, {Ring, false}),
     ok.
+
+%% TODO: we need to call this with a straight RPC and build up some useful info to return to the shell
+get_bucket_filtering_config() ->
+    Ring = get_ring(),
+    Header = ["Filtered bucket config", $\n, $\n],
+    IsEnabled = riak_repl_ring:get_bucket_filtering_state(Ring),
+    BucketConfig = riak_repl_ring:get_filtered_bucket_config(Ring),
+    build_bucket_config_info(BucketConfig),
+    FinalOutput = [
+        Header,
+        ["Enabled: ", IsEnabled, $\n, $\n],
+        "List of buckets for replication per cluster:", $\n,
+        "-----------------------------------------------", $\n,
+        BucketConfig
+    ],
+    iolist_to_binary(FinalOutput).
+
+build_bucket_config_info(BucketConfig) ->
+    build_bucket_config_info(BucketConfig, []).
+
+build_bucket_config_info([], Acc) ->
+    Acc;
+build_bucket_config_info([{ClusterName, Buckets} | Rest], Acc) ->
+    Info = [
+        ClusterName, $\n,
+        "=========================", $\n,
+        [ [Bucket, $\n] || Bucket <- Buckets], $\n
+    ],
+    build_bucket_config_info(Rest, Acc ++ Info).
