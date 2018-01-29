@@ -46,7 +46,9 @@
          get_filtered_bucket_config_for_cluster/2,
          add_filtered_bucket/1,
          remove_filtered_bucket/1,
-         reset_filtered_buckets/1
+         reset_filtered_buckets/1,
+         set_bucket_filtering_state/1,
+         get_bucket_filtering_state/1
          ]).
 
 -ifdef(TEST).
@@ -402,7 +404,8 @@ initial_config() ->
        {listeners, []},
        {sites, []},
        {realtime_cascades, always},
-       {version, ?REPL_VERSION}]
+       {version, ?REPL_VERSION},
+       {bucket_filtering_enabled, false}]
       ).
 
 add_list_trans(Item, ListName, Ring) ->
@@ -500,7 +503,7 @@ get_nat_map(Ring) ->
     get_list(nat_map, Ring).
 
 get_ensured_repl_config(Ring) ->
-    (compose(fun get_repl_config/1, fun ensure_config/1))(Ring).
+    get_repl_config(ensure_config(Ring)).
 
 check_metadata_has_changed(Ring, RC, RC2) ->
     case RC == RC2 of
@@ -524,12 +527,7 @@ set_filtered_bucket_config({Ring, FilterBucketConfig}) ->
 -spec get_filtered_bucket_config(Ring :: riak_core:ring()) -> [{atom(), [binary()]}].
 get_filtered_bucket_config(Ring) ->
     RC = get_ensured_repl_config(Ring),
-    case dict:find(filteredbuckets, RC) of
-        {ok, FilteredBucketList} ->
-            FilteredBucketList;
-        error ->
-            []
-    end.
+    get_list(filteredbuckets, RC).
 
 %% get the list of buckets to replicate to the cluster 'ClusterName'
 -spec get_filtered_bucket_config_for_cluster(riak_core:ring(), atom()) -> {atom(), [binary()]}.
@@ -547,8 +545,6 @@ get_filtered_bucket_config_for_cluster(Ring, ClusterName) ->
     end.
 
 replace_filtered_config_for_cluster(Ring, ClusterName, NewConfig) ->
-    % Could have used get_list, but it does the same call of get_repl_config(ensure_config)
-    % so we can avoid calling it twice and do the dict find ourselves
     RC = get_ensured_repl_config(Ring),
 
     RC2 = case dict:find(filteredbuckets, RC) of
@@ -603,6 +599,20 @@ reset_filtered_buckets(Ring) ->
 
     check_metadata_has_changed(Ring, RC, RC2).
 
+% We can enable / disable filtered replication on our side via the ring
+% TODO: how do we ensure both sides have filtered replication turned on? If only one side has it turned on we will
+% have issues doing key diffs between source & sink sides
+set_bucket_filtering_state({Ring, Status}) when is_boolean(Status) ->
+    RC = get_ensured_repl_config(Ring),
+    RC2 = dict:store(bucket_filtering_enabled, Status, RC),
+    check_metadata_has_changed(Ring, RC, RC2).
+
+get_bucket_filtering_state(Ring) ->
+    RC = get_ensured_repl_config(Ring),
+    case dict:find(bucket_filtering_enabled, RC) of
+        {ok, V} -> V;
+        error -> {error, bucket_filtering_flag_not_set}
+    end.
 %% unit tests
 
 -ifdef(TEST).
@@ -614,6 +624,18 @@ ensure_config_test() ->
     Ring = ensure_config(mock_ring()),
     ?assertNot(undefined =:= riak_core_ring:get_meta(?MODULE, Ring)),
     Ring.
+
+bucket_filtering_enable_test() ->
+    Ring = ensure_config_test(),
+    {new_ring, Ring2} = set_bucket_filtering_state({Ring, true}),
+    ?assertEqual(true, get_bucket_filtering_state(Ring2)),
+    Ring2.
+
+bucket_filtering_can_disable_test() ->
+    Ring = bucket_filtering_enable_test(),
+    {new_ring, Ring2} = set_bucket_filtering_state({Ring, false}),
+    ?assertEqual(false, get_bucket_filtering_state(Ring2)),
+    Ring2.
 
 add_get_site_test() ->
     Ring0 = ensure_config_test(),

@@ -41,7 +41,9 @@
 -export([
     add_filtered_bucket/2,
     remove_filtered_bucket/2,
-    reset_filtered_buckets/0
+    reset_filtered_buckets/0,
+    enable_bucket_filtering/0,
+    disable_bucket_filtering/0
 ]).
 
 add_listener(Params) ->
@@ -1068,4 +1070,13 @@ remove_filtered_bucket(ClusterName, BucketName) ->
 reset_filtered_buckets() ->
     Ring = get_ring(),
     riak_core_ring_manager:ring_trans(fun riak_repl_ring:reset_filtered_buckets/1, Ring),
+    ok.
+
+enable_bucket_filtering() ->
+    Ring = get_ring(),
+    riak_core_ring_manager:ring_trans(fun riak_repl_ring:set_bucket_filtering_state/1, {Ring, true}).
+
+disable_bucket_filtering() ->
+    Ring = get_ring(),
+    riak_core_ring_manager:ring_trans(fun riak_repl_ring:set_bucket_filtering_state/1, {Ring, false}),
     ok.

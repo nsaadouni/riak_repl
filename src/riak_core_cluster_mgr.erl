@@ -66,15 +66,16 @@
 
 %% remotes := orddict, key = ip_addr(), value = unresolved | clustername()
 
--record(state, {is_leader = false :: boolean(),                % true when the buck stops here
+-record(state, {is_leader = false :: boolean(),                 % true when the buck stops here
                 leader_node = undefined :: undefined | node(),
                 gc_interval = infinity,
-                member_fun = fun(_Addr) -> [] end,             % return members of local cluster
-                all_member_fun = fun(_Addr) -> [] end,             % return members of local cluster
-                restore_targets_fun = fun() -> [] end,         % returns persisted cluster targets
-                save_members_fun = fun(_C,_M) -> ok end,       % persists remote cluster members
-                balancer_fun = fun(Addrs) -> Addrs end,        % registered balancer function
-                clusters = orddict:new() :: orddict:orddict()  % resolved clusters by name
+                member_fun = fun(_Addr) -> [] end,               % return members of local cluster
+                all_member_fun = fun(_Addr) -> [] end,           % return members of local cluster
+                restore_targets_fun = fun() -> [] end,           % returns persisted cluster targets
+                save_members_fun = fun(_C,_M) -> ok end,         % persists remote cluster members
+                balancer_fun = fun(Addrs) -> Addrs end,          % registered balancer function
+                clusters = orddict:new() :: orddict:orddict(),   % resolved clusters by name
+                bucket_filtering_enabled = false
                }).
 
 -export([start_link/0,
@@ -198,6 +199,8 @@ stop() ->
 set_gc_interval(Interval) ->
     gen_server:cast(?SERVER, {set_gc_interval, Interval}).
 
+get_bucket_filtering_enabled() ->
+    gen_server:call(?SERVER, get_bucket_filtering_enabled, infinity).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -315,6 +318,20 @@ handle_call({get_known_ipaddrs_of_cluster, {name, ClusterName}}, _From, State) -
         false ->
             NoLeaderResult = {ok, []},
             proxy_call({get_known_ipaddrs_of_cluster, {name, ClusterName}},
+                       NoLeaderResult,
+                       State)
+    end;
+
+handle_call(get_bucket_filtering_enabled, _From, State) ->
+    {reply, State#state.bucket_filtering_enabled, State};
+
+handle_call({get_bucket_filtering_enabled, ClusterName}, _From, State) ->
+    case State#state.is_leader of
+        true ->
+            ok;
+        false ->
+            NoLeaderResult = {ok, []},
+            proxy_call({get_bucket_filtering_enabled, ClusterName},
                        NoLeaderResult,
                        State)
     end.
