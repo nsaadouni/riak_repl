@@ -193,6 +193,26 @@ rt_update_events(Ring) ->
     end,
     application:set_env(riak_repl, realtime_cascades, RTCascades),
 
+    BucketFilteringEnabled = case dict:find(bucket_filtering_enabled, RC) of
+                                 error ->
+                                    false;
+                                 {ok, V} when is_boolean(V) ->
+                                     V;
+                                 _ ->
+                                     false
+                             end,
+
+    application:set_env(riak_repl, bucket_filtering_enabled, BucketFilteringEnabled),
+
+    FilteringConfig = case dict:find(filteredbuckets, RC) of
+                          error ->
+                              [];
+                          {ok, Config} ->
+                              [{ClusterName, sets:from_list(Buckets)} || {ClusterName, Buckets} <- Config ]
+                      end,
+
+    application:set_env(riak_repl, filtered_buckets, FilteringConfig),
+
     %% always 'install' the hook, the postcommit hooks will be toggled by
     %% the rtenabled environment variable
     riak_repl:install_hook().

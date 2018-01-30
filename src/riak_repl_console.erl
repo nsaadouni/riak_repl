@@ -1082,31 +1082,15 @@ disable_bucket_filtering() ->
     riak_core_ring_manager:ring_trans(fun riak_repl_ring:set_bucket_filtering_state/1, {Ring, false}),
     ok.
 
-%% TODO: we need to call this with a straight RPC and build up some useful info to return to the shell
 get_bucket_filtering_config() ->
     Ring = get_ring(),
-    Header = ["Filtered bucket config", $\n, $\n],
-    IsEnabled = riak_repl_ring:get_bucket_filtering_state(Ring),
+    IsEnabled = atom_to_list(riak_repl_ring:get_bucket_filtering_state(Ring)),
     BucketConfig = riak_repl_ring:get_filtered_bucket_config(Ring),
-    build_bucket_config_info(BucketConfig),
-    FinalOutput = [
-        Header,
-        ["Enabled: ", IsEnabled, $\n, $\n],
-        "List of buckets for replication per cluster:", $\n,
-        "-----------------------------------------------", $\n,
-        BucketConfig
-    ],
-    iolist_to_binary(FinalOutput).
 
-build_bucket_config_info(BucketConfig) ->
-    build_bucket_config_info(BucketConfig, []).
-
-build_bucket_config_info([], Acc) ->
-    Acc;
-build_bucket_config_info([{ClusterName, Buckets} | Rest], Acc) ->
-    Info = [
-        ClusterName, $\n,
-        "=========================", $\n,
-        [ [Bucket, $\n] || Bucket <- Buckets], $\n
-    ],
-    build_bucket_config_info(Rest, Acc ++ Info).
+    io:format("Filtered bucket config~n~n"),
+    io:format("Enabled: ~s~n", [IsEnabled]),
+    Sep = string:copies("-", 20),
+    io:format("~-20s ~-20s~n", ["To Cluster", "Bucket"]),
+    io:format("~-20s ~-20s~n", [Sep, Sep]),
+    [ io:format("~-20s ~-20s~n", [ClusterName, Bucket]) || {ClusterName, Bucket} <- BucketConfig],
+    ok.

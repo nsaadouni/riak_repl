@@ -619,8 +619,9 @@ get_bucket_filtering_state(Ring) ->
     RC = get_ensured_repl_config(Ring),
     case dict:find(bucket_filtering_enabled, RC) of
         {ok, V} -> V;
-        error -> {error, bucket_filtering_flag_not_set}
+        error -> false
     end.
+
 %% unit tests
 
 -ifdef(TEST).

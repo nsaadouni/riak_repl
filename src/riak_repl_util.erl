@@ -62,7 +62,10 @@
          mode_12_enabled/1,
          mode_13_enabled/1,
          maybe_get_vnode_lock/1,
-         maybe_send/3
+         maybe_send/3,
+         bucket_filtering_enabled/0,
+         filtered_bucket_config/0,
+         filtered_bucket_config/1
      ]).
 
 -export([wire_version/1,
@@ -1053,6 +1056,22 @@ maybe_get_vnode_lock(SrcPartition) ->
             end;
         false ->
             ok
+    end.
+
+bucket_filtering_enabled() ->
+    app_helper:get_env(riak_repl, ?BUCKET_FILTERING_ENALBED, false).
+
+filtered_bucket_config() ->
+    app_helper:get_env(riak_repl, filtered_buckets, []).
+
+filtered_bucket_config(ClusterName) ->
+    case filtered_bucket_config() of
+        [] -> [];
+        Config ->
+            case lists:keyfind(ClusterName, 1, Config) of
+                {ClusterName, V} -> V;
+                _ -> []
+            end
     end.
 
 %% Some eunit tests

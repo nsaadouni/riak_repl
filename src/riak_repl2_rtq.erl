@@ -40,7 +40,9 @@
          all_queues_empty/0,
          shutdown/0,
          stop/0,
-         is_running/0]).
+         is_running/0,
+         update_filtered_bucket_state/0,
+         update_filtered_buckets_list/0]).
 % private api
 -export([report_drops/1]).
 
@@ -69,7 +71,9 @@
                 cs = [],
                 shutting_down=false,
                 qsize_bytes = 0,
-                word_size=erlang:system_info(wordsize)
+                word_size=erlang:system_info(wordsize),
+                filtered_buckets_enabled = false, % is bucket filtering enabled?
+                filtered_buckets = []             % buckets to filter if bucket filtering is enabled
                }).
 
 % Consumers
@@ -402,7 +406,14 @@ handle_call({push, NumItems, Bin, Meta}, _From, State) ->
     {reply, ok, push(NumItems, Bin, Meta, State2)};
 
 handle_call({ack_sync, Name, Seq}, _From, State) ->
-    {reply, ok, ack_seq(Name, Seq, State)}.
+    {reply, ok, ack_seq(Name, Seq, State)};
+
+handle_call({filtered_buckets, update_buckets}, _From, State) ->
+    Buckets = app_helper:get_env(riak_repl, filtered_buckets),
+    {reply, ok, State#state{filtered_buckets = Buckets}};
+handle_call({filtered_buckets, update_bucket_filtering_state}, _From, State) ->
+    BucketFilteredEnabling = app_helper:get_env(riak_repl, bucket_filtering_enabled),
+    {reply, ok, State#state{filtered_buckets_enabled = BucketFilteredEnabling}}.
 
 % ye previous cast. rtq_proxy may send us an old pattern.
 handle_cast({push, NumItems, Bin}, State) ->
@@ -737,6 +748,12 @@ trim_q_entries(QTab, MaxBytes, Cs, State, Entries, Objects) ->
                     {Cs2, NewState, Entries + 1, Objects + NumObjects}
             end
     end.
+
+update_filtered_buckets_list() ->
+    gen_server:call(?SERVER, {filtered_buckets, update_buckets}).
+
+update_filtered_bucket_state() ->
+    gen_server:call(?SERVER, {filtered_buckets, update_bucket_filtering_state}).
 
 -ifdef(TEST).
 qbytes(_QTab, #state{qsize_bytes = QSizeBytes}) ->

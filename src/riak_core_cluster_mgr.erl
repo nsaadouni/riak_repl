@@ -66,25 +66,22 @@
 
 %% remotes := orddict, key = ip_addr(), value = unresolved | clustername()
 
--record(state, {is_leader = false :: boolean(),                 % true when the buck stops here
+-record(state, {is_leader = false :: boolean(),                % true when the buck stops here
                 leader_node = undefined :: undefined | node(),
                 gc_interval = infinity,
-                member_fun = fun(_Addr) -> [] end,               % return members of local cluster
-                all_member_fun = fun(_Addr) -> [] end,           % return members of local cluster
-                restore_targets_fun = fun() -> [] end,           % returns persisted cluster targets
-                save_members_fun = fun(_C,_M) -> ok end,         % persists remote cluster members
-                balancer_fun = fun(Addrs) -> Addrs end,          % registered balancer function
-                clusters = orddict:new() :: orddict:orddict(),   % resolved clusters by name
-                bucket_filtering_enabled = false
+                member_fun = fun(_Addr) -> [] end,             % return members of local cluster
+                restore_targets_fun = fun() -> [] end,         % returns persisted cluster targets
+                save_members_fun = fun(_C,_M) -> ok end,       % persists remote cluster members
+                balancer_fun = fun(Addrs) -> Addrs end,        % registered balancer function
+                clusters = orddict:new() :: orddict:orddict()  % resolved clusters by name
                }).
 
 -export([start_link/0,
-         start_link/4,
+         start_link/3,
          set_leader/2,
          get_leader/0,
          get_is_leader/0,
          register_member_fun/1,
-         register_all_member_fun/1,
          register_restore_cluster_targets_fun/1,
          register_save_cluster_members_fun/1,
          add_remote_cluster/1, remove_remote_cluster/1,
@@ -93,8 +90,7 @@
          get_ipaddrs_of_cluster/1,
          set_gc_interval/1,
          stop/0,
-         connect_to_clusters/0,
-         shuffle_remote_ipaddrs/1
+         connect_to_clusters/0
          ]).
 
 %% gen_server callbacks
@@ -102,13 +98,11 @@
          terminate/2, code_change/3]).
 
 %% internal functions
--export([%ctrlService/5, ctrlServiceProcess/5,
+-export([ctrlService/5, ctrlServiceProcess/5,
          round_robin_balancer/1, cluster_mgr_sites_fun/0,
-         get_my_members/1, get_all_members/1]).
+         get_my_members/1]).
 
 -export([ensure_valid_ip_addresses/1]).
-
--export([get_bucket_filtering_enabled/0]).
 
 %%%===================================================================
 %%% API
@@ -117,8 +111,8 @@
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
-start_link(DefaultLocator, DefaultAllLocator, DefaultSave, DefaultRestore) ->
-    Args = [DefaultLocator, DefaultAllLocator, DefaultSave, DefaultRestore],
+start_link(DefaultLocator, DefaultSave, DefaultRestore) ->
+    Args = [DefaultLocator, DefaultSave, DefaultRestore],
     Options = [],
     gen_server:start_link({local, ?SERVER}, ?MODULE, Args, Options).
 
@@ -144,12 +138,6 @@ get_is_leader() ->
 -spec register_member_fun(MemberFun :: fun((ip_addr()) -> [{string(),pos_integer()}])) -> 'ok'.
 register_member_fun(MemberFun) ->
     gen_server:cast(?SERVER, {register_member_fun, MemberFun}).
-
-%% @doc Register a function that will get called to get out local riak node
-%% member's IP addrs. MemberFun(ip_addr()) -> [{node(),{IP,Port}}] were IP is a string
--spec register_all_member_fun(MemberFun :: fun((ip_addr()) -> [{atom(),{string(),pos_integer()}}])) -> 'ok'.
-register_all_member_fun(MemberFun) ->
-    gen_server:cast(?SERVER, {register_all_member_fun, MemberFun}).
 
 register_restore_cluster_targets_fun(ReadClusterFun) ->
     gen_server:cast(?SERVER, {register_restore_cluster_targets_fun, ReadClusterFun}).
@@ -180,17 +168,9 @@ get_connections() ->
 get_my_members(MyAddr) ->
     gen_server:call(?SERVER, {get_my_members, MyAddr}, infinity).
 
-get_all_members(MyAddr) ->
-    gen_server:call(?SERVER, {get_all_members, MyAddr}, infinity).
-
 %% @doc Return a list of the known IP addresses of all nodes in the remote cluster.
 get_ipaddrs_of_cluster(ClusterName) ->
-    case gen_server:call(?SERVER, {get_known_ipaddrs_of_cluster, {name,ClusterName}}, infinity) of
-        {ok, Reply} ->
-            shuffle_remote_ipaddrs(Reply);
-        Reply ->
-            Reply
-    end.
+        gen_server:call(?SERVER, {get_known_ipaddrs_of_cluster, {name,ClusterName}}, infinity).
 
 %% @doc stops the local server.
 -spec stop() -> 'ok'.
@@ -201,8 +181,6 @@ stop() ->
 set_gc_interval(Interval) ->
     gen_server:cast(?SERVER, {set_gc_interval, Interval}).
 
-get_bucket_filtering_enabled() ->
-    gen_server:call(?SERVER, get_bucket_filtering_enabled, infinity).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -212,9 +190,8 @@ init(Defaults) ->
     %% start our cluster_mgr service if not already started.
     case riak_core_service_mgr:is_registered(?CLUSTER_PROTO_ID) of
         false ->
-            ServiceProto = {?CLUSTER_PROTO_ID, [{1,1}, {1,0}]},
-            %ServiceSpec = {ServiceProto, {?CTRL_OPTIONS, ?MODULE, ctrlService, []}},
-            ServiceSpec = {ServiceProto, {?CTRL_OPTIONS, riak_core_cluster_serv, start_link, []}},
+            ServiceProto = {?CLUSTER_PROTO_ID, [{1,0}]},
+            ServiceSpec = {ServiceProto, {?CTRL_OPTIONS, ?MODULE, ctrlService, []}},
             riak_core_service_mgr:sync_register_service(ServiceSpec, {round_robin,?MAX_CONS});
         true ->
             ok
@@ -248,18 +225,7 @@ handle_call(get_is_leader, _From, State) ->
 handle_call({get_my_members, MyAddr}, _From, State) ->
     %% This doesn't need to call the leader.
     MemberFun = State#state.member_fun,
-    MyMembers = [{string_of_ip(IP),Port} || {IP,Port} <- MemberFun(MyAddr), is_integer(Port)],
-    {reply, MyMembers, State};
-
-handle_call({get_all_members, MyAddr}, _From, State) ->
-    %% This doesn't need to call the leader.
-    AllMemberFun = State#state.all_member_fun,
-    MyMembers = lists:map(fun({Node,{IP,Port}}) when is_integer(Port) ->
-                                  {Node,{string_of_ip(IP),Port}};
-                             ({Node,_}) ->
-                                  {Node, unreachable}
-                          end,
-                          AllMemberFun(MyAddr)),
+    MyMembers = [{string_of_ip(IP),Port} || {IP,Port} <- MemberFun(MyAddr)],
     {reply, MyMembers, State};
 
 handle_call(leader_node, _From, State) ->
@@ -322,20 +288,6 @@ handle_call({get_known_ipaddrs_of_cluster, {name, ClusterName}}, _From, State) -
             proxy_call({get_known_ipaddrs_of_cluster, {name, ClusterName}},
                        NoLeaderResult,
                        State)
-    end;
-
-handle_call(get_bucket_filtering_enabled, _From, State) ->
-    {reply, State#state.bucket_filtering_enabled, State};
-
-handle_call({get_bucket_filtering_enabled, ClusterName}, _From, State) ->
-    case State#state.is_leader of
-        true ->
-            {reply, State#state.bucket_filtering_enabled, State};
-        false ->
-            NoLeaderResult = {ok, []},
-            proxy_call({get_bucket_filtering_enabled, ClusterName},
-                       NoLeaderResult,
-                       State)
     end.
 
 handle_cast({set_leader_node, LeaderNode}, State) ->
@@ -355,9 +307,6 @@ handle_cast({set_gc_interval, Interval}, State) ->
 
 handle_cast({register_member_fun, Fun}, State) ->
     {noreply, State#state{member_fun=Fun}};
-
-handle_cast({register_all_member_fun, Fun}, State) ->
-    {noreply, State#state{all_member_fun=Fun}};
 
 handle_cast({register_save_cluster_members_fun, Fun}, State) ->
     {noreply, State#state{save_members_fun=Fun}};
@@ -397,6 +346,9 @@ handle_cast({remove_remote_cluster, Cluster}, State) ->
     {noreply, State2};
 
 %% The client connection recived (or polled for) an update from the remote cluster.
+%% Note that here, the Members are sorted in least connected order. Preserve that.
+%% TODO: we really want to keep all nodes we have every seen, except remove nodes
+%% that explicitly leave the cluster or show up in other clusters.
 handle_cast({cluster_updated, "undefined", NewName, Members, Addr,
              {cluster_by_addr, _CAddr}=Remote}, State) ->
     %% replace connection by address with connection by clustername if that would be safe.
@@ -469,10 +421,9 @@ register_defaults(Defaults, State) ->
     case Defaults of
         [] ->
             State;
-        [MembersFun, AllMembersFun, SaveFun, RestoreFun] ->
+        [MembersFun, SaveFun, RestoreFun] ->
             lager:debug("Registering default cluster manager functions."),
             State#state{member_fun=MembersFun,
-                        all_member_fun=AllMembersFun,
                         save_members_fun=SaveFun,
                         restore_targets_fun=RestoreFun}
     end.
@@ -569,8 +520,8 @@ save_cluster(NewName, OldMembers, ReturnedMembers, State) ->
                                   [NewName, Members]);
                 _ ->
                     persist_members_to_ring(State, NewName, Members),
-                    lager:info("Cluster Manager: updated ~p with members: ~p OldMembers ~p",
-                               [NewName, Members, OldMembers])
+                    lager:info("Cluster Manager: updated ~p with members: ~p",
+                               [NewName, Members])
             end
     end,
     %% clear out these IPs from other clusters
@@ -762,6 +713,75 @@ cluster_mgr_sites_fun() ->
     Clusters = riak_repl_ring:get_clusters(Ring),
     [{?CLUSTER_NAME_LOCATOR_TYPE, Name} || {Name, _Addrs} <- Clusters].    
 
+%%-------------------------
+%% control channel services
+%%-------------------------
+
+ctrlService(_Socket, _Transport, {error, Reason}, _Args, _Props) ->
+    riak_repl_stats:server_connect_errors(),
+    lager:error("Failed to accept control channel connection: ~p", [Reason]);
+ctrlService(Socket, Transport, {ok, {cluster_mgr, MyVer, RemoteVer}}, _Args, Props) ->
+    {ok, ClientAddr} = Transport:peername(Socket),
+    RemoteClusterName = proplists:get_value(clustername, Props),
+    lager:debug("Cluster Manager: accepted connection from cluster at ~p named ~p",
+               [ClientAddr, RemoteClusterName]),
+    Pid = proc_lib:spawn_link(?MODULE,
+                              ctrlServiceProcess,
+                              [Socket, Transport, MyVer, RemoteVer, ClientAddr]),
+    Transport:controlling_process(Socket, Pid),
+    {ok, Pid}.
+
+read_ip_address(Socket, Transport, Remote) ->
+    case Transport:recv(Socket, 0, ?CONNECTION_SETUP_TIMEOUT) of
+        {ok, BinAddr} ->
+            MyAddr = binary_to_term(BinAddr),
+            {ok, MyAddr};
+        {error, closed} ->
+            {error, closed};
+        Error ->
+            lager:error("Cluster Manager: failed to receive ip addr from remote ~p: ~p",
+                        [Remote, Error]),
+            Error
+    end.
+
+%% process instance for handling control channel requests from remote clusters.
+ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr) ->
+    case Transport:recv(Socket, 0, ?CONNECTION_SETUP_TIMEOUT) of
+        {ok, ?CTRL_ASK_NAME} ->
+            %% remote wants my name
+            MyName = riak_core_connection:symbolic_clustername(),
+            ok = Transport:send(Socket, term_to_binary(MyName)),
+            ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr);
+        {ok, ?CTRL_ASK_MEMBERS} ->
+            %% remote wants list of member machines in my cluster
+            case read_ip_address(Socket, Transport, ClientAddr) of
+                {error, closed} ->
+                    {error, connection_closed};
+                {ok, MyAddr} ->
+                    BalancedMembers = gen_server:call(?SERVER, {get_my_members, MyAddr}, infinity),
+                    ok = Transport:send(Socket, term_to_binary(BalancedMembers)),
+                    ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr);
+                Error ->
+                    Error
+            end;
+        {error, timeout} ->
+            %% timeouts are OK, I think.
+            ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr);
+        {error, closed} ->
+            % nothing to do now but die quietly
+            {error, connection_closed};
+        {error, Reason} ->
+            lager:error("Cluster Manager: service ~p failed recv on control channel. Error = ~p",
+                        [self(), Reason]),
+            % nothing to do now but die
+            {error, Reason};
+        Other ->
+            lager:error("Cluster Manger: service ~p recv'd unknown message on cluster control channel: ~p",
+                        [self(), Other]),
+            % ignore and keep trying to be a nice service
+            ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr)
+    end.
+
 %% @doc If the current leader, connect to all clusters that have been
 %%      currently persisted in the ring.
 connect_to_persisted_clusters(State) ->
@@ -774,35 +794,4 @@ connect_to_persisted_clusters(State) ->
             connect_to_targets(ClusterTargets);
         _ ->
             ok
-    end.
-
-shuffle_with_seed(List, Seed={_,_,_}) ->
-    _ = random:seed(Seed),
-    [E || {E, _} <- lists:keysort(2, [{Elm, random:uniform()} || Elm <- List])];
-shuffle_with_seed(List, Seed) ->
-    <<_:10,S1:50,S2:50,S3:50>> = crypto:hash(sha, term_to_binary(Seed)),
-    shuffle_with_seed(List, {S1,S2,S3}).
-
-
-shuffle_remote_ipaddrs([]) ->
-  {ok, []};
-shuffle_remote_ipaddrs(RemoteUnsorted) ->
-    {ok, MyRing} = riak_core_ring_manager:get_my_ring(),
-    SortedNodes = lists:sort(riak_core_ring:all_members(MyRing)),
-    NodesTagged = lists:zip(lists:seq(1, length(SortedNodes)), SortedNodes),
-    case lists:keyfind(node(), 2, NodesTagged) of
-        {MyPos, _} ->
-            OurClusterName = riak_core_connection:symbolic_clustername(),
-            RemoteAddrs = shuffle_with_seed(lists:sort(RemoteUnsorted), [OurClusterName]),
-
-            %% MyPos is the position if *this* node in the sorted list of
-            %% all nodes in my ring.  Now choose the node at the corresponding
-            %% index in RemoteAddrs as out "buddy"
-            SplitPos = ((MyPos-1) rem length(RemoteAddrs)),
-            case lists:split(SplitPos,RemoteAddrs) of
-                {BeforeBuddy,[Buddy|AfterBuddy]} ->
-                    {ok, [Buddy | shuffle_with_seed(AfterBuddy ++ BeforeBuddy, node())]}
-            end;
-        false ->
-            {ok, shuffle_with_seed(lists:sort(RemoteUnsorted), node())}
     end.
