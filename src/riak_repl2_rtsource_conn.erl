@@ -149,7 +149,7 @@ connect_failed(_ClientProto, Reason, RtSourcePid) ->
 init([Remote]) ->
     %% Todo: check for bad remote name
     lager:debug("connecting to remote ~p", [Remote]),
-    case riak_core_connection_mgr:connect({rt_repl, Remote}, ?CLIENT_SPEC) of
+    case riak_core_connection_mgr:connect({rt_repl, Remote}, ?CLIENT_SPEC, multi_connection) of
         {ok, Ref} ->
             lager:debug("connection ref ~p", [Ref]),
             {ok, #state{remote = Remote, connection_ref = Ref}};
@@ -351,11 +351,15 @@ maybe_rebalance(State, delayed) ->
             State
     end.
 
+% This is not fixed as of now, this also will be pulled out and placed in the additional supverisor
+% riak_repl2_rtsource_remote_sup that I am going to create
 should_rebalance(#state{address=ConnectedAddr, remote=Remote}) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     Addrs = riak_repl_ring:get_clusterIpAddrs(Ring, Remote),
-    {ok, ShuffledAddrs} = riak_core_cluster_mgr:shuffle_remote_ipaddrs(Addrs),
+    {ok, ShuffledAddrs} = riak_core_cluster_mgr:get_my_remote_ip_list(Addrs),
     lager:debug("ShuffledAddrs: ~p, ConnectedAddr: ~p", [ShuffledAddrs, ConnectedAddr]),
+
+    % This case statement will now always return false due to shuffledAddrs having a different return type!
     case (ShuffledAddrs /= []) andalso same_ipaddr(ConnectedAddr, hd(ShuffledAddrs)) of
         true ->
             no; % we're already connected to the ideal buddy
@@ -490,6 +494,8 @@ schedule_heartbeat(State) ->
     lager:warning("Heartbeat is misconfigured and is not a valid integer."),
     State.
 
+% CC
+% This needs changed now, will do it when I work on re-balance connections
 same_ipaddr({IP,Port}, {IP,Port}) ->
     true;
 same_ipaddr({_IP1,_Port1}, {_IP2,_Port2}) ->

@@ -71,6 +71,7 @@
 %% TODO: add folsom window'd stats
 %% handle an EXIT from the helper process if it dies
 -record(ep, {addr,                                 %% endpoint {IP, Port}
+             primary :: boolean(),         %% is a primary connection
              nb_curr_connections = 0 :: counter(), %% number of current connections
              nb_success = 0 :: counter(),   %% total successfull connects on this ep
              nb_failures = 0 :: counter(),  %% total failed connects on this ep
@@ -188,7 +189,8 @@ apply_locator(Name, Strategy) ->
 %% is done here.
 %%
 connect(Target, ClientSpec, Strategy) ->
-    gen_server:call(?SERVER, {connect, Target, ClientSpec, Strategy}).
+    gen_server:call(?SERVER, {
+      , Target, ClientSpec, Strategy}).
 
 connect(Target, ClientSpec) ->
     gen_server:call(?SERVER, {connect, Target, ClientSpec, default}).
@@ -494,10 +496,10 @@ start_request(Req = #req{ref=Ref, target=Target, spec=ClientSpec, strategy=Strat
             lager:debug("Connection Manager located no endpoints for: ~p. Will retry.", [Target]),
             %% schedule a retry and exit
             schedule_retry(Interval, Ref, State);
-        {ok, EpAddrs } ->
-            lager:debug("Connection Manager located endpoints: ~p", [EpAddrs]),
-            AllEps = update_endpoints(EpAddrs, State#state.endpoints),
-            TryAddrs = filter_blacklisted_endpoints(EpAddrs, AllEps),
+        {ok, Addrs} ->
+            lager:debug("Connection Manager located primary endpoints: ~p", [Addrs]),
+            AllEps = update_endpoints(Addrs, State#state.endpoints),
+            TryAddrs = filter_blacklisted_endpoints(Addrs, AllEps),
             lager:debug("Connection Manager trying endpoints: ~p", [TryAddrs]),
             Pid = spawn_link(
                     fun() -> exit(try connection_helper(Ref, ClientSpec, Strategy, TryAddrs)
@@ -534,6 +536,8 @@ string_of_ip(IP) ->
 string_of_ipport({IP,Port}) ->
     string_of_ip(IP) ++ ":" ++ erlang:integer_to_list(Port).
 
+% -------------------------------------------------------------------------------------------------- %
+
 %% A spawned process that will walk down the list of endpoints and try them
 %% all until exhausting the list. This process is responsible for waiting for
 %% the backoff delay for each endpoint.
@@ -553,7 +557,19 @@ connection_helper(Ref, Protocol, Strategy, [Addr|Addrs]) ->
             lager:debug("Attempting riak_core_connection:sync_connect/2"),
             case riak_core_connection:sync_connect(Addr, Protocol) of
                 ok ->
-                    ok;
+                  % if the next address is also primary continue connecting
+                  case Addrs of
+                    [] ->
+                      ok;
+                    _ ->
+                      % This assumes that the dictionary is ordered such that all primaries are up top!
+                      case hd(Addrs)#ep.primary of
+                        true ->
+                          connection_helper(Ref, Protocol, Strategy, Addrs);
+                        _ ->
+                          ok
+                      end
+                  end;
                 {error, Reason} ->
                     %% notify connection manager this EP failed and try next one
                     gen_server:cast(?SERVER, {endpoint_failed, Addr, Reason, ProtocolId}),
@@ -565,6 +581,9 @@ connection_helper(Ref, Protocol, Strategy, [Addr|Addrs]) ->
                        [ProtocolId, string_of_ipport(Addr)]),
             {ok, cancelled}
     end.
+% -------------------------------------------------------------------------------------------------- %
+
+
 
 locate_endpoints({Type, Name}, Strategy, Locators) ->
     case orddict:find(Type, Locators) of
@@ -653,13 +672,19 @@ fail_request(Reason, #req{ref = Ref, spec = Spec},
     %% Remove the request from the pending list
     State#state{pending = lists:keydelete(Ref, #req.ref, Pending)}.
 
+% Note: this function will not re-order primary or secondary nodes if they are already present
+% in the dictionary!
 update_endpoints(Addrs, Endpoints) ->
     %% add addr to Endpoints if not already there
-    Fun = (fun(Addr, EPs) ->
+    Fun = (fun({Addr,P}, EPs) ->
                    case orddict:is_key(Addr, Endpoints) of
-                       true -> EPs;
+                       true ->
+                         % replace primary status if changed
+                         Old = orddict:fetch(Addr, Endpoints),
+                         EP = Old#ep{primary = P},
+                         orddict:store(Addr, EP, EPs);
                        false ->
-                           EP = #ep{addr=Addr},
+                           EP = #ep{addr=Addr, primary = P},
                            orddict:store(Addr, EP, EPs)
                    end
            end),
@@ -668,7 +693,7 @@ update_endpoints(Addrs, Endpoints) ->
 %% Return the addresses of non-blacklisted endpoints that are also
 %% members of the list EpAddrs.
 filter_blacklisted_endpoints(EpAddrs, AllEps) ->
-    PredicateFun = (fun(Addr) ->
+    PredicateFun = (fun({Addr, P}) ->
                             case orddict:find(Addr, AllEps) of
                                 {ok, EP} ->
                                     EP#ep.is_black_listed == false;

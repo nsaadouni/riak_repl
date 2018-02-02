@@ -90,10 +90,12 @@
          get_known_clusters/0,
          get_connections/0,
          get_ipaddrs_of_cluster/1,
+         get_ipaddrs_of_cluster_multifix/1,
          set_gc_interval/1,
          stop/0,
          connect_to_clusters/0,
-         shuffle_remote_ipaddrs/1
+         shuffle_remote_ipaddrs/1,
+         get_my_remote_ip_list/1
          ]).
 
 %% gen_server callbacks
@@ -188,6 +190,15 @@ get_ipaddrs_of_cluster(ClusterName) ->
         Reply ->
             Reply
     end.
+
+get_ipaddrs_of_cluster_multifix(ClusterName) ->
+  case gen_server:call(?SERVER, {get_known_ipaddrs_of_cluster, {name,ClusterName}}, infinity) of
+    {ok, Reply} ->
+      get_my_remote_ip_list(Reply);
+    Reply ->
+      Reply
+  end.
+
 
 %% @doc stops the local server.
 -spec stop() -> 'ok'.
@@ -787,3 +798,60 @@ shuffle_remote_ipaddrs(RemoteUnsorted) ->
         false ->
             {ok, shuffle_with_seed(lists:sort(RemoteUnsorted), node())}
     end.
+
+
+shuffle(List) ->
+  <<_:10,S1:50,S2:50,S3:50>> = crypto:strong_rand_bytes(20),
+  _ = random:seed({S1,S2,S3}),
+  [E || {E, _} <- lists:keysort(2, [{Elm, random:uniform()} || Elm <- List])].
+
+
+get_my_remote_ip_list([]) ->
+  {ok, []};
+get_my_remote_ip_list(RemoteUnsorted) ->
+
+  RemoteAddrs = lists:sort(RemoteUnsorted),
+
+  {ok, MyRing} = riak_core_ring_manager:get_my_ring(),
+  SourceSortedNodes = lists:sort(riak_core_ring:all_members(MyRing)),
+  SourceNodesTagged = lists:zip(lists:seq(1, length(SourceSortedNodes)), SourceSortedNodes),
+  case lists:keyfind(node(), 2, SourceNodesTagged) of
+    {MyPos, _MyNode} ->
+
+      NumberOfSinkNodes = length(RemoteUnsorted),
+      NumberOfSourceNodes = length(SourceSortedNodes),
+      Res = NumberOfSourceNodes - NumberOfSinkNodes,
+
+      if
+        Res >= 0 ->
+          % Res = 0
+          % Same number of source and sink nodes
+          % one to one connections
+          %-------------------------------------------------------------------------------------------------
+          % Res > 0
+          % More source nodes, than sink nodes
+          % Each source node has one connection out, some sink nodes will have multiple connections
+
+          SplitPos = ((MyPos-1) rem length(RemoteAddrs)),
+          case lists:split(SplitPos,RemoteAddrs) of
+            {BeforeBuddy,[Buddy|AfterBuddy]} ->
+              Primary = [{Buddy, true}],
+              Secondary = [{X, false} || X <- shuffle(AfterBuddy++BeforeBuddy)],
+              {ok, Primary++Secondary}
+
+          end;
+        Res < 0 ->
+          % Less source nodes, than sink nodes
+          % Some source nodes will have multiple connections to different sink nodes (this is to distribute the load on sink)
+
+          RemoteNodesTagged = lists:zip(lists:seq(0, length(RemoteAddrs)-1), RemoteAddrs),
+          Primary =   [ {X, true} || {Index,X} <- [ {Index,X} ||{Index, X} <- RemoteNodesTagged, Index rem NumberOfSourceNodes == MyPos-1]],
+          Secondary = [ {X, false} || {Index,X} <- [ {Index,X} ||{Index, X} <- RemoteNodesTagged, Index rem NumberOfSourceNodes /= MyPos-1]],
+          {ok, Primary ++ shuffle(Secondary)}
+      end;
+    false ->
+      % This node is not part of the cluster
+      % Therefore should not connect to the othe cluster as part of repl for this
+      {ok, []}
+  end.
+
