@@ -500,8 +500,6 @@ start_request(Req = #req{ref=Ref, target=Target, spec=ClientSpec, strategy=Strat
             AllEps = update_endpoints(Addrs, State#state.endpoints),
             TryAddrs = filter_blacklisted_endpoints(Addrs, AllEps),
 
-            io:format("Addresses send to connection helper:~n~p", [TryAddrs]),
-
             lager:debug("Connection Manager trying endpoints: ~p", [TryAddrs]),
             Pid = spawn_link(
                     fun() -> exit(try connection_helper(Ref, ClientSpec, Strategy, TryAddrs)
