@@ -189,8 +189,7 @@ apply_locator(Name, Strategy) ->
 %% is done here.
 %%
 connect(Target, ClientSpec, Strategy) ->
-    gen_server:call(?SERVER, {
-      , Target, ClientSpec, Strategy}).
+    gen_server:call(?SERVER, {connect, Target, ClientSpec, Strategy}).
 
 connect(Target, ClientSpec) ->
     gen_server:call(?SERVER, {connect, Target, ClientSpec, default}).
@@ -500,6 +499,9 @@ start_request(Req = #req{ref=Ref, target=Target, spec=ClientSpec, strategy=Strat
             lager:debug("Connection Manager located primary endpoints: ~p", [Addrs]),
             AllEps = update_endpoints(Addrs, State#state.endpoints),
             TryAddrs = filter_blacklisted_endpoints(Addrs, AllEps),
+
+            io:format("Addresses send to connection helper:~n~p", [TryAddrs]),
+
             lager:debug("Connection Manager trying endpoints: ~p", [TryAddrs]),
             Pid = spawn_link(
                     fun() -> exit(try connection_helper(Ref, ClientSpec, Strategy, TryAddrs)
@@ -563,7 +565,7 @@ connection_helper(Ref, Protocol, Strategy, [Addr|Addrs]) ->
                       ok;
                     _ ->
                       % This assumes that the dictionary is ordered such that all primaries are up top!
-                      case hd(Addrs)#ep.primary of
+                      case (hd(Addrs))#ep.primary of
                         true ->
                           connection_helper(Ref, Protocol, Strategy, Addrs);
                         _ ->
@@ -693,7 +695,7 @@ update_endpoints(Addrs, Endpoints) ->
 %% Return the addresses of non-blacklisted endpoints that are also
 %% members of the list EpAddrs.
 filter_blacklisted_endpoints(EpAddrs, AllEps) ->
-    PredicateFun = (fun({Addr, P}) ->
+    PredicateFun = (fun({Addr, _Primary}) ->
                             case orddict:find(Addr, AllEps) of
                                 {ok, EP} ->
                                     EP#ep.is_black_listed == false;

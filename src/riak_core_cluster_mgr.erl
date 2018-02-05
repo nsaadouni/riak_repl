@@ -845,8 +845,8 @@ get_my_remote_ip_list(RemoteUnsorted) ->
           % Some source nodes will have multiple connections to different sink nodes (this is to distribute the load on sink)
 
           RemoteNodesTagged = lists:zip(lists:seq(0, length(RemoteAddrs)-1), RemoteAddrs),
-          Primary =   [ {X, true} || {Index,X} <- [ {Index,X} ||{Index, X} <- RemoteNodesTagged, Index rem NumberOfSourceNodes == MyPos-1]],
-          Secondary = [ {X, false} || {Index,X} <- [ {Index,X} ||{Index, X} <- RemoteNodesTagged, Index rem NumberOfSourceNodes /= MyPos-1]],
+          Primary =   [ {X, true} || {_Index,X} <- [ {_Index,X}  || {_Index, X} <- RemoteNodesTagged, _Index rem NumberOfSourceNodes == MyPos-1]],
+          Secondary = [ {X, false} || {_Index,X} <- [ {_Index,X} || {_Index, X} <- RemoteNodesTagged, _Index rem NumberOfSourceNodes /= MyPos-1]],
           {ok, Primary ++ shuffle(Secondary)}
       end;
     false ->
