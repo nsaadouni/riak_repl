@@ -102,7 +102,7 @@ ensure_rt(WantEnabled0, WantStarted0) ->
     ToValidate = Started -- ToStop,
     _ = [case lists:keyfind(Remote, 1, Connections) of
              {_, PID} ->
-                 riak_repl2_rtsource_conn:maybe_rebalance_delayed(PID);
+                 riak_repl2_rtsource_conn_mgr:maybe_rebalance_delayed(PID);
              false ->
                  ok
          end || Remote <- ToValidate ],
