@@ -44,7 +44,7 @@
     reset_filtered_buckets/0,
     enable_bucket_filtering/0,
     disable_bucket_filtering/0,
-    get_bucket_filtering_config/0
+    print_bucket_filtering_config/0
 ]).
 
 add_listener(Params) ->
@@ -1082,15 +1082,21 @@ disable_bucket_filtering() ->
     riak_core_ring_manager:ring_trans(fun riak_repl_ring:set_bucket_filtering_state/1, {Ring, false}),
     ok.
 
-get_bucket_filtering_config() ->
+print_bucket_filtering_config() ->
     Ring = get_ring(),
     IsEnabled = atom_to_list(riak_repl_ring:get_bucket_filtering_state(Ring)),
     BucketConfig = riak_repl_ring:get_filtered_bucket_config(Ring),
 
     io:format("Filtered bucket config~n~n"),
-    io:format("Enabled: ~s~n", [IsEnabled]),
-    Sep = string:copies("-", 20),
-    io:format("~-20s ~-20s~n", ["To Cluster", "Bucket"]),
-    io:format("~-20s ~-20s~n", [Sep, Sep]),
-    [ io:format("~-20s ~-20s~n", [ClusterName, Bucket]) || {ClusterName, Bucket} <- BucketConfig],
+    case BucketConfig of
+        [] ->
+            io:format("Bucket filtering not configured~n");
+        _ ->
+            io:format("Filtered bucket config~n~n"),
+            io:format("Enabled: ~s~n", [IsEnabled]),
+            Sep = string:copies("-", 20),
+            io:format("~-20s ~-20s~n", ["To Cluster", "Bucket"]),
+            io:format("~-20s ~-20s~n", [Sep, Sep]),
+            [ io:format("~-20s ~-20s~n", [ClusterName, Bucket]) || {ClusterName, Bucket} <- BucketConfig]
+    end,
     ok.

@@ -1059,7 +1059,7 @@ maybe_get_vnode_lock(SrcPartition) ->
     end.
 
 bucket_filtering_enabled() ->
-    app_helper:get_env(riak_repl, ?BUCKET_FILTERING_ENALBED, false).
+    app_helper:get_env(riak_repl, bucket_filtering_enabled, false).
 
 filtered_bucket_config() ->
     app_helper:get_env(riak_repl, filtered_buckets, []).
