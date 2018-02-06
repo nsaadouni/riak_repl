@@ -37,5 +37,5 @@ init([]) ->
     {ok, {{one_for_one, 10, 10}, Children}}.
 
 make_remote(Remote) ->
-    {Remote, {riak_repl2_rtsource_conn_remote_sup, start_link, [Remote]},
-        permanent, ?SHUTDOWN, supervisor, [riak_repl2_rtsource_conn_remote_sup]}.
+    {Remote, {riak_repl2_rtsource_remote_conn_sup, start_link, [Remote]},
+        permanent, ?SHUTDOWN, supervisor, [riak_repl2_rtsource_remote_conn_sup]}.

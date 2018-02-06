@@ -302,7 +302,8 @@ cluster_mgr_read_cluster_targets_from_ring() ->
 register_cluster_name_locator() ->
     Locator = fun(ClusterName, _Policy) ->
                       Ring = get_ring(),
-                      Addrs = riak_repl_ring:get_clusterIpAddrs(Ring, ClusterName),
+                      OldAddrs = riak_repl_ring:get_clusterIpAddrs(Ring, ClusterName),
+                      Addrs = [ {X, false} || X <- OldAddrs],
                       lager:debug("located members for cluster ~p: ~p", [ClusterName, Addrs]),
                       {ok,Addrs}
               end,

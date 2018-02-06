@@ -417,11 +417,6 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Private
 %%%===================================================================
 
-identity_locator({IP,Port}, _Policy) ->
-    {ok, [{IP,Port}]};
-identity_locator([Ips], _Policy) ->
-    {ok, Ips}.
-
 %% close the pending connection and cancel the request
 disconnect_from_target(Target, State = #state{pending = Pending}) ->
     lager:debug("Disconnecting from: ~p", [Target]),
@@ -544,7 +539,7 @@ string_of_ipport({IP,Port}) ->
 connection_helper(Ref, _Protocol, _Strategy, []) ->
     %% exhausted the list of endpoints. let server start new helper process
     {error, endpoints_exhausted, Ref};
-connection_helper(Ref, Protocol, Strategy, [Addr|Addrs]) ->
+connection_helper(Ref, Protocol, Strategy, [{Addr, Primary}|Addrs]) ->
     {{ProtocolId, _Foo},_Bar} = Protocol,
     %% delay by the backoff_delay for this endpoint.
     {ok, BackoffDelay} = gen_server:call(?SERVER, {get_endpoint_backoff, Addr}),
@@ -555,7 +550,7 @@ connection_helper(Ref, Protocol, Strategy, [Addr|Addrs]) ->
         true ->
             lager:debug("Trying connection to: ~p at ~p", [ProtocolId, string_of_ipport(Addr)]),
             lager:debug("Attempting riak_core_connection:sync_connect/2"),
-            case riak_core_connection:sync_connect(Addr, Protocol) of
+            case riak_core_connection:sync_connect(Addr, Primary, Protocol) of
                 ok ->
                   % if the next address is also primary continue connecting
                   case Addrs of
@@ -563,8 +558,8 @@ connection_helper(Ref, Protocol, Strategy, [Addr|Addrs]) ->
                       ok;
                     _ ->
                       % This assumes that the dictionary is ordered such that all primaries are up top!
-                      case (hd(Addrs))#ep.primary of
-                        true ->
+                      case (hd(Addrs)) of
+                        {_NextAddr, true} ->
                           connection_helper(Ref, Protocol, Strategy, Addrs);
                         _ ->
                           ok
@@ -704,6 +699,14 @@ filter_blacklisted_endpoints(EpAddrs, AllEps) ->
                     end),
     lists:filter(PredicateFun, EpAddrs).
 
+
+
+% CC These never get used!
+identity_locator({IP,Port}, _Policy) ->
+  {ok, [{{IP,Port}, false}]};
+identity_locator([Ips], _Policy) ->
+  {ok, {Ips, false}}.
+
 %% @doc Return the ring.
 get_ring() ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
@@ -712,14 +715,15 @@ get_ring() ->
 %% @doc Locator to identify a cluster by name.
 cluster_by_name_locator(ClusterName, _Policy) ->
     Ring = get_ring(),
-    Addrs = riak_repl_ring:get_clusterIpAddrs(Ring, ClusterName),
+    OldAddrs = riak_repl_ring:get_clusterIpAddrs(Ring, ClusterName),
+  Addrs = [ {X, false} || X <- OldAddrs],
     lager:debug("located members for cluster ~p: ~p",
                 [ClusterName, Addrs]),
     {ok, Addrs}.
 
 %% @doc Locator to identify a cluster by ip address.
 cluster_by_addr_locator(Addr, _Policy) ->
-    {ok, [Addr]}.
+    {ok, [{Addr, false}]}.
 
 %% @doc Return the value for cm_cancellation_interval
 get_cancellation_interval() ->

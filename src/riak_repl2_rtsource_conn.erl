@@ -90,8 +90,8 @@
                 cont = <<>>}). % continuation from previous TCP buffer
 
 %% API - start trying to send realtime repl to remote site
-start_link(Remote, Socket, Transport, Endpoint, Proto, _Props) ->
-    gen_server:start_link(?MODULE, [Remote, Socket, Transport, Endpoint, Proto, _Props], []).
+start_link(Remote, Socket, Transport, IPPort, Proto, _Props) ->
+    gen_server:start_link(?MODULE, [Remote, Socket, Transport, IPPort, Proto, _Props], []).
 
 stop(Pid) ->
     gen_server:call(Pid, stop, ?LONG_TIMEOUT).
@@ -117,7 +117,7 @@ legacy_status(Pid, Timeout) ->
 %% gen_server callbacks
 
 %% Initialize
-init([Remote, Socket, Transport, EndPoint, Proto, _Props]) ->
+init([Remote, Socket, Transport, IPPort, Proto, _Props]) ->
   Transport:controlling_process(Socket, self()),
   Transport:setopts(Socket, [{active, true}]),
 
@@ -134,7 +134,7 @@ init([Remote, Socket, Transport, EndPoint, Proto, _Props]) ->
 
       State2 = #state{transport = Transport,
         socket = Socket,
-        address = EndPoint,
+        address = IPPort,
         proto = Proto,
         peername = peername(Transport, Socket),
         helper_pid = HelperPid,

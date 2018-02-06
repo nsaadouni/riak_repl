@@ -317,11 +317,12 @@ handle_call({get_known_ipaddrs_of_cluster, {name, ClusterName}}, _From, State) -
             %% the list. Return original members and save reblanced ones
             %% for next iteration.
             Members = members_of_cluster(ClusterName, State),
-            BalancerFun = State#state.balancer_fun,
-            RebalancedMembers = BalancerFun(Members),
-            lager:debug("Rebalancer: ~p -> ~p", [Members, RebalancedMembers]),
+%%            BalancerFun = State#state.balancer_fun,
+%%            RebalancedMembers = BalancerFun(Members),
+%%            lager:debug("Rebalancer: ~p -> ~p", [Members, RebalancedMembers]),
+            lager:debug("Rebalancing is currently not working"),
             {reply, {ok, Members},
-             State#state{clusters=add_ips_to_cluster(ClusterName, RebalancedMembers,
+             State#state{clusters=add_ips_to_cluster(ClusterName, Members,
                                                      State#state.clusters)}};
         false ->
             NoLeaderResult = {ok, []},
