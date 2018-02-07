@@ -123,7 +123,7 @@
          terminate/2, code_change/3]).
 
 %% internal functions
--export([connection_helper/4, increase_backoff/1]).
+-export([connection_helper/5, increase_backoff/1]).
 
 %%%===================================================================
 %%% API
@@ -497,7 +497,7 @@ start_request(Req = #req{ref=Ref, target=Target, spec=ClientSpec, strategy=Strat
 
             lager:debug("Connection Manager trying endpoints: ~p", [TryAddrs]),
             Pid = spawn_link(
-                    fun() -> exit(try connection_helper(Ref, ClientSpec, Strategy, TryAddrs)
+                    fun() -> exit(try connection_helper(Ref, ClientSpec, Strategy, TryAddrs, flase)
                                   catch T:R -> {exception, {T, R}}
                                   end)
                     end),
@@ -536,10 +536,10 @@ string_of_ipport({IP,Port}) ->
 %% A spawned process that will walk down the list of endpoints and try them
 %% all until exhausting the list. This process is responsible for waiting for
 %% the backoff delay for each endpoint.
-connection_helper(Ref, _Protocol, _Strategy, []) ->
+connection_helper(Ref, _Protocol, _Strategy, [], _ConnectedToPrimary) ->
     %% exhausted the list of endpoints. let server start new helper process
     {error, endpoints_exhausted, Ref};
-connection_helper(Ref, Protocol, Strategy, [{Addr, Primary}|Addrs]) ->
+connection_helper(Ref, Protocol, Strategy, [{Addr, Primary}|Addrs], ConnectedToPrimary) ->
     {{ProtocolId, _Foo},_Bar} = Protocol,
     %% delay by the backoff_delay for this endpoint.
     {ok, BackoffDelay} = gen_server:call(?SERVER, {get_endpoint_backoff, Addr}),
@@ -550,8 +550,10 @@ connection_helper(Ref, Protocol, Strategy, [{Addr, Primary}|Addrs]) ->
         true ->
             lager:debug("Trying connection to: ~p at ~p", [ProtocolId, string_of_ipport(Addr)]),
             lager:debug("Attempting riak_core_connection:sync_connect/2"),
-            case riak_core_connection:sync_connect(Addr, Primary, Protocol) of
+
+          case riak_core_connection:sync_connect(Addr, Primary, Protocol) of
                 ok ->
+                  % ------------------------------------------------------------------------------------------ %
                   % if the next address is also primary continue connecting
                   case Addrs of
                     [] ->
@@ -560,15 +562,28 @@ connection_helper(Ref, Protocol, Strategy, [{Addr, Primary}|Addrs]) ->
                       % This assumes that the dictionary is ordered such that all primaries are up top!
                       case (hd(Addrs)) of
                         {_NextAddr, true} ->
-                          connection_helper(Ref, Protocol, Strategy, Addrs);
+                          case Primary of
+                            true ->
+                              connection_helper(Ref, Protocol, Strategy, Addrs, true);
+                            false ->
+                              % This connection is seconday, we do not make another connection
+                              ok
+                          end;
                         _ ->
                           ok
                       end
                   end;
+                % ------------------------------------------------------------------------------------------ %
+
                 {error, Reason} ->
                     %% notify connection manager this EP failed and try next one
                     gen_server:cast(?SERVER, {endpoint_failed, Addr, Reason, ProtocolId}),
-                    connection_helper(Ref, Protocol, Strategy, Addrs)
+                  case ConnectedToPrimary of
+                    true ->
+                      ok;
+                    false ->
+                      connection_helper(Ref, Protocol, Strategy, Addrs, false)
+                  end
             end;
         _ ->
             %% connection request has been cancelled

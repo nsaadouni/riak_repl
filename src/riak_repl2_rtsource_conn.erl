@@ -42,10 +42,11 @@
 -endif.
 
 %% API
--export([start_link/6,
+-export([start_link/1,
          stop/1,
          status/1, status/2,
          address/1,
+         connected/6,
          legacy_status/1, legacy_status/2]).
 
 
@@ -90,8 +91,8 @@
                 cont = <<>>}). % continuation from previous TCP buffer
 
 %% API - start trying to send realtime repl to remote site
-start_link(Remote, Socket, Transport, IPPort, Proto, _Props) ->
-    gen_server:start_link(?MODULE, [Remote, Socket, Transport, IPPort, Proto, _Props], []).
+start_link(Remote) ->
+    gen_server:start_link(?MODULE, [Remote], []).
 
 stop(Pid) ->
     gen_server:call(Pid, stop, ?LONG_TIMEOUT).
@@ -112,54 +113,30 @@ legacy_status(Pid) ->
 legacy_status(Pid, Timeout) ->
     gen_server:call(Pid, legacy_status, Timeout).
 
+% -------
+% Possible fix to issue with closing the port before it reaches here
+connected(Socket, Transport, IPPort, Proto, RtSourcePid, _Props) ->
+  Transport:controlling_process(Socket, RtSourcePid),
+  Transport:setopts(Socket, [{active, true}]),
+  try
+    gen_server:call(RtSourcePid,
+      {connected, Socket, Transport, IPPort, Proto},
+      ?LONG_TIMEOUT)
+  catch
+    _:Reason ->
+      lager:warning("Unable to contact RT source connection process (~p). Killing it to force reconnect.",
+        [RtSourcePid]),
+      exit(RtSourcePid, {unable_to_contact, Reason}),
+      ok
+  end.
+
 % ======================================================================================================================
 
 %% gen_server callbacks
 
 %% Initialize
-init([Remote, Socket, Transport, IPPort, Proto, _Props]) ->
-  Transport:controlling_process(Socket, self()),
-  Transport:setopts(Socket, [{active, true}]),
-
-  case Transport:send(Socket, <<>>) of
-    ok ->
-      Ver = riak_repl_util:deduce_wire_version_from_proto(Proto),
-      lager:debug("RT source connection negotiated ~p wire format from proto ~p", [Ver, Proto]),
-      {_, ClientVer, _} = Proto,
-      {ok, HelperPid} = riak_repl2_rtsource_helper:start_link(Remote, Transport, Socket, ClientVer),
-      SocketTag = riak_repl_util:generate_socket_tag("rt_source", Transport, Socket),
-      lager:debug("Keeping stats for " ++ SocketTag),
-      riak_core_tcp_mon:monitor(Socket, {?TCP_MON_RT_APP, source,
-        SocketTag}, Transport),
-
-      State2 = #state{transport = Transport,
-        socket = Socket,
-        address = IPPort,
-        proto = Proto,
-        peername = peername(Transport, Socket),
-        helper_pid = HelperPid,
-        ver = Ver},
-
-      lager:info("Established realtime connection to site ~p address ~s",
-        [Remote, peername(State2)]),
-
-      case Proto of
-        {realtime, _OurVer, {1, 0}} ->
-          {ok, State2};
-        _ ->
-          %% 1.1 and above, start with a heartbeat
-          HBInterval = app_helper:get_env(riak_repl, rt_heartbeat_interval,
-            ?DEFAULT_HBINTERVAL),
-          HBTimeout = app_helper:get_env(riak_repl, rt_heartbeat_timeout,
-            ?DEFAULT_HBTIMEOUT),
-          State3 = State2#state{hb_interval = HBInterval,
-            hb_timeout = HBTimeout,
-            hb_sent_q = queue:new() },
-          {ok, send_heartbeat(State3)}
-      end;
-    ER ->
-      {stop, ER}
-  end.
+init([Remote]) ->
+  {ok, #state{remote = Remote}}.
 
 handle_call(stop, _From, State) ->
     {stop, normal, ok, State};
@@ -217,7 +194,48 @@ handle_call(legacy_status, _From, State = #state{remote = Remote}) ->
          {site, Remote},
          {strategy, realtime},
          {socket, Socket}] ++ RTQStats,
-    {reply, {status, Status}, State}.
+    {reply, {status, Status}, State};
+handle_call({connected, Socket, Transport, EndPoint, Proto}, _From,
+    State = #state{remote = Remote}) ->
+  %% Check the socket is valid, may have been an error
+  %% before turning it active (e.g. handoff of riak_core_service_mgr to handler
+  case Transport:send(Socket, <<>>) of
+    ok ->
+      Ver = riak_repl_util:deduce_wire_version_from_proto(Proto),
+      lager:debug("RT source connection negotiated ~p wire format from proto ~p", [Ver, Proto]),
+      {_, ClientVer, _} = Proto,
+      {ok, HelperPid} = riak_repl2_rtsource_helper:start_link(Remote, Transport, Socket, ClientVer),
+      SocketTag = riak_repl_util:generate_socket_tag("rt_source", Transport, Socket),
+      lager:debug("Keeping stats for " ++ SocketTag),
+      riak_core_tcp_mon:monitor(Socket, {?TCP_MON_RT_APP, source,
+        SocketTag}, Transport),
+      State2 = State#state{transport = Transport,
+        socket = Socket,
+        address = EndPoint,
+        proto = Proto,
+        peername = peername(Transport, Socket),
+        helper_pid = HelperPid,
+        ver = Ver},
+      lager:info("Established realtime connection to site ~p address ~s",
+        [Remote, peername(State2)]),
+
+      case Proto of
+        {realtime, _OurVer, {1, 0}} ->
+          {reply, ok, State2};
+        _ ->
+          %% 1.1 and above, start with a heartbeat
+          HBInterval = app_helper:get_env(riak_repl, rt_heartbeat_interval,
+            ?DEFAULT_HBINTERVAL),
+          HBTimeout = app_helper:get_env(riak_repl, rt_heartbeat_timeout,
+            ?DEFAULT_HBTIMEOUT),
+          State3 = State2#state{hb_interval = HBInterval,
+            hb_timeout = HBTimeout,
+            hb_sent_q = queue:new() },
+          {reply, ok, send_heartbeat(State3)}
+      end;
+    ER ->
+      {reply, ER, State}
+  end.
 
 handle_cast(_Request, State) ->
   {noreply, State}.

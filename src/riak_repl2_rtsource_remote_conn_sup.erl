@@ -5,13 +5,13 @@
 
 %% API
 -export([start_link/1,
-  remove_connection/1
+  make_module_name/1
 ]).
 
 %% Supervisor callbacks
 -export([init/1]).
 
--define(SERVER, ?MODULE).
+-define(SERVER(Remote), make_module_name(Remote)).
 -define(SHUTDOWN, 5000). % how long to give rtsource processes to persist queue/shutdown
 
 %%%===================================================================
@@ -19,24 +19,30 @@
 %%%===================================================================
 
 start_link(Remote) ->
-  supervisor:start_link({local, ?MODULE}, ?MODULE, [Remote]).
-
-% rtsource_conn_mgr callback
-%% need to check if this will work with stop, or if I need to code some more in rtsource_conn to
-%% kill the process as well.
-remove_connection(_Pid) ->
-  ok.
+  supervisor:start_link({local, ?SERVER(Remote) }, ?MODULE, [Remote]).
 
 %%%===================================================================
 %%% Supervisor callbacks
 %%%===================================================================
 
 init([Remote]) ->
-  AChild = {riak_repl2_rtsource_conn_mgr, {riak_repl2_rtsource_conn_mgr, start_link, [[Remote, self()]]},
+  ConnMgr = {make_conn_mgr_name(Remote), {riak_repl2_rtsource_conn_mgr, start_link, [[Remote]]},
     permanent, ?SHUTDOWN, worker, [riak_repl2_rtsource_conn_mgr]},
 
-  {ok, {{one_for_one, 10, 10}, [AChild]}}.
+  ConnSup = {make_conn_2_sup_name(Remote), {riak_repl2_rtsource_conn_2_sup, start_link, [Remote]},
+    permanent, ?SHUTDOWN, supervisor, [riak_repl2_rtsource_conn_2_sup]},
+
+  {ok, {{one_for_one, 10, 10}, [ConnMgr, ConnSup]}}.
 
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+
+make_module_name(Remote) ->
+  list_to_atom(lists:flatten(io_lib:format("riak_repl2_rtsource_~p_conn_sup", [Remote]))).
+
+make_conn_mgr_name(Remote) ->
+  list_to_atom(lists:flatten(io_lib:format("conn_mgr_~p", [Remote]))).
+
+make_conn_2_sup_name(Remote) ->
+  list_to_atom(lists:flatten(io_lib:format("conn_2_sup_~p", [Remote]))).

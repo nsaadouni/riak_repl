@@ -42,7 +42,7 @@
 -record(state, {
   remote, % remote sink cluster name
   connection_ref, % reference handed out by connection manager
-  supervisor, % The module name of the supervisor to start the child when we get a connection passed to us
+  rtsource_conn_sup, % The module name of the supervisor to start the child when we get a connection passed to us
   rb_timeout_tref, % Rebalance timeout timer reference
 
 
@@ -61,14 +61,16 @@
 %%%===================================================================
 
 
-start_link([Remote, SupervisorModuleName]) ->
-  gen_server:start_link(?MODULE, [Remote, SupervisorModuleName], []).
+start_link([Remote]) ->
+  gen_server:start_link(?MODULE, [Remote], []).
 
 % Replacement for connected from rtsource_conn! (This needs to be changed in riak_core_connection (gen_fsm)
 % I do not have information regarding the connection type (primary or secondary)
 % I can pass it to here or request it from the core_connection_mgr (Either way I need it)
 connected(Socket, Transport, IPPort, Proto, RTSourceConnMgrPid, _Props, Primary) ->
-  gen_server:cast(RTSourceConnMgrPid, {connected, Socket, Transport, IPPort, Proto, _Props, Primary}).
+  Transport:controlling_process(Socket, RTSourceConnMgrPid),
+%%  Transport:setopts(Socket, [{active, true}]),
+  gen_server:call(RTSourceConnMgrPid, {connected, Socket, Transport, IPPort, Proto, _Props, Primary}).
 
 connect_failed(_ClientProto, Reason, RTSourceConnMgrPid) ->
   gen_server:cast(RTSourceConnMgrPid, {connect_failed, self(), Reason}).
@@ -87,19 +89,47 @@ maybe_rebalance_delayed(_Pid) ->
 %%%===================================================================
 
 
-init([Remote, SupervisorModuleName]) ->
+init([Remote]) ->
   %% Todo: check for bad remote name
   lager:debug("connecting to remote ~p", [Remote]),
   case riak_core_connection_mgr:connect({rt_repl, Remote}, ?CLIENT_SPEC, multi_connection) of
     {ok, Ref} ->
       lager:debug("connection ref ~p", [Ref]),
-      {ok, #state{remote = Remote, connection_ref = Ref, supervisor = SupervisorModuleName}};
+      S = riak_repl2_rtsource_conn_2_sup:make_module_name(Remote),
+      E = orddict:new(),
+      {ok, #state{remote = Remote, connection_ref = Ref, rtsource_conn_sup = S, endpoints = E}};
     {error, Reason}->
       lager:warning("Error connecting to remote"),
       {stop, Reason}
   end.
 
 %%%=====================================================================================================================
+handle_call({connected, Socket, Transport, IPPort, Proto, _Props, Primary}, _From,
+    State = #state{rtsource_conn_sup = S, remote = Remote, endpoints = E}) ->
+
+  case start_rtsource_conn(Remote, S) of
+    {ok, RtSourcePid} ->
+      case riak_repl2_rtsource_conn:connected(Socket, Transport, IPPort, Proto, RtSourcePid, _Props) of
+        ok ->
+          %% Save {EndPoint, Pid}; Pid will come from the supervisor starting a child
+          Endpoints = orddict:store(IPPort, {RtSourcePid, Primary}, E),
+          {reply, ok, State#state{endpoints = Endpoints}};
+
+        Error ->
+          % This is the error that causes the RtSource to exit and kill itself
+          % When this happens the supervisor will not restart
+          % It used to restart it; and it would therefore re-attempt the connection!
+          % riak_core_connection_mgr:connect/3 would be called again
+          % I need to figure out a method of re-trying this
+
+          % Unable to contact RT Source connection process thats why (This should not be an issue!)
+          % We have just booted up!
+          % could simply make another call?
+          {reply, Error, State}
+      end;
+    ER ->
+      {reply, ER, State}
+  end;
 
 handle_call(_Request, _From, State) ->
   {reply, ok, State}.
@@ -117,19 +147,6 @@ handle_cast({connect_failed, _HelperPid, Reason},
 
 %%handle_cast(rebalance_delayed, State) ->
 %%  {noreply, maybe_rebalance(State, delayed)};
-
-
-handle_cast({connected, Socket, Transport, IPPort, Proto, _Props, Primary},
-    State = #state{supervisor = S, remote = Remote, endpoints = E}) ->
-
-  case add_connection(Remote, Socket, Transport, IPPort, Proto, _Props, S) of
-    {ok, Pid} ->
-      %% Save {EndPoint, Pid}; Pid will come from the supervisor starting a child
-      Endpoints = orddict:store(IPPort, {Pid, Primary}, E),
-      {noreply, State#state{endpoints = Endpoints}};
-    _Error ->
-      {noreply, State}
-  end;
 
 
 handle_cast(_Request, State) ->
@@ -157,21 +174,18 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+
 % rtsource_conn_mgr callback
-add_connection(Remote, Socket, Transport, IPPort, Proto, _Props, Pid) ->
+start_rtsource_conn(Remote, S) ->
   lager:info("Adding a connection and starting rtsource_conn ~p", [Remote]),
-  ChildSpec = make_child(Remote, Socket, Transport, IPPort, Proto, _Props),
-  supervisor:start_child(Pid, ChildSpec).
+  Args = [Remote],
+  supervisor:start_child(S, Args).
 
-make_child(Remote, Socket, Transport, IPPort, Proto, _Props) ->
-
-  {make_child_name(Remote, IPPort), {riak_repl2_rtsource_conn, start_link, [Remote, Socket, Transport, IPPort, Proto, _Props]},
-    permanent, ?SHUTDOWN, worker, [riak_repl2_rtsource_conn]}.
-
-
-make_child_name(Remote, IPPort) ->
-  list_to_atom(lists:flatten(io_lib:format("~p ~p", [Remote, IPPort]))).
-
+% rtsource_conn_mgr callback
+%% need to check if this will work with stop, or if I need to code some more in rtsource_conn to
+%% kill the process as well.
+%%remove_connection(_Pid) ->
+%%  ok.
 
 %%maybe_rebalance(State, now) ->
 %%  case should_rebalance(State) of
