@@ -79,7 +79,7 @@
             skips = 0,
             drops = 0, % number of dropped queue entries (not items)
             errs = 0,  % delivery errors
-            deliver,  % deliver function if pending, otherwise undefined
+            deliver = [],  % deliver functions if pending, otherwise undefined
             delivered = false  % used by the skip count.
             % skip_count is used to help the sink side determine if an item has
             % been dropped since the last delivery. The sink side can't
@@ -343,7 +343,7 @@ handle_call({register, Name}, _From, State = #state{qtab = QTab, qseq = QSeq, cs
                 false -> C#c.aseq
             end,
             UpdCs = [C#c{cseq = CSeq, drops = PrevDrops + Drops,
-                         deliver = undefined} | Cs2];
+                         deliver = []} | Cs2];
         false ->
             %% New registration, start from the beginning
             CSeq = MinSeq,
@@ -453,8 +453,8 @@ terminate(Reason, #state{cs = Cs}) ->
     %% when started from tests, we may not be registered
     catch(erlang:unregister(?SERVER)),
     flush_pending_pushes(),
-    _ = [deliver_error(DeliverFun, {terminate, Reason}) ||
-	    #c{deliver = DeliverFun} <- Cs],
+    DList = [DeliverFunList || #c{deliver = DeliverFunList} <- Cs],
+    _ = [deliver_error(DeliverFun, {terminate, Reason}) || DeliverFun <- lists:flatten(DList)],
     ok.
 
 %% @private
@@ -495,7 +495,7 @@ unregister_q(Name, State = #state{qtab = QTab, cs = Cs}) ->
         {value, C, Cs2} ->
             %% Remove C from Cs, let any pending process know
             %% and clean up the queue
-            case C#c.deliver of
+            case get_delivery_fun(C#c.deliver) of
                 undefined ->
                     ok;
                 DeliverFun ->
@@ -548,7 +548,8 @@ pull(Name, DeliverFun, State = #state{qtab = QTab, qseq = QSeq, cs = Cs}) ->
                     [maybe_pull(QTab, QSeq, C, CsNames, DeliverFun) | Cs2];
                 false ->
                     lager:error("Consumer ~p pulled from RTQ, but was not registered", [Name]),
-                    deliver_error(DeliverFun, not_registered)
+                    deliver_error(DeliverFun, not_registered),
+                    Cs
             end,
     State#state{cs = UpdCs}.
 
@@ -564,7 +565,7 @@ maybe_pull(QTab, QSeq, C = #c{cseq = CSeq}, CsNames, DeliverFun) ->
                     QEntry2 = set_local_forwards_meta(CsNames, QEntry),
                     % if the item can't be delivered due to cascading rt,
                     % just keep trying.
-                    case maybe_deliver_item(C#c{deliver = DeliverFun}, QEntry2) of
+                    case maybe_deliver_item(add_deliver_fun(DeliverFun, C), QEntry2) of
                         {skipped, C2} ->
                             maybe_pull(QTab, QSeq, C2, CsNames, DeliverFun);
                         {_WorkedOrNoFun, C2} ->
@@ -574,10 +575,10 @@ maybe_pull(QTab, QSeq, C = #c{cseq = CSeq}, CsNames, DeliverFun) ->
         false ->
             %% consumer is up to date with head, keep deliver function
             %% until something pushed
-            C#c{deliver = DeliverFun}
+            add_deliver_fun(DeliverFun, C)
     end.
 
-maybe_deliver_item(C = #c{deliver = undefined}, QEntry) ->
+maybe_deliver_item(C = #c{deliver = []}, QEntry) ->
     {_Seq, _NumItem, _Bin, Meta} = QEntry,
     Name = C#c.name,
     Routed = case orddict:find(routed_clusters, Meta) of
@@ -605,20 +606,21 @@ maybe_deliver_item(C, QEntry) ->
         true ->
             {skipped, C#c{cseq = Seq, aseq = Seq}};
         false ->
-            {delivered, deliver_item(C, C#c.deliver, QEntry)}
+            {delivered, deliver_item(C, get_delivery_fun(C#c.deliver), QEntry)}
     end.
 
 deliver_item(C, DeliverFun, {Seq,_NumItem, _Bin, _Meta} = QEntry) ->
+  [_ | Rest] = C#c.deliver,
     try
         Seq = C#c.cseq + 1, % bit of paranoia, remove after EQC
         QEntry2 = set_skip_meta(QEntry, Seq, C),
         ok = DeliverFun(QEntry2),
-        C#c{cseq = Seq, deliver = undefined, delivered = true, skips = 0}
+        C#c{cseq = Seq, deliver = Rest, delivered = true, skips = 0}
     catch
         _:_ ->
             riak_repl_stats:rt_source_errors(),
             %% do not advance head so it will be delivered again
-            C#c{errs = C#c.errs + 1, deliver = undefined}
+            C#c{errs = C#c.errs + 1, deliver = Rest}
     end.
 
 %% Deliver an error if a delivery function is registered.
@@ -773,3 +775,18 @@ minseq(QTab, QSeq) ->
 summarize_object(Obj) ->
   ObjFmt = riak_core_capability:get({riak_kv, object_format}, v0),
   {riak_object:key(Obj), riak_object:approximate_size(ObjFmt, Obj)}.
+
+
+get_delivery_fun(DeliverFunList) ->
+  case DeliverFunList of
+    [] ->
+      undefined;
+    _ ->
+      hd(DeliverFunList)
+  end.
+
+
+add_deliver_fun(DeliverFun, C) ->
+  DeliverFunList = C#c.deliver,
+  NewList = lists:append(DeliverFunList, [DeliverFun]),
+  C#c{deliver = NewList}.

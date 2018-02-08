@@ -10,7 +10,7 @@
 %% API
 -export([start_link/4,
          stop/1,
-         v1_ack/2,
+         v1_ack/2, stop_pulling/1,
          status/1, status/2, send_heartbeat/1]).
 
 -include("riak_repl.hrl").
@@ -29,7 +29,9 @@
                 sent_seq,   % last sequence sent
                 v1_offset = 0,
                 v1_seq_map = [],
-                objects = 0}).   % number of objects sent - really number of pulls as could be multiobj
+                objects = 0, % number of objects sent - really number of pulls as could be multiobj
+                stop_pulling = false
+    }).
 
 start_link(Remote, Transport, Socket, Version) ->
     gen_server:start_link(?MODULE, [Remote, Transport, Socket, Version], []).
@@ -53,8 +55,10 @@ send_heartbeat(Pid) ->
     %% as it is responsible for checking heartbeat
     gen_server:cast(Pid, send_heartbeat).
 
+stop_pulling(Pid) ->
+    handle:cast(Pid, stop_pulling).
+
 init([Remote, Transport, Socket, Version]) ->
-    _ = riak_repl2_rtq:register(Remote), % re-register to reset stale deliverfun
     Me = self(),
     Deliver = fun(Result) -> gen_server:call(Me, {pull, Result}, infinity) end,
     State = #state{remote = Remote, transport = Transport, proto = Version,
@@ -66,11 +70,16 @@ handle_call({pull, {error, Reason}}, _From, State) ->
     riak_repl_stats:rt_source_errors(),
     {stop, {queue_error, Reason}, ok, State};
 handle_call({pull, {Seq, NumObjects, _BinObjs, _Meta} = Entry}, From,
-            State = #state{transport = T, socket = S, objects = Objects}) ->
+            State = #state{transport = T, socket = S, objects = Objects, stop_pulling = Pull}) ->
     %% unblock the rtq as fast as possible
     gen_server:reply(From, ok),
     State2 = maybe_send(T, S, Entry, State),
-    async_pull(State2),
+    case Pull of
+        false ->
+            async_pull(State2);
+        _ ->
+            ok
+    end,
     {noreply, State2#state{sent_seq = Seq, objects = Objects + NumObjects}};
 handle_call(stop, _From, State) ->
     {stop, normal, ok, State};
@@ -95,6 +104,9 @@ handle_cast({v1_ack, Seq}, State = #state{v1_seq_map = Map}) ->
     end,
     Map2 = orddict:erase(Seq, Map),
     {noreply, State#state{v1_seq_map = Map2}};
+
+handle_cast(stop_pulling, State) ->
+    {noreply, State#state{stop_pulling = true}};
 
 handle_cast(Msg, _State) ->
     lager:info("Realtime source helper received unexpected cast - ~p\n", [Msg]).

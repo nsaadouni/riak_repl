@@ -94,6 +94,7 @@ init([Remote]) ->
   lager:debug("connecting to remote ~p", [Remote]),
   case riak_core_connection_mgr:connect({rt_repl, Remote}, ?CLIENT_SPEC, multi_connection) of
     {ok, Ref} ->
+      _ = riak_repl2_rtq:register(Remote), % re-register to reset stale deliverfun
       lager:debug("connection ref ~p", [Ref]),
       S = riak_repl2_rtsource_conn_2_sup:make_module_name(Remote),
       E = orddict:new(),
@@ -162,7 +163,9 @@ handle_info(_Info, State) ->
 
 %%%=====================================================================================================================
 
-terminate(_Reason, _State) ->
+terminate(_Reason, #state{remote = Remote, endpoints = E}) ->
+  riak_core_connection_mgr:disconnect({rt_repl, Remote}),
+  [catch riak_repl2_rtsource_conn:stop(Pid) || {_,{Pid,_}} <- E],
   ok.
 
 %%%=====================================================================================================================
