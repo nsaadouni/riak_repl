@@ -731,7 +731,7 @@ get_ring() ->
 cluster_by_name_locator(ClusterName, _Policy) ->
     Ring = get_ring(),
     OldAddrs = riak_repl_ring:get_clusterIpAddrs(Ring, ClusterName),
-  Addrs = [ {X, false} || X <- OldAddrs],
+    Addrs = [ {X, false} || X <- OldAddrs],
     lager:debug("located members for cluster ~p: ~p",
                 [ClusterName, Addrs]),
     {ok, Addrs}.

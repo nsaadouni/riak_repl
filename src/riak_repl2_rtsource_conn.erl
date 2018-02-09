@@ -44,6 +44,8 @@
 %% API
 -export([start_link/1,
          stop/1,
+         kill_connection_gracefully/2,
+         kill/2,
          status/1, status/2,
          address/1,
          connected/6,
@@ -61,6 +63,8 @@
                        {nodelay, true},
                        {packet, 0},
                        {active, false}]).
+
+-define(KILL_TIME, 60*1000).
 
 %% nodes running 1.3.1 have a bug in the service_mgr module.
 %% this bug prevents it from being able to negotiate a version list longer
@@ -129,6 +133,10 @@ connected(Socket, Transport, IPPort, Proto, RtSourcePid, _Props) ->
       exit(RtSourcePid, {unable_to_contact, Reason}),
       ok
   end.
+
+
+kill_connection_gracefully(Pid, ConnMgr) ->
+  gen_server:cast(Pid, {kill_connection_gracefully, ConnMgr}).
 
 % ======================================================================================================================
 
@@ -237,6 +245,10 @@ handle_call({connected, Socket, Transport, EndPoint, Proto}, _From,
       {reply, ER, State}
   end.
 
+handle_cast({kill_connection_gracefully, ConnMgr}, State) ->
+  spawn_link(?MODULE, kill, [State, ConnMgr]),
+  {noreply, State};
+
 handle_cast(_Request, State) ->
   {noreply, State}.
 
@@ -295,7 +307,7 @@ handle_info(Msg, State) ->
     lager:warning("Unhandled info:  ~p", [Msg]),
     {noreply, State}.
 
-terminate(_Reason, #state{helper_pid=HelperPid}) ->
+terminate(_Reason, _State=#state{helper_pid=HelperPid}) ->
     catch riak_repl2_rtsource_helper:stop(HelperPid),
     ok.
 
@@ -397,6 +409,17 @@ schedule_heartbeat(State = #state{hb_interval_tref = _TRef,
 schedule_heartbeat(State) ->
     lager:warning("Heartbeat is misconfigured and is not a valid integer."),
     State.
+
+kill(_State=#state{helper_pid = HelperPid, address = Addr},ConnMgrPid) ->
+
+  % Stop helper from pulling form queue
+  riak_repl2_rtsource_helper:stop_pulling(HelperPid),
+
+  % Wait for acknowledgements (currently 2 mins, might be too long)
+  timer:sleep(?KILL_TIME),
+
+  % call rtsource_mgr to kill this connection now,
+  riak_repl2_rtsource_conn_mgr:kill_connection(ConnMgrPid, Addr).
 
 %% ===================================================================
 %% EUnit tests

@@ -449,7 +449,7 @@ handle_info(_Msg, State) ->
     {noreply, State}.
 
 %% @private
-terminate(Reason, #state{cs = Cs}) ->
+terminate(Reason, _State=#state{cs = Cs}) ->
     %% when started from tests, we may not be registered
     catch(erlang:unregister(?SERVER)),
     flush_pending_pushes(),
@@ -659,7 +659,7 @@ cleanup(QTab, Seq, State) ->
             lager:warning("Unexpected object in RTQ")
     end.
 
-ets_obj_size(Obj, #state{word_size = WordSize}) when is_binary(Obj) ->
+ets_obj_size(Obj, _State=#state{word_size = WordSize}) when is_binary(Obj) ->
   ets_obj_size(Obj, WordSize);
 ets_obj_size(Obj, WordSize) when is_binary(Obj) ->
   BSize = erlang:byte_size(Obj),
@@ -740,6 +740,24 @@ trim_q_entries(QTab, MaxBytes, Cs, State, Entries, Objects) ->
             end
     end.
 
+
+get_delivery_fun(DeliverFunList) ->
+  case DeliverFunList of
+    [] ->
+      undefined;
+    _ ->
+      hd(DeliverFunList)
+  end.
+
+
+add_deliver_fun(DeliverFun, C) ->
+  DeliverFunList = C#c.deliver,
+  NewList = lists:append(DeliverFunList, [DeliverFun]),
+  C#c{deliver = NewList}.
+
+
+
+
 -ifdef(TEST).
 qbytes(_QTab, #state{qsize_bytes = QSizeBytes}) ->
     %% when EQC testing, don't account for ETS overhead
@@ -775,18 +793,3 @@ minseq(QTab, QSeq) ->
 summarize_object(Obj) ->
   ObjFmt = riak_core_capability:get({riak_kv, object_format}, v0),
   {riak_object:key(Obj), riak_object:approximate_size(ObjFmt, Obj)}.
-
-
-get_delivery_fun(DeliverFunList) ->
-  case DeliverFunList of
-    [] ->
-      undefined;
-    _ ->
-      hd(DeliverFunList)
-  end.
-
-
-add_deliver_fun(DeliverFun, C) ->
-  DeliverFunList = C#c.deliver,
-  NewList = lists:append(DeliverFunList, [DeliverFun]),
-  C#c{deliver = NewList}.

@@ -24,7 +24,8 @@
 -export([
   connected/7,
   connect_failed/3,
-  maybe_rebalance_delayed/1
+  maybe_rebalance_delayed/1,
+  kill_connection/2
 ]).
 
 -define(SERVER, ?MODULE).
@@ -69,11 +70,14 @@ start_link([Remote]) ->
 % I can pass it to here or request it from the core_connection_mgr (Either way I need it)
 connected(Socket, Transport, IPPort, Proto, RTSourceConnMgrPid, _Props, Primary) ->
   Transport:controlling_process(Socket, RTSourceConnMgrPid),
-%%  Transport:setopts(Socket, [{active, true}]),
   gen_server:call(RTSourceConnMgrPid, {connected, Socket, Transport, IPPort, Proto, _Props, Primary}).
 
 connect_failed(_ClientProto, Reason, RTSourceConnMgrPid) ->
   gen_server:cast(RTSourceConnMgrPid, {connect_failed, self(), Reason}).
+
+
+kill_connection(Pid, Addr) ->
+  gen_server:cast(Pid, {kill, Addr}).
 
 %% @doc Check if we need to rebalance.
 %% If we do, delay some time, recheck that we still
@@ -146,6 +150,19 @@ handle_cast({connect_failed, _HelperPid, Reason},
     [Remote, Reason]),
   {stop, normal, State};
 
+handle_cast({kill, Addr}, State = #state{endpoints = E}) ->
+  case orddict:fetch(Addr, E) of
+    {Pid, _Primary} ->
+      riak_repl2_rtsource_conn:stop(Pid),
+      E1 = orddict:erase(Addr, E),
+      {noreply, State#state{endpoints = E1}};
+    _ ->
+      % rtsource_conn has stopped pulling from queue but it is not in our endpoints dictionary!
+      % we should never reach this case
+      {noreply, State}
+  end;
+
+
 %%handle_cast(rebalance_delayed, State) ->
 %%  {noreply, maybe_rebalance(State, delayed)};
 
@@ -163,7 +180,7 @@ handle_info(_Info, State) ->
 
 %%%=====================================================================================================================
 
-terminate(_Reason, #state{remote = Remote, endpoints = E}) ->
+terminate(_Reason, _State=#state{remote = Remote, endpoints = E}) ->
   riak_core_connection_mgr:disconnect({rt_repl, Remote}),
   [catch riak_repl2_rtsource_conn:stop(Pid) || {_,{Pid,_}} <- E],
   ok.

@@ -39,7 +39,7 @@ init([Remote]) ->
 %%%===================================================================
 
 make_module_name(Remote) ->
-  list_to_atom(lists:flatten(io_lib:format("riak_repl2_rtsource_~p_conn_sup", [Remote]))).
+  list_to_atom(lists:flatten(io_lib:format("riak_repl2_rtsource_remote_conn_sup_~p", [Remote]))).
 
 make_conn_mgr_name(Remote) ->
   list_to_atom(lists:flatten(io_lib:format("conn_mgr_~p", [Remote]))).

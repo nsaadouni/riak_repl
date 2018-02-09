@@ -56,7 +56,7 @@ send_heartbeat(Pid) ->
     gen_server:cast(Pid, send_heartbeat).
 
 stop_pulling(Pid) ->
-    handle:cast(Pid, stop_pulling).
+    gen_server:cast(Pid, stop_pulling).
 
 init([Remote, Transport, Socket, Version]) ->
     Me = self(),
@@ -124,7 +124,7 @@ code_change(_OldVsn, State, _Extra) ->
 
 
 %% Trigger an async pull from the realtime queue
-async_pull(#state{remote = Remote, deliver_fun = Deliver}) ->
+async_pull(_State=#state{remote = Remote, deliver_fun = Deliver}) ->
     riak_repl2_rtq:pull(Remote, Deliver).
 
 maybe_send(Transport, Socket, QEntry, State) ->
