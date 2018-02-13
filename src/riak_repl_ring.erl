@@ -42,7 +42,10 @@
          pg_enabled/1,
          add_nat_map/2,
          del_nat_map/2,
-         get_nat_map/1
+         get_nat_map/1,
+         add_connection_data/2,
+         get_connection_data/2,
+         delete_connection_data/2
          ]).
 
 -ifdef(TEST).
@@ -499,6 +502,92 @@ get_nat_map(Ring) ->
 compose(F,G) -> fun(X) -> F(G(X)) end.
 multicompose(Fs) ->
     lists:foldl(fun compose/2, fun(X) -> X end, Fs).
+
+
+get_value(Key, Dictionary, Type) ->
+  case dict:find(Key, Dictionary) of
+    {ok, X} ->
+      X;
+    error ->
+      case Type of
+        dictionary ->
+          dict:new();
+        list ->
+          []
+      end
+  end.
+
+
+% add any number of endpoints (endpoints is a list!)
+add_connection_data(Ring, {ClusterName, Node, Endpoints}) ->
+  RC = get_repl_config(ensure_config(Ring)),
+  OldConnectionsDict = get_value(connections, RC, dictionary),
+  OldClusterNameDict = get_value(ClusterName, OldConnectionsDict, dictionary),
+
+  NewClusterNameDict = dict:store(Node, Endpoints, OldClusterNameDict),
+  NewConnectionsDict = dict:store(ClusterName, NewClusterNameDict, OldConnectionsDict),
+
+  RC2 = dict:store(connections, NewConnectionsDict, RC),
+  case RC == RC2 of
+    true ->
+      %% nothing changed
+      {ignore, {not_changed, clustername}};
+    false ->
+      {new_ring, riak_core_ring:update_meta(
+        ?MODULE,
+        RC2,
+        Ring)}
+  end.
+
+delete_connection_data(Ring, {ClusterName, Node}) ->
+  RC = get_repl_config(ensure_config(Ring)),
+  OldConnectionsDict = get_value(connections, RC, dictionary),
+  OldClusterNameDict = get_value(ClusterName, OldConnectionsDict, dictionary),
+
+  NewClusterNameDict = dict:erase(Node, OldClusterNameDict),
+  NewConnectionsDict = dict:store(ClusterName, NewClusterNameDict, OldConnectionsDict),
+
+  RC2 = dict:store(connections, NewConnectionsDict, RC),
+  case RC == RC2 of
+    true ->
+      %% nothing changed
+      {ignore, {not_changed, clustername}};
+    false ->
+      {new_ring, riak_core_ring:update_meta(
+        ?MODULE,
+        RC2,
+        Ring)}
+  end;
+
+delete_connection_data(Ring, {ClusterName}) ->
+  RC = get_repl_config(ensure_config(Ring)),
+  OldConnectionsDict = get_value(connections, RC, dictionary),
+  NewConnectionsDict = dict:erase(ClusterName, OldConnectionsDict),
+
+  RC2 = dict:store(connections, NewConnectionsDict, RC),
+  case RC == RC2 of
+    true ->
+      %% nothing changed
+      {ignore, {not_changed, clustername}};
+    false ->
+      {new_ring, riak_core_ring:update_meta(
+        ?MODULE,
+        RC2,
+        Ring)}
+  end.
+
+
+get_connection_data(Ring, {ClusterName, Node}) ->
+  RC = get_repl_config(ensure_config(Ring)),
+  ConnectionDict = get_value(connections, RC, dictionary),
+  ClusterDict = get_value(ClusterName, ConnectionDict, dictionary),
+  get_value(Node, ClusterDict, list);
+
+get_connection_data(Ring, {ClusterName}) ->
+  RC = get_repl_config(ensure_config(Ring)),
+  ConnectionDict = get_value(connections, RC, dictionary),
+  get_value(ClusterName, ConnectionDict, dictionary).
+
 
 %% unit tests
 
