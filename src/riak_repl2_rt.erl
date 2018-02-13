@@ -244,11 +244,13 @@ do_ring_trans(F, A) ->
 set_bucket_meta(Obj) ->
     M = orddict:new(),
     case riak_object:bucket(Obj) of
-        {Type, _B} ->
+        {Type, B} ->
             PropsHash = riak_repl_bucket_type_util:property_hash(Type),
             M1 = orddict:store(?BT_META_TYPED_BUCKET, true, M),
             M2 = orddict:store(?BT_META_TYPE, Type, M1),
-            orddict:store(?BT_META_PROPS_HASH, PropsHash, M2);
-        _B ->
-            orddict:store(?BT_META_TYPED_BUCKET, false, M)
+            M3 = orddict:store(?BT_META_PROPS_HASH, PropsHash, M2),
+            orddict:store(bucket_name, B, M3);
+        B ->
+            M2 = orddict:store(?BT_META_TYPED_BUCKET, false, M),
+            orddict:store(bucket_name, B, M2)
     end.
