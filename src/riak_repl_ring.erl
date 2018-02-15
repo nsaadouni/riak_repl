@@ -518,14 +518,22 @@ get_value(Key, Dictionary, Type) ->
   end.
 
 
-% add any number of endpoints (endpoints is a list!)
-add_connection_data(Ring, {ClusterName, Node, Endpoints}) ->
+add_connection_data(Ring, {ClusterName, Node, Endpoints, Action}) ->
   RC = get_repl_config(ensure_config(Ring)),
   OldConnectionsDict = get_value(connections, RC, dictionary),
   OldClusterNameDict = get_value(ClusterName, OldConnectionsDict, dictionary),
 
-  NewClusterNameDict = dict:store(Node, Endpoints, OldClusterNameDict),
+  NewEndpointList = case Action of
+                         append ->
+                           OldEndpointList = get_value(Node, OldClusterNameDict, list),
+                           lists:append(OldEndpointList, [Endpoints]);
+                         overwrite ->
+                           Endpoints
+                       end,
+
+  NewClusterNameDict = dict:store(Node, NewEndpointList, OldClusterNameDict),
   NewConnectionsDict = dict:store(ClusterName, NewClusterNameDict, OldConnectionsDict),
+
 
   RC2 = dict:store(connections, NewConnectionsDict, RC),
   case RC == RC2 of

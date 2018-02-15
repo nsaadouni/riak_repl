@@ -262,7 +262,7 @@ handle_call(stop, _From, State) ->
     %% TODO do we need to cleanup helper pids here?
     {stop, normal, ok, State};
 
-handle_call({should_try_endpoint, Ref, Addr}, _From, State = #state{pending=Pending}) ->
+handle_call({should_try_endpoint, Ref, Addr, ConnectedToPrimary}, _From, State = #state{pending=Pending}) ->
     case lists:keyfind(Ref, #req.ref, Pending) of
         false ->
             %% This should never happen
@@ -275,8 +275,18 @@ handle_call({should_try_endpoint, Ref, Addr}, _From, State = #state{pending=Pend
                     _ ->
                         {true, connecting}
                 end,
+
+          Cur = Req#req.cur,
+          NewCur = case {Answer, ConnectedToPrimary} of
+                     {true, true} ->
+                       lists:flatten([Addr | Cur]);
+                     {true, false} ->
+                       [Addr];
+                     {false, _} ->
+                       [Addr]
+                   end,
             {reply, Answer, State#state{pending = lists:keystore(Ref, #req.ref, Pending,
-                                                                 Req#req{cur = Addr,
+                                                                 Req#req{cur = NewCur,
                                                                          state = ReqState})}}
     end;
 
@@ -296,6 +306,23 @@ handle_call({get_connection_errors, Addr}, _From, State = #state{endpoints=Endpo
 handle_call({filter_blacklisted_ipaddrs, Addrs}, _From, State=#state{ endpoints=Eps }) ->
     Answer = filter_blacklisted_endpoints(Addrs, Eps),
     {reply, Answer, State};
+
+handle_call({update_ref, Ref}, _From, State = #state{pending = Pending}) ->
+  case lists:keyfind(Ref, #req.ref, Pending) of
+    false ->
+      {reply, {error, fail}, State};
+    Req->
+
+      NewCur = case Req#req.cur of
+        [] ->
+          [];
+        [_Head | Tail] ->
+          Tail
+      end,
+
+      {reply, ok, State#state{pending = lists:keystore(Ref, #req.ref, Pending,
+                                                     Req#req{cur = NewCur})}}
+  end;
 
 handle_call(_Unhandled, _From, State) ->
     lager:debug("Unhandled gen_server call: ~p", [_Unhandled]),
@@ -397,7 +424,7 @@ handle_info({'EXIT', From, Reason}, State = #state{pending = Pending}) ->
                 Reason -> % something bad happened to the connection, reuse the request
                     lager:debug("handle_info: EP failed on ~p for ~p. removed Ref ~p",
                                      [Cur, Reason, Ref]),
-                    State2 = fail_endpoint(Cur, Reason, ProtocolId, State),
+                    State2 = fail_endpoints(Cur, Reason, ProtocolId, State),
                     %% the connection helper will not retry. It's up the caller.
                     State3 = fail_request(Reason, Req, State2),
                     {noreply, State3}
@@ -471,7 +498,7 @@ schedule_retry(Interval, Ref, State = #state{pending = Pending}) ->
                     %% reschedule request to happen in the future
                     erlang:send_after(Interval, self(), {retry_req, Ref}),
                     State#state{pending = lists:keystore(Req#req.ref, #req.ref, Pending,
-                                                         Req#req{cur = undefined})}
+                                                         Req#req{cur = []})}
             end
     end.
 
@@ -497,7 +524,7 @@ start_request(Req = #req{ref=Ref, target=Target, spec=ClientSpec, strategy=Strat
 
             lager:debug("Connection Manager trying endpoints: ~p", [TryAddrs]),
             Pid = spawn_link(
-                    fun() -> exit(try connection_helper(Ref, ClientSpec, Strategy, TryAddrs, flase)
+                    fun() -> exit(try connection_helper(Ref, ClientSpec, Strategy, TryAddrs, false)
                                   catch T:R -> {exception, {T, R}}
                                   end)
                     end),
@@ -505,7 +532,7 @@ start_request(Req = #req{ref=Ref, target=Target, spec=ClientSpec, strategy=Strat
                         pending = lists:keystore(Ref, #req.ref, State#state.pending,
                                                  Req#req{pid = Pid,
                                                          state = connecting,
-                                                         cur = undefined})};
+                                                         cur = []})};
         {error, Reason} ->
             fail_request(Reason, Req, State)
     end.
@@ -546,42 +573,47 @@ connection_helper(Ref, Protocol, Strategy, [{Addr, Primary}|Addrs], ConnectedToP
     lager:debug("Holding off ~p seconds before trying ~p at ~p",
                [(BackoffDelay/1000), ProtocolId, string_of_ipport(Addr)]),
     timer:sleep(BackoffDelay),
-    case gen_server:call(?SERVER, {should_try_endpoint, Ref, Addr}) of
+
+  NextAddrPrimary = case Addrs of
+                      [] ->
+                        false;
+                      [{_X, Y} | _Xs] ->
+                        Y
+                    end,
+
+    case gen_server:call(?SERVER, {should_try_endpoint, Ref, Addr, ConnectedToPrimary}) of
         true ->
             lager:debug("Trying connection to: ~p at ~p", [ProtocolId, string_of_ipport(Addr)]),
             lager:debug("Attempting riak_core_connection:sync_connect/2"),
 
           case riak_core_connection:sync_connect(Addr, Primary, Protocol) of
                 ok ->
-                  % ------------------------------------------------------------------------------------------ %
-                  % if the next address is also primary continue connecting
-                  case Addrs of
-                    [] ->
+                  case {NextAddrPrimary, Primary} of
+                    {true, true} ->
+                      connection_helper(Ref, Protocol, Strategy, Addrs, true);
+                    {true, false} ->
+                      % This should never happen!
                       ok;
-                    _ ->
-                      % This assumes that the dictionary is ordered such that all primaries are up top!
-                      case (hd(Addrs)) of
-                        {_NextAddr, true} ->
-                          case Primary of
-                            true ->
-                              connection_helper(Ref, Protocol, Strategy, Addrs, true);
-                            false ->
-                              % This connection is seconday, we do not make another connection
-                              ok
-                          end;
-                        _ ->
-                          ok
-                      end
+                    {false, true} ->
+                      % We have connected to all possible primaries stop
+                      ok;
+                    {false, false} ->
+                      % We have connected to a secondary connection stop
+                      ok
                   end;
-                % ------------------------------------------------------------------------------------------ %
 
                 {error, Reason} ->
                     %% notify connection manager this EP failed and try next one
+                    gen_server:call(?SERVER, {update_ref, Ref}),
                     gen_server:cast(?SERVER, {endpoint_failed, Addr, Reason, ProtocolId}),
-                  case ConnectedToPrimary of
-                    true ->
+
+
+                  case {ConnectedToPrimary, NextAddrPrimary} of
+                    {true, true} ->
+                      connection_helper(Ref, Protocol, Strategy, Addrs, true);
+                    {true, false} ->
                       ok;
-                    false ->
+                    {false, _} ->
                       connection_helper(Ref, Protocol, Strategy, Addrs, false)
                   end
             end;
@@ -614,6 +646,12 @@ locate_endpoints({Type, Name}, Strategy, Locators) ->
 %% adjust a backoff timer so that we wait a while before
 %% trying this endpoint again.
 
+fail_endpoints([], _Reason, _ProtocolId, State) ->
+  State;
+fail_endpoints([Addr| Addrs], Reason, ProtocolId, State) ->
+  State1 = fail_endpoint(Addr, Reason, ProtocolId, State),
+  fail_endpoints(Addrs, Reason, ProtocolId, State1).
+
 -spec fail_endpoint(ip_addr(), term(), proto_id(), #state{}) -> #state{}.
 fail_endpoint(Addr, Reason, ProtocolId, State) ->
     %% update the stats module
@@ -644,13 +682,17 @@ reason_to_atom(Reason) when is_atom(Reason) ->
 reason_to_atom(_Reason) ->
     unknown_reason.
 
-connect_endpoint(Addr, State) ->
-    update_endpoint(Addr, fun(EP) ->
+
+connect_endpoint([], State) ->
+  State;
+connect_endpoint([Addr|Addrs], State) ->
+    State1 = update_endpoint(Addr, fun(EP) ->
                                   EP#ep{is_black_listed = false,
                                         nb_success = EP#ep.nb_success + 1,
                                         next_try_secs = 0,
                                         backoff_delay = 0}
-                          end, State).
+                          end, State),
+  connect_endpoint(Addrs, State1).
 
 %% Return the current backoff delay for the named Address,
 %% or if we can't find that address in the endpoints - the

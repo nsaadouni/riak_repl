@@ -92,7 +92,7 @@ ensure_pg(WantEnabled0) ->
 % CC This might need altered
 register_remote_locator() ->
     Locator = fun(Name, _Policy) ->
-            riak_core_cluster_mgr:get_ipaddrs_of_cluster(Name)
+            riak_core_cluster_mgr:get_ipaddrs_of_cluster_multifix(Name)
     end,
     ok = riak_core_connection_mgr:register_locator(proxy_get, Locator).
 

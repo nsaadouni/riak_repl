@@ -32,17 +32,22 @@ init([Remote]) ->
   ConnSup = {make_conn_2_sup_name(Remote), {riak_repl2_rtsource_conn_2_sup, start_link, [Remote]},
     permanent, ?SHUTDOWN, supervisor, [riak_repl2_rtsource_conn_2_sup]},
 
-  {ok, {{one_for_one, 10, 10}, [ConnMgr, ConnSup]}}.
+  % delete any data held on ring about connections for this remote cluster
+  riak_core_ring_manager:ring_trans(fun riak_repl_ring:delete_connection_data/2,
+    {Remote}),
+
+
+  {ok, {{one_for_one, 10, 10}, [ConnSup, ConnMgr]}}.
 
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
 
 make_module_name(Remote) ->
-  list_to_atom(lists:flatten(io_lib:format("riak_repl2_rtsource_remote_conn_sup_~p", [Remote]))).
+  list_to_atom(lists:flatten(io_lib:format("riak_repl2_rtsource_remote_conn_sup_~s", [Remote]))).
 
 make_conn_mgr_name(Remote) ->
-  list_to_atom(lists:flatten(io_lib:format("conn_mgr_~p", [Remote]))).
+  list_to_atom(lists:flatten(io_lib:format("conn_mgr_~s", [Remote]))).
 
 make_conn_2_sup_name(Remote) ->
-  list_to_atom(lists:flatten(io_lib:format("conn_2_sup_~p", [Remote]))).
+  list_to_atom(lists:flatten(io_lib:format("conn_2_sup_~s", [Remote]))).

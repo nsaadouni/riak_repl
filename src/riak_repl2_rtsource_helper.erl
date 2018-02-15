@@ -66,6 +66,8 @@ init([Remote, Transport, Socket, Version]) ->
     async_pull(State),
     {ok, State}.
 
+handle_call({pull, {error, {terminate, normal}}}, _From, State) ->
+    {stop, normal, ok, State};
 handle_call({pull, {error, Reason}}, _From, State) ->
     riak_repl_stats:rt_source_errors(),
     {stop, {queue_error, Reason}, ok, State};

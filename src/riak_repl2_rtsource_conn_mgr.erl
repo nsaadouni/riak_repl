@@ -118,6 +118,11 @@ handle_call({connected, Socket, Transport, IPPort, Proto, _Props, Primary}, _Fro
         ok ->
           %% Save {EndPoint, Pid}; Pid will come from the supervisor starting a child
           Endpoints = orddict:store(IPPort, {RtSourcePid, Primary}, E),
+
+          %% Save this also to the ring
+          riak_core_ring_manager:ring_trans(fun riak_repl_ring:add_connection_data/2,
+            {Remote, node(), {IPPort, Primary}, append}),
+
           {reply, ok, State#state{endpoints = Endpoints}};
 
         Error ->
