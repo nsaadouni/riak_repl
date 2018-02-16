@@ -120,8 +120,7 @@ handle_call({connected, Socket, Transport, IPPort, Proto, _Props, Primary}, _Fro
           Endpoints = orddict:store(IPPort, {RtSourcePid, Primary}, E),
 
           %% Save this also to the ring
-          riak_core_ring_manager:ring_trans(fun riak_repl_ring:add_connection_data/2,
-            {Remote, node(), {IPPort, Primary}, append}),
+          riak_core_cluster_mgr:add_realtime_connection_data(Remote, node(), IPPort, Primary, append),
 
           {reply, ok, State#state{endpoints = Endpoints}};
 

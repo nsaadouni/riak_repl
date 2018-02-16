@@ -33,8 +33,7 @@ init([Remote]) ->
     permanent, ?SHUTDOWN, supervisor, [riak_repl2_rtsource_conn_2_sup]},
 
   % delete any data held on ring about connections for this remote cluster
-  riak_core_ring_manager:ring_trans(fun riak_repl_ring:delete_connection_data/2,
-    {Remote}),
+  riak_core_cluster_mgr:delete_realtime_connection_data(Remote),
 
 
   {ok, {{one_for_one, 10, 10}, [ConnSup, ConnMgr]}}.
