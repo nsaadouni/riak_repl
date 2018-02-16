@@ -249,8 +249,8 @@ set_bucket_meta(Obj) ->
             M1 = orddict:store(?BT_META_TYPED_BUCKET, true, M),
             M2 = orddict:store(?BT_META_TYPE, Type, M1),
             M3 = orddict:store(?BT_META_PROPS_HASH, PropsHash, M2),
-            orddict:store(bucket_name, B, M3);
+            orddict:store(?BT_META_BUCKET_NAME, B, M3);
         B ->
             M2 = orddict:store(?BT_META_TYPED_BUCKET, false, M),
-            orddict:store(bucket_name, B, M2)
+            orddict:store(?BT_META_BUCKET_NAME, B, M2)
     end.

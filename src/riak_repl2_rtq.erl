@@ -525,14 +525,46 @@ unregister_q(Name, State = #state{qtab = QTab, cs = Cs}) ->
             {{error, not_registered}, State}
     end.
 
+filter_consumers(false, AllConsumers, _, _) -> AllConsumers;
+filter_consumers(true, AllConsumers, _, []) -> AllConsumers;
+filter_consumers(true, AllConsumers, BucketName, Buckets) ->
+    case lists:keyfind(BucketName, 1, Buckets) of
+        false ->
+            % If we can't find config, then we send everywhere
+            AllConsumers;
+        {BucketName, Clusters} ->
+            [Consumer || Consumer <- AllConsumers, lists:member(Consumer, Clusters)]
+    end;
+filter_consumers(_, AllConsumers, _, _) -> AllConsumers.
+
 push(NumItems, Bin, Meta, State = #state{qtab = QTab,
                                          qseq = QSeq,
                                          cs = Cs,
-                                         shutting_down = false}) ->
+                                         shutting_down = false,
+                                         filtered_buckets_enabled = FEnabled,
+                                         filtered_buckets = Buckets}) ->
     QSeq2 = QSeq + 1,
     QEntry = {QSeq2, NumItems, Bin, Meta},
+    AllConsumers = [Consumer#c.name || Consumer <- Cs],
+
     %% Send to any pending consumers
-    CsNames = [Consumer#c.name || Consumer <- Cs],
+    %% If bucket filtering is enabled, filter out consumers (remotes) that are not in the list of allowed clusters
+    CsNames = case FEnabled of
+                  false ->
+                      AllConsumers;
+                  true ->
+                      {ok, BucketName} = orddict:find(bucket_name, Meta),
+
+                      case lists:keyfind(BucketName, 1, Buckets) of
+                          false ->
+                              % If we can't find config, then we send everywhere
+                              AllConsumers;
+                          {BucketName, Clusters} ->
+                              [Consumer || Consumer <- AllConsumers, lists:member(Consumer, Clusters)]
+                      end
+              end,
+
+
     QEntry2 = set_local_forwards_meta(CsNames, QEntry),
     DeliverAndCs2 = [maybe_deliver_item(C, QEntry2) || C <- Cs],
     {DeliverResults, Cs2} = lists:unzip(DeliverAndCs2),
