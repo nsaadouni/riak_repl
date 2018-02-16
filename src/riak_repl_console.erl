@@ -636,7 +636,7 @@ show_block_provider_redirect([FromClusterId]) ->
 
 delete_block_provider_redirect([FromClusterId]) ->
     lager:info("Deleting redirect to ~p", [FromClusterId]),
-    riak_core_metadata:delete({<<"replication">>, <<"cluster-mapping">>}, FromClusterId).
+    riak_core_metadata:delete({<<"replication">>, <<"cluster-mapping">>}, ()).
 
 show_local_cluster_id([]) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
@@ -1062,9 +1062,10 @@ add_filtered_bucket(ClusterName, BucketName) ->
         {Ring, {ClusterName, BucketName}}),
     ok.
 
+%% Remove an association for ClusterName against BucketName - Given bucket won't be replicated to that cluster
 remove_filtered_bucket(ClusterName, BucketName) ->
     Ring = get_ring(),
-    riak_core_ring_manager:ring_trans(fun riak_repl_ring:remove_filtered_bucket/1,
+    riak_core_ring_manager:ring_trans(fun riak_repl_ring:remove_cluster_from_bucket_config/1,
         {Ring, {ClusterName, BucketName}}),
     ok.
 
@@ -1075,12 +1076,17 @@ reset_filtered_buckets() ->
 
 enable_bucket_filtering() ->
     Ring = get_ring(),
-    riak_core_ring_manager:ring_trans(fun riak_repl_ring:set_bucket_filtering_state/1, {Ring, true}).
+    riak_core_ring_manager:ring_trans(fun riak_repl_ring:set_bucket_filtering_state/1, {Ring, true}),
+    ok.
 
 disable_bucket_filtering() ->
     Ring = get_ring(),
     riak_core_ring_manager:ring_trans(fun riak_repl_ring:set_bucket_filtering_state/1, {Ring, false}),
     ok.
+
+remove_bucket_from_filtering(BucketName) ->
+    Ring = get_ring(),
+    riak_core_ring_manager:ring_trans(fun riak_repl_ring:reset_given_filtered_bucket/1, {Ring, BucketName})
 
 print_bucket_filtering_config() ->
     Ring = get_ring(),

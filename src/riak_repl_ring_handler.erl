@@ -194,24 +194,25 @@ rt_update_events(Ring) ->
     application:set_env(riak_repl, realtime_cascades, RTCascades),
 
     BucketFilteringEnabled = case dict:find(bucket_filtering_enabled, RC) of
-                                 error ->
-                                    false;
                                  {ok, V} when is_boolean(V) ->
                                      V;
                                  _ ->
                                      false
                              end,
-
+    lager:debug("[bucket filtering] enabled set to: ~p~n", [BucketFilteringEnabled]),
     application:set_env(riak_repl, bucket_filtering_enabled, BucketFilteringEnabled),
+    riak_repl2_rtq:update_filtered_bucket_state(BucketFilteringEnabled),
 
     FilteringConfig = case dict:find(filteredbuckets, RC) of
                           error ->
                               [];
                           {ok, Config} ->
+                              lager:debug("[bucket filtering] set bucket filtering config to: ~p~n", [Config]),
                               [{ClusterName, sets:from_list(Buckets)} || {ClusterName, Buckets} <- Config ]
                       end,
 
     application:set_env(riak_repl, filtered_buckets, FilteringConfig),
+    riak_repl2_rtq:update_filtered_buckets_list(FilteringConfig),
 
     %% always 'install' the hook, the postcommit hooks will be toggled by
     %% the rtenabled environment variable

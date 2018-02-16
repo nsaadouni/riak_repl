@@ -43,17 +43,13 @@
          get_nat_map/1,
          set_filtered_bucket_config/1,
          get_filtered_bucket_config/1,
-         get_filtered_bucket_config_for_cluster/2,
+         get_filtered_bucket_config_for_bucket/2,
          add_filtered_bucket/1,
-         remove_filtered_bucket/1,
+         remove_cluster_from_bucket_config/1,
          reset_filtered_buckets/1,
          set_bucket_filtering_state/1,
          get_bucket_filtering_state/1
          ]).
-
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
--endif.
 
 -spec(ensure_config/1 :: (ring()) -> ring()).
 %% @doc Ensure that Ring has replication config entry in the ring metadata dict.
@@ -513,11 +509,7 @@ check_metadata_has_changed(Ring, RC, RC2) ->
         true ->
             {ignore, {not_changed, filteredbuckets}};
         false ->
-            {new_ring, riak_core_ring:update_meta(
-                ?MODULE,
-                RC2,
-                Ring
-            )}
+            {new_ring, riak_core_ring:update_meta(?MODULE, RC2, Ring)}
     end.
 
 %% Overwrite current config of filtered buckets
@@ -533,98 +525,110 @@ get_filtered_bucket_config(Ring) ->
     get_list(filteredbuckets, Ring).
 
 %% Get the list of buckets to replicate to the cluster 'ClusterName' from the ring config
--spec get_filtered_bucket_config_for_cluster(ring(), string()) -> {atom(), [binary()]}.
-get_filtered_bucket_config_for_cluster(Ring, ClusterName) ->
+-spec get_filtered_bucket_config_for_bucket(ring(), string()) -> [binary()] | [].
+get_filtered_bucket_config_for_bucket(Ring, BucketName) ->
     case get_filtered_bucket_config(Ring) of
         [] ->
             [];
         FilteredBucketList ->
-            case lists:keyfind(ClusterName, 1, FilteredBucketList) of
+            case lists:keyfind(BucketName, 1, FilteredBucketList) of
                 false ->
                     [];
-                {ClusterName, FoundConfig} ->
+                {BucketName, FoundConfig} ->
                     FoundConfig
             end
     end.
 
-% Replace filtered bucket config for the given cluster in the ring config
-replace_filtered_config_for_cluster(Ring, ClusterName, NewConfig) ->
-    RC = get_ensured_repl_config(Ring),
+%% @doc
+%% @private
+%% Replace the config on the ring metadata for the given bucket, we can be smart and only check if data has changed on
+%% replacing the existing data
+%% @end
+-spec replace_filtered_config_for_bucket(Ring :: ring(), Metadata :: dict(), BucketName :: binary(), NewConfig :: list(list())) -> ring().
+replace_filtered_config_for_bucket(Ring, MetaData, BucketName, NewConfig) ->
+    case dict:find(filteredbuckets, MetaData) of
+        {ok, Config} ->
+            case lists:keyfind(BucketName, 1, Config) of
+                {BucketName, Config2} ->
+                    NewData = lists:keyreplace(BucketName, 1, Config2, NewConfig),
+                    RC2 = dict:store(filteredbuckets, NewData, MetaData),
+                    check_metadata_has_changed(Ring, MetaData, RC2);
+                false ->
+                    RC2 = dict:store(filteredbuckets, [{BucketName, NewConfig}], MetaData),
+                    {new_ring, riak_core_ring:update_meta(?MODULE, RC2, Ring)}
+            end;
+        error ->
+            RC2 = dict:store(filteredbuckets, [{BucketName, NewConfig}], MetaData),
+            % We know the ring has changed as we've added a new key to the metadata, so we'll return it
+            {new_ring, riak_core_ring:update_meta(?MODULE, RC2, Ring)}
+    end.
 
-    RC2 = case dict:find(filteredbuckets, RC) of
-              {ok, Config} ->
-                  NewerConfig = case lists:keyfind(ClusterName, 1, Config) of
-                                    {ClusterName, Config} ->
-                                        lists:keyreplace(ClusterName, 1, Config, {ClusterName, NewConfig});
-                                    false ->
-                                        Config
-                                end,
-                  dict:store(filteredbuckets, NewerConfig, RC);
-              error ->
-                  dict:store(filteredbuckets, [{ClusterName, NewConfig}], RC)
-          end,
-    check_metadata_has_changed(Ring, RC, RC2).
-
-% Add a bucket to our list of filtered buckets in the Ring config
+%% @doc
+%% Add a bucket filtering association to the metadata on the ring. Is stored in the ring metadata as a list of
+%% bucket -> [list of clusters]
+%% @end
+-spec add_filtered_bucket({Ring :: ring(), {ToClusterName :: string(), BucketName :: binary()}}) -> ring().
 add_filtered_bucket({Ring, {ToClusterName, BucketName}}) ->
     ClusterName = riak_core_connection:symbolic_clustername(),
     do_add_filtered_bucket(Ring, ClusterName, ToClusterName, BucketName).
 
-%% You can't add a bucket to be replicated to yourself, would add useless data to the ring metadata
-do_add_filtered_bucket(_Ring, ClusterName, ClusterName, _BucketName) ->
+-spec do_add_filtered_bucket(Ring :: ring(), FromClusterName :: list(), ToClusterName :: list(), BucketName :: binary()) -> ring().
+do_add_filtered_bucket(_Ring, ClusterName, ClusterName, BucketName) ->
+    % You can't add a bucket to be replicated to yourself, so ignore if that happens
+    lager:warning("tried to add bucket ~s to be filtered to the current cluster", [BucketName]),
     {ignore, {filteredbuckets, same_host}};
 do_add_filtered_bucket(Ring, _FromClusterName, ToClusterName, BucketName) ->
     RC = get_ensured_repl_config(Ring),
 
     %% Get the filtered buckets we currently have
-    ListOfBuckets = get_filtered_bucket_config_for_cluster(Ring, ToClusterName),
+    ClustersToReplicateTo = get_filtered_bucket_config_for_bucket(Ring, BucketName),
 
-    NewBuckets = case lists:member(BucketName, ListOfBuckets) of
-                     true ->
-                         {ignore, {filteredbuckets, bucket_exists}};
-                     false ->
-                         [BucketName | ListOfBuckets]
-                 end,
-    RC2 = replace_filtered_config_for_cluster(Ring, ToClusterName, NewBuckets),
-    check_metadata_has_changed(Ring, RC, RC2).
-
-% Remove a bucket from the list of filtered buckets
-remove_filtered_bucket({Ring, {Cluster, Bucket}}) ->
-    RC = get_ensured_repl_config(Ring),
-
-    Config = get_filtered_bucket_config_for_cluster(Ring, Cluster),
-    Config2 = lists:delete(Bucket, Config),
-
-    RC2 = replace_filtered_config_for_cluster(Ring, Cluster, Config2),
-    check_metadata_has_changed(Ring, RC, RC2).
-
-% Reset the list of filtered buckets which is stored on the ring - this erases all config!
-reset_filtered_buckets(Ring) ->
-    RC = get_ensured_repl_config(Ring),
-    % We can just delete the entire set of data as our add function deals with the key missing
-    RC2 = dict:erase(filteredbuckets, RC),
-
-    check_metadata_has_changed(Ring, RC, RC2).
+    case lists:member(ToClusterName, ClustersToReplicateTo) of
+        true ->
+            {ignore, {filteredbuckets, bucket_exists}};
+        false ->
+            NewClusterConfig = [ToClusterName | ClustersToReplicateTo],
+            replace_filtered_config_for_bucket(Ring, RC, BucketName, NewClusterConfig)
+    end.
 
 % We can enable / disable filtered replication on our side via the ring
-% TODO: how do we ensure both sides have filtered replication turned on? If only one side has it turned on we will
-% have issues doing key diffs between source & sink sides
-set_bucket_filtering_state({Ring, Status}) when is_boolean(Status) ->
+-spec set_bucket_filtering_state({Ring :: ring(), Enabled :: boolean()}) -> ring().
+set_bucket_filtering_state({Ring, Enabled}) when is_boolean(Enabled) ->
     RC = get_ensured_repl_config(Ring),
-    RC2 = dict:store(bucket_filtering_enabled, Status, RC),
+    RC2 = dict:store(bucket_filtering_enabled, Enabled, RC),
     check_metadata_has_changed(Ring, RC, RC2).
 
 %% Return a boolean which tells you if bucket filtering is enabled or not
+-spec get_bucket_filtering_state(Ring :: ring()) -> [] | proplists:proplist().
 get_bucket_filtering_state(Ring) ->
     RC = get_ensured_repl_config(Ring),
     case dict:find(bucket_filtering_enabled, RC) of
         {ok, V} -> V;
-        error -> false
+        error   -> []
     end.
+
+-spec remove_cluster_from_bucket_config({Ring :: ring(), {Cluster :: list(), Bucket :: binary()}}) -> ring().
+remove_cluster_from_bucket_config({Ring, {Cluster, Bucket}}) ->
+    RC = get_ensured_repl_config(Ring),
+
+    case get_filtered_bucket_config_for_bucket(Ring, Bucket) of
+        [] ->
+            {ignore, {filtered_buckets, not_changed}};
+        Config ->
+            Config2 = lists:delete(Cluster, Config),
+            replace_filtered_config_for_bucket(Ring, RC, Bucket, Config2)
+    end.
+
+-spec reset_filtered_buckets(Ring :: ring()) -> ring().
+reset_filtered_buckets(Ring) ->
+    RC = get_ensured_repl_config(Ring),
+    RC2 = dict:erase(filteredbuckets, RC),
+    check_metadata_has_changed(Ring, RC, RC2).
 
 %% unit tests
 
 -ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
 
 mock_ring() ->
     riak_core_ring:fresh(16, 'test@test').

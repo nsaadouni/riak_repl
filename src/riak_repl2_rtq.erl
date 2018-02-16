@@ -41,8 +41,7 @@
          shutdown/0,
          stop/0,
          is_running/0,
-         update_filtered_bucket_state/0,
-         update_filtered_buckets_list/0]).
+         update_filtered_bucket_state/1]).
 % private api
 -export([report_drops/1]).
 
@@ -73,7 +72,7 @@
                 qsize_bytes = 0,
                 word_size=erlang:system_info(wordsize),
                 filtered_buckets_enabled = false, % is bucket filtering enabled?
-                filtered_buckets = []             % buckets to filter if bucket filtering is enabled
+                filtered_buckets = []
                }).
 
 % Consumers
@@ -408,12 +407,14 @@ handle_call({push, NumItems, Bin, Meta}, _From, State) ->
 handle_call({ack_sync, Name, Seq}, _From, State) ->
     {reply, ok, ack_seq(Name, Seq, State)};
 
-handle_call({filtered_buckets, update_buckets}, _From, State) ->
-    Buckets = app_helper:get_env(riak_repl, filtered_buckets),
-    {reply, ok, State#state{filtered_buckets = Buckets}};
-handle_call({filtered_buckets, update_bucket_filtering_state}, _From, State) ->
-    BucketFilteredEnabling = app_helper:get_env(riak_repl, bucket_filtering_enabled),
-    {reply, ok, State#state{filtered_buckets_enabled = BucketFilteredEnabling}}.
+handle_call({filtered_buckets, update_bucket_filtering_state, Enabled}, _From, State) when is_boolean(Enabled) ->
+    {reply, ok, State#state{filtered_buckets_enabled = Enabled}};
+handle_call({filtered_buckets, update_bucket_filtering_state, InvalidState}, _From, State) ->
+    lager:warning("[~s] invalid value of bucket filtering enabled: '~p'~n", [?MODULE, InvalidState]),
+    {reply, ok, State};
+
+handle_call({filtered_buckets, update_buckets, BucketList}, _From, State) ->
+    {reply, ok, State#state{filtered_buckets = BucketList}}.
 
 % ye previous cast. rtq_proxy may send us an old pattern.
 handle_cast({push, NumItems, Bin}, State) ->
@@ -554,7 +555,7 @@ push(NumItems, Bin, Meta, State = #state{shutting_down = true}) ->
 
 pull(Name, DeliverFun, State = #state{qtab = QTab, qseq = QSeq, cs = Cs}) ->
     CsNames = [Consumer#c.name || Consumer <- Cs],
-     UpdCs = case lists:keytake(Name, #c.name, Cs) of
+    UpdCs = case lists:keytake(Name, #c.name, Cs) of
                 {value, C, Cs2} ->
                     [maybe_pull(QTab, QSeq, C, CsNames, DeliverFun) | Cs2];
                 false ->
@@ -566,7 +567,7 @@ pull(Name, DeliverFun, State = #state{qtab = QTab, qseq = QSeq, cs = Cs}) ->
 maybe_pull(QTab, QSeq, C = #c{cseq = CSeq}, CsNames, DeliverFun) ->
     CSeq2 = CSeq + 1,
     case CSeq2 =< QSeq of
-        true -> % something reday
+        true -> % something ready
             case ets:lookup(QTab, CSeq2) of
                 [] -> % entry removed, due to previously being unroutable
                     C2 = C#c{skips = C#c.skips + 1, cseq = CSeq2},
@@ -749,11 +750,11 @@ trim_q_entries(QTab, MaxBytes, Cs, State, Entries, Objects) ->
             end
     end.
 
-update_filtered_buckets_list() ->
-    gen_server:call(?SERVER, {filtered_buckets, update_buckets}).
+update_filtered_bucket_state(Enabled) ->
+    gen_server:call(?SERVER, {filtered_buckets, update_bucket_filtering_state, Enabled}).
 
-update_filtered_bucket_state() ->
-    gen_server:call(?SERVER, {filtered_buckets, update_bucket_filtering_state}).
+update_filtered_buckets_list(FilteringConfig) ->
+    gen_server:call(?SERVER, {filtered_buckets, update_buckets, FilteringConfig}).
 
 -ifdef(TEST).
 qbytes(_QTab, #state{qsize_bytes = QSizeBytes}) ->
