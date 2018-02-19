@@ -48,7 +48,8 @@
          remove_cluster_from_bucket_config/1,
          reset_filtered_buckets/1,
          set_bucket_filtering_state/1,
-         get_bucket_filtering_state/1
+         get_bucket_filtering_state/1,
+         remove_filtered_bucket/1
          ]).
 
 -spec(ensure_config/1 :: (ring()) -> ring()).
@@ -624,6 +625,19 @@ reset_filtered_buckets(Ring) ->
     RC = get_ensured_repl_config(Ring),
     RC2 = dict:erase(filteredbuckets, RC),
     check_metadata_has_changed(Ring, RC, RC2).
+
+remove_filtered_bucket({Ring, BucketName}) ->
+    RC = get_ensured_repl_config(Ring),
+    {ok, BucketConfig} = dict:find(filteredbuckets, RC),
+    case lists:keyfind(BucketName, 1, BucketConfig) of
+        false ->
+            {ignore, {filtered_buckets, not_changed}};
+        _ ->
+            BucketConfig2 = lists:keydelete(BucketName, 1, BucketConfig),
+            RC3 = dict:store(filteredbuckets, BucketConfig2, RC),
+            check_metadata_has_changed(Ring, RC, RC3)
+    end.
+
 
 %% unit tests
 

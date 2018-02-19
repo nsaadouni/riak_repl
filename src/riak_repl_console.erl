@@ -1086,7 +1086,7 @@ disable_bucket_filtering() ->
 
 remove_bucket_from_filtering(BucketName) ->
     Ring = get_ring(),
-    riak_core_ring_manager:ring_trans(fun riak_repl_ring:reset_given_filtered_bucket/1, {Ring, BucketName})
+    riak_core_ring_manager:ring_trans(fun riak_repl_ring:remove_filtered_bucket/1, {Ring, BucketName}).
 
 print_bucket_filtering_config() ->
     Ring = get_ring(),
