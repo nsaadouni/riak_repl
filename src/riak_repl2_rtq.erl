@@ -609,8 +609,22 @@ maybe_pull(QTab, QSeq, C = #c{cseq = CSeq, name = CName}, DeliverFun, FilteringE
 
                     case {FilteringEnabled, AllowedRemotes} of
                         {true, Config} when Config /= [] ->
-                            %% TODO
-                            ok;
+                            case lists:member(CName, Config) of
+                                true ->
+                                    % if the item can't be delivered due to cascading rt,
+                                    % just keep trying.
+                                    case maybe_deliver_item(C#c{deliver = DeliverFun}, QEntry) of
+                                        {skipped, C2} ->
+                                            maybe_pull(QTab, QSeq, C2, DeliverFun, FilteringEnabled, FilteredBuckets);
+                                        {_WorkedOrNoFun, C2} ->
+                                            C2
+                                    end;
+                                false ->
+                                    % TODO Return this or return error and do a merge_consumers above?
+                                    % thinking: we can't do anything so skip and increase seq number so we don't see it again
+                                    % we need to act as if it was delivered
+                                    C#c{skips = 0, cseq = CSeq2, deliver = undefined, delivered = true}
+                            end;
                         _ ->
                             % if the item can't be delivered due to cascading rt,
                             % just keep trying.
@@ -629,7 +643,7 @@ maybe_pull(QTab, QSeq, C = #c{cseq = CSeq, name = CName}, DeliverFun, FilteringE
     end.
 
 maybe_deliver_item(C = #c{deliver = undefined}, QEntry) ->
-    {_Seq, _NumItem, _Bin, Meta} = QEntry,
+    {_Seq, _NumItem, _Bin, Meta, _BucketAndAllowedRemotes} = QEntry,
     Name = C#c.name,
     Routed = case orddict:find(routed_clusters, Meta) of
         error -> [];
@@ -643,7 +657,7 @@ maybe_deliver_item(C = #c{deliver = undefined}, QEntry) ->
     end,
     {Cause, C};
 maybe_deliver_item(C, QEntry) ->
-    {Seq, _NumItem, _Bin, Meta} = QEntry,
+    {Seq, _NumItem, _Bin, Meta, _BucketAndAllowedRemotes} = QEntry,
     #c{name = Name} = C,
     Routed = case orddict:find(routed_clusters, Meta) of
         error -> [];
@@ -659,7 +673,7 @@ maybe_deliver_item(C, QEntry) ->
             {delivered, deliver_item(C, C#c.deliver, QEntry)}
     end.
 
-deliver_item(C, DeliverFun, {Seq,_NumItem, _Bin, _Meta} = QEntry) ->
+deliver_item(C, DeliverFun, {Seq,_NumItem, _Bin, _Meta, _} = QEntry) ->
     try
         Seq = C#c.cseq + 1, % bit of paranoia, remove after EQC
         QEntry2 = set_skip_meta(QEntry, Seq, C),
@@ -689,7 +703,7 @@ set_skip_meta(QEntry, _Seq, _C = #c{skips = S}) ->
 set_local_forwards_meta(LocalForwards, QEntry) ->
     set_meta(QEntry, local_forwards, LocalForwards).
 
-set_meta({_Seq, _NumItems, _Bin, Meta} = QEntry, Key, Value) ->
+set_meta({_Seq, _NumItems, _Bin, Meta, _} = QEntry, Key, Value) ->
     Meta2 = orddict:store(Key, Value, Meta),
     setelement(4, QEntry, Meta2).
 
@@ -699,7 +713,7 @@ cleanup(_QTab, '$end_of_table', State) ->
 cleanup(QTab, Seq, State) ->
     case ets:lookup(QTab, Seq) of
         [] -> cleanup(QTab, ets:prev(QTab, Seq), State);
-        [{_, _, Bin, _Meta}] ->
+        [{_, _, Bin, _Meta, _}] ->
            ShrinkSize = ets_obj_size(Bin, State),
            NewState = update_q_size(State, -ShrinkSize),
            ets:delete(QTab, Seq),
@@ -757,10 +771,10 @@ trim_q(State = #state{qtab = QTab, qseq = QSeq, max_bytes = MaxBytes}) ->
 merge_consumers(AllConsumers, FilteredConsumers) ->
     merge_consumers(AllConsumers, FilteredConsumers, []).
 
-merge_consumers(_, _, Acc) ->
-    Acc;
-merge_consumers(Consumers, [], _) ->
+merge_consumers(Consumers, [], []) ->
     Consumers;
+merge_consumers([], _, Acc) ->
+    Acc;
 merge_consumers([C = #c{name = Name} | Rest], FilteredConsumers, Acc) ->
     case lists:keytake(Name, #c.name, FilteredConsumers) of
         {value, C2, _} ->
@@ -786,7 +800,7 @@ trim_q_entries(QTab, MaxBytes, Cs, State, Entries, Objects) ->
         '$end_of_table' ->
             {Cs, State, Entries, Objects};
         TrimSeq ->
-            [{_, NumObjects, Bin, _Meta}] = ets:lookup(QTab, TrimSeq),
+            [{_, NumObjects, Bin, _Meta, _}] = ets:lookup(QTab, TrimSeq),
             ShrinkSize = ets_obj_size(Bin, State),
             NewState = update_q_size(State, -ShrinkSize),
             ets:delete(QTab, TrimSeq),

@@ -44,7 +44,8 @@
     reset_filtered_buckets/0,
     enable_bucket_filtering/0,
     disable_bucket_filtering/0,
-    print_bucket_filtering_config/0
+    print_bucket_filtering_config/0,
+    remove_bucket_from_filtering/1
 ]).
 
 add_listener(Params) ->
