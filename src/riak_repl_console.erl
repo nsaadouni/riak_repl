@@ -636,7 +636,7 @@ show_block_provider_redirect([FromClusterId]) ->
 
 delete_block_provider_redirect([FromClusterId]) ->
     lager:info("Deleting redirect to ~p", [FromClusterId]),
-    riak_core_metadata:delete({<<"replication">>, <<"cluster-mapping">>}, ()).
+    riak_core_metadata:delete({<<"replication">>, <<"cluster-mapping">>}, FromClusterId).
 
 show_local_cluster_id([]) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
