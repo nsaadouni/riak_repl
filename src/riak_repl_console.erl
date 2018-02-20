@@ -39,8 +39,8 @@
          delete_block_provider_redirect/1
      ]).
 -export([
-    add_filtered_bucket/2,
-    remove_filtered_bucket/2,
+    add_filtered_bucket/1,
+    remove_filtered_bucket/1,
     reset_filtered_buckets/0,
     enable_bucket_filtering/0,
     disable_bucket_filtering/0,
@@ -1057,14 +1057,15 @@ simple_parse(Str) ->
     {value, Value, _Bs} = erl_eval:exprs(AbsForm, erl_eval:new_bindings()),
     Value.
 
-add_filtered_bucket(ClusterName, BucketName) ->
+add_filtered_bucket([ClusterName, BucketName]) ->
+    lager:info("add filtered bucket: ~s, allowed to route to: ~p~s", [ClusterName, BucketName]),
     Ring = get_ring(),
     riak_core_ring_manager:ring_trans(fun riak_repl_ring:add_filtered_bucket/1,
         {Ring, {ClusterName, BucketName}}),
     ok.
 
 %% Remove an association for ClusterName against BucketName - Given bucket won't be replicated to that cluster
-remove_filtered_bucket(ClusterName, BucketName) ->
+remove_filtered_bucket([ClusterName, BucketName]) ->
     Ring = get_ring(),
     riak_core_ring_manager:ring_trans(fun riak_repl_ring:remove_cluster_from_bucket_config/1,
         {Ring, {ClusterName, BucketName}}),
@@ -1085,7 +1086,7 @@ disable_bucket_filtering() ->
     riak_core_ring_manager:ring_trans(fun riak_repl_ring:set_bucket_filtering_state/1, {Ring, false}),
     ok.
 
-remove_bucket_from_filtering(BucketName) ->
+remove_bucket_from_filtering([BucketName]) ->
     Ring = get_ring(),
     riak_core_ring_manager:ring_trans(fun riak_repl_ring:remove_filtered_bucket/1, {Ring, BucketName}).
 
