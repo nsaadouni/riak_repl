@@ -1061,14 +1061,14 @@ add_filtered_bucket([ClusterName, BucketName]) ->
     lager:info("add filtered bucket: ~s, allowed to route to: ~p~s", [ClusterName, BucketName]),
     Ring = get_ring(),
     riak_core_ring_manager:ring_trans(fun riak_repl_ring:add_filtered_bucket/1,
-        {Ring, {binary_to_list(ClusterName), BucketName}}),
+        {Ring, {ClusterName, list_to_binary(BucketName)}}),
     ok.
 
 %% Remove an association for ClusterName against BucketName - Given bucket won't be replicated to that cluster
 remove_filtered_bucket([ClusterName, BucketName]) ->
     Ring = get_ring(),
     riak_core_ring_manager:ring_trans(fun riak_repl_ring:remove_cluster_from_bucket_config/1,
-        {Ring, {binary_to_list(ClusterName), BucketName}}),
+        {Ring, {ClusterName, list_to_binary(BucketName)}}),
     ok.
 
 reset_filtered_buckets([]) ->
@@ -1088,7 +1088,8 @@ disable_bucket_filtering([]) ->
 
 remove_bucket_from_filtering([BucketName]) ->
     Ring = get_ring(),
-    riak_core_ring_manager:ring_trans(fun riak_repl_ring:remove_filtered_bucket/1, {Ring, BucketName}).
+    riak_core_ring_manager:ring_trans(fun riak_repl_ring:remove_filtered_bucket/1, {Ring, list_to_binary(BucketName)}),
+    ok.
 
 print_bucket_filtering_config([]) ->
     Ring = get_ring(),
