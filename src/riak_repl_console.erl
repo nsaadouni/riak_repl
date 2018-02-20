@@ -1060,35 +1060,30 @@ simple_parse(Str) ->
 add_filtered_bucket([ClusterName, BucketName]) ->
     lager:info("add filtered bucket: ~s, allowed to route to: ~p~s", [ClusterName, BucketName]),
     Ring = get_ring(),
-    riak_core_ring_manager:ring_trans(fun riak_repl_ring:add_filtered_bucket/1,
-        {Ring, {ClusterName, list_to_binary(BucketName)}}),
+    riak_core_ring_manager:ring_trans(fun riak_repl_ring:add_filtered_bucket/2,
+        {ClusterName, list_to_binary(BucketName)}),
     ok.
 
 %% Remove an association for ClusterName against BucketName - Given bucket won't be replicated to that cluster
 remove_filtered_bucket([ClusterName, BucketName]) ->
-    Ring = get_ring(),
-    riak_core_ring_manager:ring_trans(fun riak_repl_ring:remove_cluster_from_bucket_config/1,
-        {Ring, {ClusterName, list_to_binary(BucketName)}}),
+    riak_core_ring_manager:ring_trans(fun riak_repl_ring:remove_cluster_from_bucket_config/2,
+        {ClusterName, list_to_binary(BucketName)}),
     ok.
 
 reset_filtered_buckets([]) ->
-    Ring = get_ring(),
-    riak_core_ring_manager:ring_trans(fun riak_repl_ring:reset_filtered_buckets/1, Ring),
+    riak_core_ring_manager:ring_trans(fun riak_repl_ring:reset_filtered_buckets/2, []),
     ok.
 
 enable_bucket_filtering([]) ->
-    Ring = get_ring(),
-    riak_core_ring_manager:ring_trans(fun riak_repl_ring:set_bucket_filtering_state/1, {Ring, true}),
+    riak_core_ring_manager:ring_trans(fun riak_repl_ring:set_bucket_filtering_state/2, true),
     ok.
 
 disable_bucket_filtering([]) ->
-    Ring = get_ring(),
-    riak_core_ring_manager:ring_trans(fun riak_repl_ring:set_bucket_filtering_state/1, {Ring, false}),
+    riak_core_ring_manager:ring_trans(fun riak_repl_ring:set_bucket_filtering_state/2, false),
     ok.
 
 remove_bucket_from_filtering([BucketName]) ->
-    Ring = get_ring(),
-    riak_core_ring_manager:ring_trans(fun riak_repl_ring:remove_filtered_bucket/1, {Ring, list_to_binary(BucketName)}),
+    riak_core_ring_manager:ring_trans(fun riak_repl_ring:remove_filtered_bucket/2, list_to_binary(BucketName)),
     ok.
 
 print_bucket_filtering_config([]) ->

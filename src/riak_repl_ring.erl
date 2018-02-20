@@ -44,12 +44,12 @@
          set_filtered_bucket_config/1,
          get_filtered_bucket_config/1,
          get_filtered_bucket_config_for_bucket/2,
-         add_filtered_bucket/1,
-         remove_cluster_from_bucket_config/1,
-         reset_filtered_buckets/1,
-         set_bucket_filtering_state/1,
+         add_filtered_bucket/2,
+         remove_cluster_from_bucket_config/2,
+         reset_filtered_buckets/2,
+         set_bucket_filtering_state/2,
          get_bucket_filtering_state/1,
-         remove_filtered_bucket/1
+         remove_filtered_bucket/2
          ]).
 
 -spec(ensure_config/1 :: (ring()) -> ring()).
@@ -568,8 +568,8 @@ replace_filtered_config_for_bucket(Ring, MetaData, BucketName, NewConfig) ->
 %% Add a bucket filtering association to the metadata on the ring. Is stored in the ring metadata as a list of
 %% bucket -> [list of clusters]
 %% @end
--spec add_filtered_bucket({Ring :: ring(), {ToClusterName :: list(), BucketName :: binary()}}) -> ring().
-add_filtered_bucket({Ring, {ToClusterName, BucketName}}) when is_list(ToClusterName) andalso is_binary(BucketName) ->
+-spec add_filtered_bucket(Ring :: ring(), {ToClusterName :: list(), BucketName :: binary()}) -> ring().
+add_filtered_bucket(Ring, {ToClusterName, BucketName}) when is_list(ToClusterName) andalso is_binary(BucketName) ->
     ClusterName = riak_core_connection:symbolic_clustername(),
     do_add_filtered_bucket(Ring, ClusterName, ToClusterName, BucketName).
 
@@ -593,8 +593,8 @@ do_add_filtered_bucket(Ring, _FromClusterName, ToClusterName, BucketName) ->
     end.
 
 % We can enable / disable filtered replication on our side via the ring
--spec set_bucket_filtering_state({Ring :: ring(), Enabled :: boolean()}) -> ring().
-set_bucket_filtering_state({Ring, Enabled}) when is_boolean(Enabled) ->
+-spec set_bucket_filtering_state(Ring :: ring(), Enabled :: boolean()) -> ring().
+set_bucket_filtering_state(Ring, Enabled) when is_boolean(Enabled) ->
     RC = get_ensured_repl_config(Ring),
     RC2 = dict:store(bucket_filtering_enabled, Enabled, RC),
     check_metadata_has_changed(Ring, RC, RC2).
@@ -608,8 +608,8 @@ get_bucket_filtering_state(Ring) ->
         error   -> []
     end.
 
--spec remove_cluster_from_bucket_config({Ring :: ring(), {Cluster :: list(), Bucket :: binary()}}) -> ring().
-remove_cluster_from_bucket_config({Ring, {Cluster, Bucket}}) ->
+-spec remove_cluster_from_bucket_config(Ring :: ring(), {Cluster :: list(), Bucket :: binary()}) -> ring().
+remove_cluster_from_bucket_config(Ring, {Cluster, Bucket}) ->
     RC = get_ensured_repl_config(Ring),
 
     case get_filtered_bucket_config_for_bucket(Ring, Bucket) of
@@ -620,13 +620,13 @@ remove_cluster_from_bucket_config({Ring, {Cluster, Bucket}}) ->
             replace_filtered_config_for_bucket(Ring, RC, Bucket, Config2)
     end.
 
--spec reset_filtered_buckets(Ring :: ring()) -> ring().
-reset_filtered_buckets(Ring) ->
+-spec reset_filtered_buckets(Ring :: ring(), NoParams :: []) -> ring().
+reset_filtered_buckets(Ring, _) ->
     RC = get_ensured_repl_config(Ring),
     RC2 = dict:erase(filteredbuckets, RC),
     check_metadata_has_changed(Ring, RC, RC2).
 
-remove_filtered_bucket({Ring, BucketName}) ->
+remove_filtered_bucket(Ring, BucketName) ->
     RC = get_ensured_repl_config(Ring),
     {ok, BucketConfig} = dict:find(filteredbuckets, RC),
     case lists:keyfind(BucketName, 1, BucketConfig) of
@@ -654,13 +654,13 @@ ensure_config_test() ->
 
 bucket_filtering_enable_test() ->
     Ring = ensure_config_test(),
-    {new_ring, Ring2} = set_bucket_filtering_state({Ring, true}),
+    {new_ring, Ring2} = set_bucket_filtering_state(Ring, true),
     ?assertEqual(true, get_bucket_filtering_state(Ring2)),
     Ring2.
 
 bucket_filtering_can_disable_test() ->
     Ring = bucket_filtering_enable_test(),
-    {new_ring, Ring2} = set_bucket_filtering_state({Ring, false}),
+    {new_ring, Ring2} = set_bucket_filtering_state(Ring, false),
     ?assertEqual(false, get_bucket_filtering_state(Ring2)),
     Ring2.
 
