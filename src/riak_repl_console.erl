@@ -41,10 +41,10 @@
 -export([
     add_filtered_bucket/1,
     remove_filtered_bucket/1,
-    reset_filtered_buckets/0,
-    enable_bucket_filtering/0,
-    disable_bucket_filtering/0,
-    print_bucket_filtering_config/0,
+    reset_filtered_buckets/1,
+    enable_bucket_filtering/1,
+    disable_bucket_filtering/1,
+    print_bucket_filtering_config/1,
     remove_bucket_from_filtering/1
 ]).
 
@@ -1071,17 +1071,17 @@ remove_filtered_bucket([ClusterName, BucketName]) ->
         {Ring, {ClusterName, BucketName}}),
     ok.
 
-reset_filtered_buckets() ->
+reset_filtered_buckets([]) ->
     Ring = get_ring(),
     riak_core_ring_manager:ring_trans(fun riak_repl_ring:reset_filtered_buckets/1, Ring),
     ok.
 
-enable_bucket_filtering() ->
+enable_bucket_filtering([]) ->
     Ring = get_ring(),
     riak_core_ring_manager:ring_trans(fun riak_repl_ring:set_bucket_filtering_state/1, {Ring, true}),
     ok.
 
-disable_bucket_filtering() ->
+disable_bucket_filtering([]) ->
     Ring = get_ring(),
     riak_core_ring_manager:ring_trans(fun riak_repl_ring:set_bucket_filtering_state/1, {Ring, false}),
     ok.
@@ -1090,7 +1090,7 @@ remove_bucket_from_filtering([BucketName]) ->
     Ring = get_ring(),
     riak_core_ring_manager:ring_trans(fun riak_repl_ring:remove_filtered_bucket/1, {Ring, BucketName}).
 
-print_bucket_filtering_config() ->
+print_bucket_filtering_config([]) ->
     Ring = get_ring(),
     IsEnabled = atom_to_list(riak_repl_ring:get_bucket_filtering_state(Ring)),
     BucketConfig = riak_repl_ring:get_filtered_bucket_config(Ring),
