@@ -95,9 +95,7 @@
          stop/0,
          connect_to_clusters/0,
          shuffle_remote_ipaddrs/1,
-         get_my_remote_ip_list/1,
-         add_realtime_connection_data/5,
-         delete_realtime_connection_data/1
+         get_my_remote_ip_list/1
          ]).
 
 %% gen_server callbacks
@@ -211,11 +209,6 @@ stop() ->
 set_gc_interval(Interval) ->
     gen_server:cast(?SERVER, {set_gc_interval, Interval}).
 
-add_realtime_connection_data(Remote, Node, IPPort, Primary, Action) ->
-  gen_server:cast(?SERVER, {add_realtime_connection_data, Remote, Node, IPPort, Primary, Action}).
-
-delete_realtime_connection_data(Remote) ->
-  gen_server:cast(?SERVER, {delete_realtime_connection_data, Remote}).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -416,29 +409,6 @@ handle_cast({cluster_updated, OldName, NewName, Members, Addr, Remote}, State) -
             %% connection to that cluster is denied
             {noreply, State}
     end;
-
-handle_cast({add_realtime_connection_data, Remote, Node, IPPort, Primary, Action}, State) ->
-    case State#state.is_leader of
-      false ->
-        %% forward request to leader manager
-        proxy_cast({add_realtime_connection_data, Remote, Node, IPPort, Primary, Action}, State);
-      true ->
-        riak_core_ring_manager:ring_trans(fun riak_repl_ring:add_connection_data/2,
-          {Remote, Node, {IPPort, Primary}, Action})
-    end,
-  {noreply, State};
-
-handle_cast({delete_realtime_connection_data, Remote}, State) ->
-  case State#state.is_leader of
-    false ->
-      % if its false we do not want to do anything (we only do this once)
-      ok;
-    true ->
-      riak_core_ring_manager:ring_trans(fun riak_repl_ring:delete_connection_data/2,
-        {Remote})
-  end,
-  {noreply, State};
-
 
 handle_cast(_Unhandled, _State) ->
     lager:debug("Unhandled gen_server cast: ~p", [_Unhandled]),
@@ -885,4 +855,3 @@ get_my_remote_ip_list(RemoteUnsorted) ->
       % Therefore should not connect to the othe cluster as part of repl for this
       {ok, []}
   end.
-

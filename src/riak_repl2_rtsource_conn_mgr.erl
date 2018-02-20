@@ -25,15 +25,17 @@
   connected/7,
   connect_failed/3,
   maybe_rebalance_delayed/1,
-  kill_connection/2
+  kill_connection/2,
+  set_leader/3
+
 ]).
 
 -define(SERVER, ?MODULE).
-
+-define(PROXY_CALL_TIMEOUT, 30 * 1000).
 -define(SHUTDOWN, 5000). % how long to give rtsource processes to persist queue/shutdown
 
 -define(CLIENT_SPEC, {{realtime,[{3,0}, {2,0}, {1,5}]},
-  {?TCP_OPTIONS, ?MODULE, self()}}).
+  {?TCP_OPTIONS, ?SERVER, self()}}).
 
 -define(TCP_OPTIONS,  [{keepalive, true},
   {nodelay, true},
@@ -41,13 +43,18 @@
   {active, false}]).
 
 -record(state, {
+
+  leader_node = undefined,
+  is_leader = false,
+  leader_endpoints,
+
   remote, % remote sink cluster name
   connection_ref, % reference handed out by connection manager
   rtsource_conn_sup, % The module name of the supervisor to start the child when we get a connection passed to us
   rb_timeout_tref, % Rebalance timeout timer reference
 
 
-  endpoints
+  local_endpoints
   % Want a store for the following information
   % Key = {IP, Port}; Value = {Primary, Pid}    [Pid will be the Pid of the rtsource_conn]
   % This information will aid the reblancing process!
@@ -63,7 +70,11 @@
 
 
 start_link([Remote]) ->
-  gen_server:start_link(?MODULE, [Remote], []).
+  gen_server:start_link({global, make_global_name(Remote, node())}, ?MODULE, [Remote], []).
+
+make_global_name(Remote,Node) ->
+  list_to_atom(lists:flatten(io_lib:format("riak_repl2_rtsource_conn_mgr_~s_~s", [Remote, Node]))).
+
 
 % Replacement for connected from rtsource_conn! (This needs to be changed in riak_core_connection (gen_fsm)
 % I do not have information regarding the connection type (primary or secondary)
@@ -88,6 +99,10 @@ maybe_rebalance_delayed(_Pid) ->
 %%  gen_server:cast(Pid, rebalance_delayed).
 
 
+set_leader(Pid, LeaderNode, _LeaderPid) ->
+  gen_server:cast(Pid, {set_leader_node, LeaderNode}).
+
+
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
@@ -101,8 +116,18 @@ init([Remote]) ->
       _ = riak_repl2_rtq:register(Remote), % re-register to reset stale deliverfun
       lager:debug("connection ref ~p", [Ref]),
       S = riak_repl2_rtsource_conn_2_sup:make_module_name(Remote),
-      E = orddict:new(),
-      {ok, #state{remote = Remote, connection_ref = Ref, rtsource_conn_sup = S, endpoints = E}};
+      LocalE = orddict:new(),
+      LeaderE = orddict:new(),
+      Leader = riak_repl2_leader:leader_node(),
+      IsLeader = riak_repl2_leader:is_leader(),
+
+      % will need to delete the stuff at start (if leader)
+      % when is leader decided?
+%%      riak_core_ring_manager:ring_trans(fun riak_repl_ring:delete_realtime_connection_data/2,
+%%        {Remote, node()}),
+
+      {ok, #state{remote = Remote, connection_ref = Ref, rtsource_conn_sup = S,
+        local_endpoints = LocalE, leader_endpoints = LeaderE, is_leader = IsLeader, leader_node = Leader}};
     {error, Reason}->
       lager:warning("Error connecting to remote"),
       {stop, Reason}
@@ -110,7 +135,7 @@ init([Remote]) ->
 
 %%%=====================================================================================================================
 handle_call({connected, Socket, Transport, IPPort, Proto, _Props, Primary}, _From,
-    State = #state{rtsource_conn_sup = S, remote = Remote, endpoints = E}) ->
+    State = #state{rtsource_conn_sup = S, remote = Remote, local_endpoints = E}) ->
 
   case start_rtsource_conn(Remote, S) of
     {ok, RtSourcePid} ->
@@ -119,21 +144,15 @@ handle_call({connected, Socket, Transport, IPPort, Proto, _Props, Primary}, _Fro
           %% Save {EndPoint, Pid}; Pid will come from the supervisor starting a child
           Endpoints = orddict:store(IPPort, {RtSourcePid, Primary}, E),
 
-          %% Save this also to the ring
-          riak_core_cluster_mgr:add_realtime_connection_data(Remote, node(), IPPort, Primary, append),
+          %% send to leader! (cast it out instead!)
+          gen_server:cast(self(), {send_endpoints_to_leader, node(), IPPort, Primary}),
 
-          {reply, ok, State#state{endpoints = Endpoints}};
+          {reply, ok, State#state{local_endpoints = Endpoints}};
 
         Error ->
-          % This is the error that causes the RtSource to exit and kill itself
-          % When this happens the supervisor will not restart
-          % It used to restart it; and it would therefore re-attempt the connection!
-          % riak_core_connection_mgr:connect/3 would be called again
-          % I need to figure out a method of re-trying this
-
-          % Unable to contact RT Source connection process thats why (This should not be an issue!)
-          % We have just booted up!
-          % could simply make another call?
+          lager:debug("rtsouce_conn failed to recieve connection"),
+          % need to ask the connection manager to re-try this address and create new port
+          % core_connection_mgr:connect(use_only_addr)
           {reply, Error, State}
       end;
     ER ->
@@ -146,23 +165,46 @@ handle_call(_Request, _From, State) ->
 %%%=====================================================================================================================
 
 %% Connection manager failed to make connection
-%% TODO: Consider reissuing connect against another host - maybe that
-%%   functionality should be in the connection manager (I want a connection to site X)
 handle_cast({connect_failed, _HelperPid, Reason},
     State = #state{remote = Remote}) ->
   lager:warning("Realtime replication connection to site ~p failed - ~p\n",
     [Remote, Reason]),
   {stop, normal, State};
 
-handle_cast({kill, Addr}, State = #state{endpoints = E}) ->
+handle_cast({kill, Addr}, State = #state{local_endpoints = E}) ->
   case orddict:fetch(Addr, E) of
     {Pid, _Primary} ->
       riak_repl2_rtsource_conn:stop(Pid),
       E1 = orddict:erase(Addr, E),
-      {noreply, State#state{endpoints = E1}};
+      {noreply, State#state{local_endpoints = E1}};
     _ ->
       % rtsource_conn has stopped pulling from queue but it is not in our endpoints dictionary!
       % we should never reach this case
+      {noreply, State}
+  end;
+
+handle_cast({set_leader_node, LeaderNode}, State) ->
+  State2 = State#state{leader_node = LeaderNode},
+  case node() of
+    LeaderNode ->
+      {noreply, become_leader(State2, LeaderNode)};
+    _ ->
+      {noreply, become_proxy(State2, LeaderNode)}
+  end;
+
+handle_cast({send_endpoints_to_leader, Node, IPPort, Primary}, State=#state{leader_endpoints = E}) ->
+  case State#state.is_leader of
+    true ->
+      ConnsList = get_conns_list(Node, E),
+      NewConnsList = [{IPPort, Primary} |ConnsList],
+      Endpoints = orddict:store(Node, NewConnsList, E),
+      % push onto ring
+      riak_core_ring_manager:ring_trans(fun riak_repl_ring:add_realtime_connection_data/2,
+        {State#state.remote, Node, {IPPort, Primary}, overwrite}),
+      {noreply, State#state{leader_endpoints = Endpoints}};
+
+    false ->
+      proxy_cast({send_endpoints_to_leader, Node, IPPort, Primary}, State),
       {noreply, State}
   end;
 
@@ -179,12 +221,17 @@ handle_cast(_Request, State) ->
 %%handle_info(rebalance_now, State) ->
 %%  {noreply, maybe_rebalance(State#state{rb_timeout_tref = undefined}, now)};
 
+handle_info(restore_realtime_connection_info, State) ->
+  RemoteRealtimeConnections = riak_repl_ring:get_realtime_connection_data({State#state.remote}),
+  {noreply, State#state{leader_endpoints = RemoteRealtimeConnections}};
+
+
 handle_info(_Info, State) ->
   {noreply, State}.
 
 %%%=====================================================================================================================
 
-terminate(_Reason, _State=#state{remote = Remote, endpoints = E}) ->
+terminate(_Reason, _State=#state{remote = Remote, local_endpoints = E}) ->
   riak_core_connection_mgr:disconnect({rt_repl, Remote}),
   [catch riak_repl2_rtsource_conn:stop(Pid) || {_,{Pid,_}} <- E],
   ok.
@@ -204,6 +251,63 @@ start_rtsource_conn(Remote, S) ->
   lager:info("Adding a connection and starting rtsource_conn ~p", [Remote]),
   Args = [Remote],
   supervisor:start_child(S, Args).
+
+
+%% start being a cluster manager leader
+become_leader(State, _LeaderNode) when State#state.is_leader == false ->
+  erlang:send_after(5000, self(), restore_realtime_connection_info),
+  State#state{is_leader = true};
+become_leader(State, _LeaderNode) ->
+  State.
+
+%% stop being a cluster manager leader
+become_proxy(State, _LeaderNode) when State#state.is_leader == true ->
+%%  erlang:send_after(5000, self(), update_new_leader),
+  State#state{is_leader = false};
+become_proxy(State, _LeaderNode) ->
+%%  erlang:send_after(5000, self(), update_new_leader),
+  State.
+
+
+proxy_cast(_Cast, _State = #state{leader_node=Leader}) when Leader == undefined ->
+  ok;
+proxy_cast(Cast, _State = #state{leader_node=Leader, remote = Remote}) ->
+  gen_server:cast({make_global_name(Remote, Leader), Leader}, Cast).
+
+%%proxy_call(_Call, NoLeaderResult, State = #state{leader_node=Leader}) when Leader == undefined ->
+%%  {reply, NoLeaderResult, State};
+%%proxy_call(Call, NoLeaderResult, State = #state{leader_node=Leader, remote=Remote}) ->
+%%  Reply = try gen_server:call({?SERVER(Remote), Leader}, Call, ?PROXY_CALL_TIMEOUT) of
+%%            R -> R
+%%          catch
+%%            exit:{noproc, _} ->
+%%              NoLeaderResult;
+%%            exit:{{nodedown, _}, _} ->
+%%              NoLeaderResult
+%%          end,
+%%  {reply, Reply, State}.
+
+
+get_conns_list(Key, Dictionary) ->
+  case orddict:find(Key, Dictionary) of
+    {ok, X} ->
+      X;
+    error ->
+      []
+  end.
+
+
+
+
+
+
+%%save_connection_to_ring(Remote, IPPort, Primary) ->
+%%  case riak_core_cluster_mgr:add_realtime_connection_data({Remote, node(), IPPort, Primary, append}) of
+%%    ok ->
+%%      ok;
+%%    _ ->
+%%      save_connection_to_ring(Remote, IPPort, Primary)
+%%  end.
 
 % rtsource_conn_mgr callback
 %% need to check if this will work with stop, or if I need to code some more in rtsource_conn to

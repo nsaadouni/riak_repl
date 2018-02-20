@@ -95,6 +95,11 @@ start(_Type, _StartArgs) ->
             riak_repl2_leader:register_notify_fun(
               fun riak_core_cluster_mgr:set_leader/2),
 
+            % rtsource supverisors -> rtsource_conn_mgr will follow the leader
+            riak_repl2_leader:register_notify_fun(
+                fun riak_repl2_rtsource_conn_sup:set_leader/2
+            ),
+
             %% fullsync co-ordincation will follow leader
             riak_repl2_leader:register_notify_fun(
                 fun riak_repl2_fscoordinator_sup:set_leader/2),

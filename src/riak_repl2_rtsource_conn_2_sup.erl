@@ -25,7 +25,7 @@ start_link(Remote) ->
 init([]) ->
 
   Conn = {riak_repl2_rtsource_conn, {riak_repl2_rtsource_conn, start_link, []},
-    transient, ?SHUTDOWN, worker, [riak_repl2_rtsource_conn]},
+    permanent, ?SHUTDOWN, worker, [riak_repl2_rtsource_conn]},
 
   {ok, {{simple_one_for_one, 10, 10}, [Conn]}}.
 

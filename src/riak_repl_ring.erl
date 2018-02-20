@@ -43,9 +43,9 @@
          add_nat_map/2,
          del_nat_map/2,
          get_nat_map/1,
-         add_connection_data/2,
-         get_connection_data/2,
-         delete_connection_data/2
+         add_realtime_connection_data/2,
+         get_realtime_connection_data/1,
+         delete_realtime_connection_data/2
          ]).
 
 -ifdef(TEST).
@@ -518,9 +518,9 @@ get_value(Key, Dictionary, Type) ->
   end.
 
 
-add_connection_data(Ring, {ClusterName, Node, Endpoints, Action}) ->
+add_realtime_connection_data(Ring, {ClusterName, Node, Endpoints, Action}) ->
   RC = get_repl_config(ensure_config(Ring)),
-  OldConnectionsDict = get_value(connections, RC, dictionary),
+  OldConnectionsDict = get_value(realtime_connections, RC, dictionary),
   OldClusterNameDict = get_value(ClusterName, OldConnectionsDict, dictionary),
 
   NewEndpointList = case Action of
@@ -535,7 +535,7 @@ add_connection_data(Ring, {ClusterName, Node, Endpoints, Action}) ->
   NewConnectionsDict = dict:store(ClusterName, NewClusterNameDict, OldConnectionsDict),
 
 
-  RC2 = dict:store(connections, NewConnectionsDict, RC),
+  RC2 = dict:store(realtime_connections, NewConnectionsDict, RC),
   case RC == RC2 of
     true ->
       %% nothing changed
@@ -547,15 +547,15 @@ add_connection_data(Ring, {ClusterName, Node, Endpoints, Action}) ->
         Ring)}
   end.
 
-delete_connection_data(Ring, {ClusterName, Node}) ->
+delete_realtime_connection_data(Ring, {ClusterName, Node}) ->
   RC = get_repl_config(ensure_config(Ring)),
-  OldConnectionsDict = get_value(connections, RC, dictionary),
+  OldConnectionsDict = get_value(realtime_connections, RC, dictionary),
   OldClusterNameDict = get_value(ClusterName, OldConnectionsDict, dictionary),
 
   NewClusterNameDict = dict:erase(Node, OldClusterNameDict),
   NewConnectionsDict = dict:store(ClusterName, NewClusterNameDict, OldConnectionsDict),
 
-  RC2 = dict:store(connections, NewConnectionsDict, RC),
+  RC2 = dict:store(realtime_connections, NewConnectionsDict, RC),
   case RC == RC2 of
     true ->
       %% nothing changed
@@ -567,12 +567,12 @@ delete_connection_data(Ring, {ClusterName, Node}) ->
         Ring)}
   end;
 
-delete_connection_data(Ring, {ClusterName}) ->
+delete_realtime_connection_data(Ring, {ClusterName}) ->
   RC = get_repl_config(ensure_config(Ring)),
-  OldConnectionsDict = get_value(connections, RC, dictionary),
+  OldConnectionsDict = get_value(realtime_connections, RC, dictionary),
   NewConnectionsDict = dict:erase(ClusterName, OldConnectionsDict),
 
-  RC2 = dict:store(connections, NewConnectionsDict, RC),
+  RC2 = dict:store(realtime_connections, NewConnectionsDict, RC),
   case RC == RC2 of
     true ->
       %% nothing changed
@@ -585,16 +585,26 @@ delete_connection_data(Ring, {ClusterName}) ->
   end.
 
 
-get_connection_data(Ring, {ClusterName, Node}) ->
-  RC = get_repl_config(ensure_config(Ring)),
-  ConnectionDict = get_value(connections, RC, dictionary),
-  ClusterDict = get_value(ClusterName, ConnectionDict, dictionary),
-  get_value(Node, ClusterDict, list);
+get_realtime_connection_data({ClusterName, Node}) ->
+  case riak_core_ring_manager:get_my_ring() of
+    {ok, Ring} ->
+      RC = get_repl_config(ensure_config(Ring)),
+      ConnectionDict = get_value(realtime_connections, RC, dictionary),
+      ClusterDict = get_value(ClusterName, ConnectionDict, dictionary),
+      get_value(Node, ClusterDict, list);
+    RingError ->
+      RingError
+  end;
 
-get_connection_data(Ring, {ClusterName}) ->
-  RC = get_repl_config(ensure_config(Ring)),
-  ConnectionDict = get_value(connections, RC, dictionary),
-  get_value(ClusterName, ConnectionDict, dictionary).
+get_realtime_connection_data({ClusterName}) ->
+  case riak_core_ring_manager:get_my_ring() of
+    {ok, Ring} ->
+      RC = get_repl_config(ensure_config(Ring)),
+      ConnectionDict = get_value(realtime_connections, RC, dictionary),
+      get_value(ClusterName, ConnectionDict, dictionary);
+    RingError ->
+      RingError
+  end.
 
 
 %% unit tests
