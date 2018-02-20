@@ -568,8 +568,8 @@ replace_filtered_config_for_bucket(Ring, MetaData, BucketName, NewConfig) ->
 %% Add a bucket filtering association to the metadata on the ring. Is stored in the ring metadata as a list of
 %% bucket -> [list of clusters]
 %% @end
--spec add_filtered_bucket({Ring :: ring(), {ToClusterName :: string(), BucketName :: binary()}}) -> ring().
-add_filtered_bucket({Ring, {ToClusterName, BucketName}}) ->
+-spec add_filtered_bucket({Ring :: ring(), {ToClusterName :: list(), BucketName :: binary()}}) -> ring().
+add_filtered_bucket({Ring, {ToClusterName, BucketName}}) when is_list(ToClusterName) andalso is_binary(BucketName) ->
     ClusterName = riak_core_connection:symbolic_clustername(),
     do_add_filtered_bucket(Ring, ClusterName, ToClusterName, BucketName).
 
