@@ -586,7 +586,7 @@ do_add_filtered_bucket(Ring, _FromClusterName, ToClusterName, BucketName) ->
 
     case lists:member(ToClusterName, ClustersToReplicateTo) of
         true ->
-            {ignore, {filteredbuckets, bucket_exists}};
+            {ignore, {filteredbuckets, cluster_exists}};
         false ->
             NewClusterConfig = [ToClusterName | ClustersToReplicateTo],
             replace_filtered_config_for_bucket(Ring, RC, BucketName, NewClusterConfig)
@@ -623,7 +623,7 @@ remove_cluster_from_bucket_config(Ring, {Cluster, Bucket}) ->
 -spec reset_filtered_buckets(Ring :: ring(), NoParams :: []) -> ring().
 reset_filtered_buckets(Ring, _) ->
     RC = get_ensured_repl_config(Ring),
-    RC2 = dict:erase(filteredbuckets, RC),
+    RC2 = dict:store(filteredbuckets, [], RC),
     check_metadata_has_changed(Ring, RC, RC2).
 
 remove_filtered_bucket(Ring, BucketName) ->
