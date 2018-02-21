@@ -45,7 +45,9 @@
          get_nat_map/1,
          add_realtime_connection_data/2,
          get_realtime_connection_data/1,
-         delete_realtime_connection_data/2
+         get_realtime_connection_data/0,
+         delete_realtime_connection_data/2,
+         overwrite_realtime_connection_data/2
          ]).
 
 -ifdef(TEST).
@@ -547,6 +549,21 @@ add_realtime_connection_data(Ring, {ClusterName, Node, Endpoints, Action}) ->
         Ring)}
   end.
 
+overwrite_realtime_connection_data(Ring, Dictionary) ->
+  RC = get_repl_config(ensure_config(Ring)),
+  RC2 = dict:store(realtime_connections, Dictionary, RC),
+  case RC == RC2 of
+    true ->
+      %% nothing changed
+      {ignore, {not_changed, clustername}};
+    false ->
+      {new_ring, riak_core_ring:update_meta(
+        ?MODULE,
+        RC2,
+        Ring)}
+  end.
+
+
 delete_realtime_connection_data(Ring, {ClusterName, Node}) ->
   RC = get_repl_config(ensure_config(Ring)),
   OldConnectionsDict = get_value(realtime_connections, RC, dictionary),
@@ -582,6 +599,21 @@ delete_realtime_connection_data(Ring, {ClusterName}) ->
         ?MODULE,
         RC2,
         Ring)}
+  end;
+
+delete_realtime_connection_data(Ring, all) ->
+  RC = get_repl_config(ensure_config(Ring)),
+  New = dict:new(),
+  RC2 = dict:store(realtime_connections, New, RC),
+  case RC == RC2 of
+    true ->
+      %% nothing changed
+      {ignore, {not_changed, clustername}};
+    false ->
+      {new_ring, riak_core_ring:update_meta(
+        ?MODULE,
+        RC2,
+        Ring)}
   end.
 
 
@@ -602,6 +634,16 @@ get_realtime_connection_data({ClusterName}) ->
       RC = get_repl_config(ensure_config(Ring)),
       ConnectionDict = get_value(realtime_connections, RC, dictionary),
       get_value(ClusterName, ConnectionDict, dictionary);
+    RingError ->
+      RingError
+  end.
+
+
+get_realtime_connection_data() ->
+  case riak_core_ring_manager:get_my_ring() of
+    {ok, Ring} ->
+      RC = get_repl_config(ensure_config(Ring)),
+      get_value(realtime_connections, RC, dictionary);
     RingError ->
       RingError
   end.

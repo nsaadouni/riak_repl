@@ -5,8 +5,7 @@
 
 %% API
 -export([start_link/1,
-  make_module_name/1,
-  set_leader/2
+  make_module_name/1
 ]).
 
 %% Supervisor callbacks
@@ -22,9 +21,6 @@
 start_link(Remote) ->
   supervisor:start_link({local, ?SERVER(Remote) }, ?MODULE, [Remote]).
 
-set_leader(LeaderNode, _LeaderPid) ->
-  [riak_repl2_rtsource_conn_mgr:set_leader(Pid, LeaderNode, _LeaderPid) || {_, Pid, worker, riak_repl2_rtsource_conn_mgr} <- supervisor:which_children(?MODULE)].
-
 
 
 %%%===================================================================
@@ -32,7 +28,7 @@ set_leader(LeaderNode, _LeaderPid) ->
 %%%===================================================================
 
 init([Remote]) ->
-  ConnMgr = {make_module_name_conn(Remote), {riak_repl2_rtsource_conn_mgr, start_link, [[Remote]]},
+  ConnMgr = {Remote, {riak_repl2_rtsource_conn_mgr, start_link, [[Remote]]},
     permanent, ?SHUTDOWN, worker, [riak_repl2_rtsource_conn_mgr]},
 
   ConnSup = {riak_repl2_rtsource_conn_2_sup:make_module_name(Remote), {riak_repl2_rtsource_conn_2_sup, start_link, [Remote]},
@@ -46,6 +42,3 @@ init([Remote]) ->
 
 make_module_name(Remote) ->
   list_to_atom(lists:flatten(io_lib:format("riak_repl2_rtsource_remote_conn_sup_~s", [Remote]))).
-
-make_module_name_conn(Remote) ->
-  list_to_atom(lists:flatten(io_lib:format("riak_repl2_rtsource_conn_mgr_~s", [Remote]))).

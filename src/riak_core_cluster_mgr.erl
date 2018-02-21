@@ -321,9 +321,9 @@ handle_call({get_known_ipaddrs_of_cluster, {name, ClusterName}}, _From, State) -
 %%            RebalancedMembers = BalancerFun(Members),
 %%            lager:debug("Rebalancer: ~p -> ~p", [Members, RebalancedMembers]),
             lager:debug("Rebalancing is currently not working"),
-            {reply, {ok, Members},
-             State#state{clusters=add_ips_to_cluster(ClusterName, Members,
-                                                     State#state.clusters)}};
+            {reply, {ok, Members}, State};
+%%             State#state{clusters=add_ips_to_cluster(ClusterName, Members,
+%%                                                     State#state.clusters)}};
         false ->
             NoLeaderResult = {ok, []},
             proxy_call({get_known_ipaddrs_of_cluster, {name, ClusterName}},
