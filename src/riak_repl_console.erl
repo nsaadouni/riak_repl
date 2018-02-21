@@ -1057,14 +1057,14 @@ simple_parse(Str) ->
     {value, Value, _Bs} = erl_eval:exprs(AbsForm, erl_eval:new_bindings()),
     Value.
 
-add_filtered_bucket([ClusterName, BucketName]) ->
+add_filtered_bucket([BucketName, ClusterName]) ->
     lager:info("add filtered bucket: ~s, allowed to route to: ~p~s", [ClusterName, BucketName]),
     riak_core_ring_manager:ring_trans(fun riak_repl_ring:add_filtered_bucket/2,
         {ClusterName, list_to_binary(BucketName)}),
     ok.
 
 %% Remove an association for ClusterName against BucketName - Given bucket won't be replicated to that cluster
-remove_filtered_bucket([ClusterName, BucketName]) ->
+remove_filtered_bucket([BucketName, ClusterName]) ->
     riak_core_ring_manager:ring_trans(fun riak_repl_ring:remove_cluster_from_bucket_config/2,
         {ClusterName, list_to_binary(BucketName)}),
     ok.
@@ -1094,11 +1094,12 @@ print_bucket_filtering_config([]) ->
         [] ->
             io:format("Bucket filtering not configured~n");
         _ ->
-            io:format("Filtered bucket config~n~n"),
-            io:format("Enabled: ~s~n", [IsEnabled]),
-            Sep = string:copies("-", 20),
+            io:format("Enabled: ~s~n~n", [IsEnabled]),
             io:format("~-20s ~-20s~n", ["Bucket", "To Cluster"]),
-            io:format("~-20s ~-20s~n", [Sep, Sep]),
-            [ [ io:format("~-20s ~-20s~n", [Bucket, ClusterName]) || ClusterName <- ClusterNames] || {Bucket, ClusterNames} <- BucketConfig]
+            [begin
+                 ClusterNamesJoined = string:join(ClusterNames, ", "),
+                 io:format("~-20s ~-20s~n", [Bucket, ClusterNamesJoined]),
+                 io:format("~41s~n", [string:copies("-", 41)])
+             end || {Bucket, ClusterNames} <- BucketConfig]
     end,
     ok.
