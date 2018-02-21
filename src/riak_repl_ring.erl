@@ -623,7 +623,14 @@ remove_cluster_from_bucket_config(Ring, {Cluster, Bucket}) ->
             {ignore, {filtered_buckets, not_changed}};
         Config ->
             Config2 = lists:delete(Cluster, Config),
-            replace_filtered_config_for_bucket(Ring, RC, Bucket, Config2)
+            case Config2 of
+                [] ->
+                    % If we deleted the only cluster in the list remove the bucket completely, or config ends up
+                    % as {BucketName, []} which isn't useful at all
+                    remove_filtered_bucket(Ring, Bucket);
+                _ ->
+                    replace_filtered_config_for_bucket(Ring, RC, Bucket, Config2)
+            end
     end.
 
 -spec reset_filtered_buckets(Ring :: ring(), NoParams :: []) -> ring().
