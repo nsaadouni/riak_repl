@@ -551,11 +551,11 @@ replace_filtered_config_for_bucket(Ring, MetaData, BucketName, NewConfig) ->
         {ok, Config} ->
             case lists:keyfind(BucketName, 1, Config) of
                 {BucketName, Config2} ->
-                    NewData = lists:keyreplace(BucketName, 1, Config2, {BucketName, NewConfig}),
+                    NewData = lists:keyreplace(BucketName, 1, Config2, {BucketName, lists:usort(Config2 ++ NewConfig)}),
                     RC2 = dict:store(filteredbuckets, NewData, MetaData),
                     check_metadata_has_changed(Ring, MetaData, RC2);
                 false ->
-                    RC2 = dict:store(filteredbuckets, [{BucketName, NewConfig}], MetaData),
+                    RC2 = dict:store(filteredbuckets, [{BucketName, NewConfig} | Config], MetaData),
                     {new_ring, riak_core_ring:update_meta(?MODULE, RC2, Ring)}
             end;
         error ->
