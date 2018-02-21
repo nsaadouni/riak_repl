@@ -551,7 +551,7 @@ replace_filtered_config_for_bucket(Ring, MetaData, BucketName, NewConfig) ->
         {ok, Config} ->
             case lists:keyfind(BucketName, 1, Config) of
                 {BucketName, Config2} ->
-                    NewData = lists:keyreplace(BucketName, 1, Config2, NewConfig),
+                    NewData = lists:keyreplace(BucketName, 1, Config2, {BucketName, NewConfig}),
                     RC2 = dict:store(filteredbuckets, NewData, MetaData),
                     check_metadata_has_changed(Ring, MetaData, RC2);
                 false ->
