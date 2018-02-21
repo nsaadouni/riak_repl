@@ -580,16 +580,22 @@ do_add_filtered_bucket(_Ring, ClusterName, ClusterName, BucketName) ->
     {ignore, {filteredbuckets, same_host}};
 do_add_filtered_bucket(Ring, _FromClusterName, ToClusterName, BucketName) ->
     RC = get_ensured_repl_config(Ring),
+    RemoteClusters = get_clusters(Ring),
 
-    %% Get the filtered buckets we currently have
-    ClustersToReplicateTo = get_filtered_bucket_config_for_bucket(Ring, BucketName),
-
-    case lists:member(ToClusterName, ClustersToReplicateTo) of
-        true ->
-            {ignore, {filteredbuckets, cluster_exists}};
+    case lists:keyfind(ToClusterName, 1, RemoteClusters) of
         false ->
-            NewClusterConfig = [ToClusterName | ClustersToReplicateTo],
-            replace_filtered_config_for_bucket(Ring, RC, BucketName, NewClusterConfig)
+            {ignore, {filteredbuckets, no_such_cluster}};
+        _ ->
+            %% Get the filtered buckets we currently have
+            ClustersToReplicateTo = get_filtered_bucket_config_for_bucket(Ring, BucketName),
+
+            case lists:member(ToClusterName, ClustersToReplicateTo) of
+                true ->
+                    {ignore, {filteredbuckets, cluster_exists}};
+                false ->
+                    NewClusterConfig = [ToClusterName | ClustersToReplicateTo],
+                    replace_filtered_config_for_bucket(Ring, RC, BucketName, NewClusterConfig)
+            end
     end.
 
 % We can enable / disable filtered replication on our side via the ring
