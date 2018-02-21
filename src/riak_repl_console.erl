@@ -1059,7 +1059,6 @@ simple_parse(Str) ->
 
 add_filtered_bucket([ClusterName, BucketName]) ->
     lager:info("add filtered bucket: ~s, allowed to route to: ~p~s", [ClusterName, BucketName]),
-    Ring = get_ring(),
     riak_core_ring_manager:ring_trans(fun riak_repl_ring:add_filtered_bucket/2,
         {ClusterName, list_to_binary(BucketName)}),
     ok.

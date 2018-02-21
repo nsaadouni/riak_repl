@@ -199,7 +199,7 @@ rt_update_events(Ring) ->
                                  _ ->
                                      false
                              end,
-    lager:debug("[bucket filtering] enabled set to: ~p~n", [BucketFilteringEnabled]),
+    lager:info("[bucket filtering] enabled set to: ~p~n", [BucketFilteringEnabled]),
     application:set_env(riak_repl, bucket_filtering_enabled, BucketFilteringEnabled),
     riak_repl2_rtq:update_filtered_bucket_state(BucketFilteringEnabled),
 
@@ -208,7 +208,7 @@ rt_update_events(Ring) ->
                               [];
                           {ok, Config} ->
                               lager:debug("[bucket filtering] set bucket filtering config to: ~p~n", [Config]),
-                              [{ClusterName, sets:from_list(Buckets)} || {ClusterName, Buckets} <- Config ]
+                              Config
                       end,
 
     application:set_env(riak_repl, filtered_buckets, FilteringConfig),
