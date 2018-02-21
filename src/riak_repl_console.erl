@@ -1090,7 +1090,6 @@ print_bucket_filtering_config([]) ->
     IsEnabled = atom_to_list(riak_repl_ring:get_bucket_filtering_state(Ring)),
     BucketConfig = riak_repl_ring:get_filtered_bucket_config(Ring),
 
-    io:format("Filtered bucket config~n~n"),
     case BucketConfig of
         [] ->
             io:format("Bucket filtering not configured~n");
