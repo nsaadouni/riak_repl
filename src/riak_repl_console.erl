@@ -1097,8 +1097,8 @@ print_bucket_filtering_config([]) ->
             io:format("Filtered bucket config~n~n"),
             io:format("Enabled: ~s~n", [IsEnabled]),
             Sep = string:copies("-", 20),
-            io:format("~-20s ~-20s~n", ["To Cluster", "Bucket"]),
+            io:format("~-20s ~-20s~n", ["Bucket", "To Cluster"]),
             io:format("~-20s ~-20s~n", [Sep, Sep]),
-            [ io:format("~-20s ~-20s~n", [ClusterName, Bucket]) || {ClusterName, Bucket} <- BucketConfig]
+            [ [ io:format("~-20s ~-20s~n", [Bucket, ClusterName]) || ClusterName <- ClusterNames] || {Bucket, ClusterNames} <- BucketConfig]
     end,
     ok.
