@@ -550,8 +550,8 @@ replace_filtered_config_for_bucket(Ring, MetaData, BucketName, NewConfig) ->
     case dict:find(filteredbuckets, MetaData) of
         {ok, Config} ->
             case lists:keyfind(BucketName, 1, Config) of
-                {BucketName, Config2} ->
-                    NewData = lists:keyreplace(BucketName, 1, Config2, {BucketName, lists:usort(Config2 ++ NewConfig)}),
+                {BucketName, _Config2} ->
+                    NewData = lists:keyreplace(BucketName, 1, Config, {BucketName, NewConfig}),
                     RC2 = dict:store(filteredbuckets, NewData, MetaData),
                     check_metadata_has_changed(Ring, MetaData, RC2);
                 false ->
