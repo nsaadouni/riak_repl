@@ -25,7 +25,8 @@
   connected/7,
   connect_failed/3,
   maybe_rebalance_delayed/1,
-  kill_connection/2
+  kill_connection/2,
+  should_rebalance/1
 
 ]).
 
@@ -46,6 +47,8 @@
   connection_ref, % reference handed out by connection manager
   rtsource_conn_sup, % The module name of the supervisor to start the child when we get a connection passed to us
   rb_timeout_tref, % Rebalance timeout timer reference
+  rebalance_delay,
+  rebalanced_addrs,
 
 
   endpoints
@@ -88,9 +91,8 @@ kill_connection(Pid, Addr) ->
 %% If we do, delay some time, recheck that we still
 %% need to rebalance, and if we still do, then execute
 %% reconnection to the better sink node.
-maybe_rebalance_delayed(_Pid) ->
-  ok.
-%%  gen_server:cast(Pid, rebalance_delayed).
+maybe_rebalance_delayed(Pid) ->
+  gen_server:cast(Pid, rebalance_delayed).
 
 
 %%%===================================================================
@@ -108,7 +110,11 @@ init([Remote]) ->
       S = riak_repl2_rtsource_conn_2_sup:make_module_name(Remote),
       E = orddict:new(),
 
-      {ok, #state{remote = Remote, connection_ref = Ref, rtsource_conn_sup = S, endpoints = E}};
+      MaxDelaySecs = app_helper:get_env(riak_repl, realtime_connection_rebalance_max_delay_secs, 60),
+      M = round(MaxDelaySecs * crypto:rand_uniform(0, 1000)),
+
+      {ok, #state{remote = Remote, connection_ref = Ref, rtsource_conn_sup = S, endpoints = E, rebalance_delay = M,
+      rebalanced_addrs = []}};
     {error, Reason}->
       lager:warning("Error connecting to remote"),
       {stop, Reason}
@@ -122,15 +128,25 @@ handle_call({connected, Socket, Transport, IPPort, Proto, _Props, Primary}, _Fro
 
   case start_rtsource_conn(Remote, S) of
     {ok, RtSourcePid} ->
-      case riak_repl2_rtsource_conn:connected(Socket, Transport, IPPort, Proto, RtSourcePid, _Props) of
+      case riak_repl2_rtsource_conn:connected(Socket, Transport, IPPort, Proto, RtSourcePid, _Props, Primary) of
         ok ->
           %% Save {EndPoint, Pid}; Pid will come from the supervisor starting a child
-          Endpoints = orddict:store(IPPort, {RtSourcePid, Primary}, E),
+          Endpoints = orddict:store({IPPort, Primary}, RtSourcePid, E),
 
           % save to ring
-          lager:debug("rtsource_conn_mgr send connectio data to data mgr"),
-          riak_repl2_rtsource_conn_data_mgr:write(Remote, node(), IPPort, Primary),
+          lager:debug("rtsource_conn_mgr send connection data to data mgr"),
+          riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, Remote, node(), IPPort, Primary),
 
+
+          % check if this is a rebalanced connection
+          case lists:member({IPPort,Primary}, State#state.rebalanced_addrs) of
+            true ->
+              % kill all current connections
+              Pid = orddict:fetch({IPPort,Primary}, State#state.endpoints),
+              riak_repl2_rtsource_conn:kill_connection_gracefully(Pid, self());
+            false ->
+              ok
+          end,
           {reply, ok, State#state{endpoints = Endpoints}};
 
         Error ->
@@ -155,11 +171,14 @@ handle_cast({connect_failed, _HelperPid, Reason},
     [Remote, Reason]),
   {stop, normal, State};
 
-handle_cast({kill, Addr}, State = #state{endpoints = E}) ->
+handle_cast({kill, Addr={IPPort, Primary}}, State = #state{endpoints = E, remote = R}) ->
   case orddict:fetch(Addr, E) of
     {Pid, _Primary} ->
       riak_repl2_rtsource_conn:stop(Pid),
       E1 = orddict:erase(Addr, E),
+
+      % also remove from the ring
+      riak_repl2_rtsource_conn_data_mgr:delete(realtime_connections, R, node(), IPPort, Primary),
       {noreply, State#state{endpoints = E1}};
     _ ->
       % rtsource_conn has stopped pulling from queue but it is not in our endpoints dictionary!
@@ -168,8 +187,8 @@ handle_cast({kill, Addr}, State = #state{endpoints = E}) ->
   end;
 
 
-%%handle_cast(rebalance_delayed, State) ->
-%%  {noreply, maybe_rebalance(State, delayed)};
+handle_cast(rebalance_delayed, State) ->
+  {noreply, maybe_rebalance(State, delayed)};
 
 
 handle_cast(_Request, State) ->
@@ -177,8 +196,8 @@ handle_cast(_Request, State) ->
 
 %%%=====================================================================================================================
 
-%%handle_info(rebalance_now, State) ->
-%%  {noreply, maybe_rebalance(State#state{rb_timeout_tref = undefined}, now)};
+handle_info(rebalance_now, State) ->
+  {noreply, maybe_rebalance(State#state{rb_timeout_tref = undefined}, now)};
 
 
 handle_info(_Info, State) ->
@@ -212,91 +231,87 @@ start_rtsource_conn(Remote, S) ->
 
 
 
+maybe_rebalance(State, now) ->
 
-%%save_connection_to_ring(Remote, IPPort, Primary) ->
-%%  case riak_core_cluster_mgr:add_realtime_connection_data({Remote, node(), IPPort, Primary, append}) of
-%%    ok ->
-%%      ok;
-%%    _ ->
-%%      save_connection_to_ring(Remote, IPPort, Primary)
-%%  end.
+  lager:debug("rebalancing has started"),
 
-% rtsource_conn_mgr callback
-%% need to check if this will work with stop, or if I need to code some more in rtsource_conn to
-%% kill the process as well.
-%%remove_connection(_Pid) ->
-%%  ok.
+  case should_rebalance(State) of
+    no ->
+      State;
+    {yes, UsefulAddrs} ->
+      reconnect(State, UsefulAddrs)
+  end;
+maybe_rebalance(State, delayed) ->
 
-%%maybe_rebalance(State, now) ->
-%%  case should_rebalance(State) of
-%%    no ->
-%%      State;
-%%    {yes, UsefulAddrs} ->
-%%      reconnect(State, UsefulAddrs)
-%%  end;
-%%maybe_rebalance(State, delayed) ->
-%%  case State#state.rb_timeout_tref of
-%%    undefined ->
-%%      RbTimeoutTref = erlang:send_after(rebalance_delay_millis(), self(), rebalance_now),
-%%      State#state{rb_timeout_tref = RbTimeoutTref};
-%%    _ ->
-%%      %% Already sent a "rebalance_now"
-%%      State
-%%  end.
-%%
-%%%% This needs to be fixed, for now I will keep it as is, fix the connections then move onto this
-%%should_rebalance(#state{address=ConnectedAddr, remote=Remote}) ->
-%%  {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-%%  Addrs = riak_repl_ring:get_clusterIpAddrs(Ring, Remote),
-%%  {ok, ShuffledAddrs} = riak_core_cluster_mgr:get_my_remote_ip_list(Addrs),
-%%  lager:debug("ShuffledAddrs: ~p, ConnectedAddr: ~p", [ShuffledAddrs, ConnectedAddr]),
-%%
-%%  % This case statement will now always return false due to shuffledAddrs having a different return type!
-%%  case (ShuffledAddrs /= []) andalso same_ipaddr(ConnectedAddr, hd(ShuffledAddrs)) of
-%%    true ->
-%%      no; % we're already connected to the ideal buddy
-%%    false ->
-%%      %% compute the addrs that are "better" than the currently connected addr
-%%      BetterAddrs = lists:filter(fun(A) -> not same_ipaddr(ConnectedAddr, A) end,
-%%        ShuffledAddrs),
-%%      %% remove those that are blacklisted anyway
-%%      UsefulAddrs = riak_core_connection_mgr:filter_blacklisted_ipaddrs(BetterAddrs),
-%%      lager:debug("BetterAddrs: ~p, UsefulAddrs ~p", [BetterAddrs, UsefulAddrs]),
-%%      case UsefulAddrs of
-%%        [] ->
-%%          no;
-%%        UsefulAddrs ->
-%%          {yes, UsefulAddrs}
-%%      end
-%%  end.
-%%
+  lager:debug("rebalancing has been called"),
+
+  case State#state.rb_timeout_tref of
+    undefined ->
+      RbTimeoutTref = erlang:send_after(State#state.rebalance_delay, self(), rebalance_now),
+      State#state{rb_timeout_tref = RbTimeoutTref};
+    _ ->
+      %% Already sent a "rebalance_now"
+      State
+  end.
+
+
+should_rebalance(#state{endpoints = E, remote=Remote}) ->
+
+  case riak_core_cluster_mgr:get_ipaddrs_of_cluster_multifix(Remote, primary) of
+    {ok, []} ->
+      no;
+    {ok, Primaries} ->
+      check_addrs(orddict:fetch_keys(E), Primaries)
+  end.
+
+check_addrs(Current, New) ->
+  case check_addrs_helper(Current, New, true) of
+    true ->
+      no;
+    false ->
+      UsefulAddrs = riak_core_connection_mgr:filter_blacklisted_ipaddrs(New),
+      case UsefulAddrs of
+        [] ->
+          no;
+        X ->
+          {yes, X}
+      end
+  end.
+
+
+check_addrs_helper(_, _, false) ->
+  false;
+check_addrs_helper([], _, true) ->
+  true;
+check_addrs_helper([Addr| Addrs], New, true) ->
+  check_addrs_helper(Addrs, New, lists:member(Addr, New)).
+
+
+
+
+reconnect(State=#state{remote=Remote}, BetterAddrs) ->
+  lager:info("trying reconnect to one of: ~p", [BetterAddrs]),
+
+  %% if we have a pending connection attempt - drop that
+  riak_core_connection_mgr:disconnect({rt_repl, Remote}),
+
+  lager:debug("re-connecting to remote ~p", [Remote]),
+  case riak_core_connection_mgr:connect({rt_repl, Remote}, ?CLIENT_SPEC, {use_only, BetterAddrs}) of
+    {ok, Ref} ->
+      lager:debug("connecting ref ~p", [Ref]),
+
+      lager:debug("rebalanced is complete"),
+
+      State#state{ connection_ref = Ref, rebalanced_addrs = BetterAddrs};
+    {error, Reason}->
+      lager:warning("Error connecting to remote ~p (ignoring as we're reconnecting)", [Reason]),
+      State
+  end.
+
+
+
+%% ================================================================================================================
 %%rebalance_delay_millis() ->
 %%  MaxDelaySecs =
 %%    app_helper:get_env(riak_repl, realtime_connection_rebalance_max_delay_secs, 5*60),
 %%  round(MaxDelaySecs * crypto:rand_uniform(0, 1000)).
-%%
-%%reconnect(State=#state{remote=Remote}, BetterAddrs) ->
-%%  lager:info("trying reconnect to one of: ~p", [BetterAddrs]),
-%%
-%%  %% if we have a pending connection attempt - drop that
-%%  riak_core_connection_mgr:disconnect({rt_repl, Remote}),
-%%
-%%  lager:debug("re-connecting to remote ~p", [Remote]),
-%%  case riak_core_connection_mgr:connect({rt_repl, Remote}, ?CLIENT_SPEC, {use_only, BetterAddrs}) of
-%%    {ok, Ref} ->
-%%      lager:debug("connecting ref ~p", [Ref]),
-%%      State#state{ connection_ref = Ref};
-%%    {error, Reason}->
-%%      lager:warning("Error connecting to remote ~p (ignoring as we're reconnecting)", [Reason]),
-%%      State
-%%  end.
-%%
-%%% CC
-%%% This needs changed now, will do it when I work on re-balance connections
-%%same_ipaddr({IP,Port}, {IP,Port}) ->
-%%  true;
-%%same_ipaddr({_IP1,_Port1}, {_IP2,_Port2}) ->
-%%  false;
-%%same_ipaddr(X,Y) ->
-%%  lager:warning("ipaddrs have unexpected format! ~p, ~p", [X,Y]),
-%%  false.

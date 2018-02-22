@@ -20,10 +20,19 @@ disable(Remote) ->
     lager:info("Stopping replication realtime source ~p", [Remote]),
     _ = supervisor:terminate_child(?MODULE, Remote),
     _ = supervisor:delete_child(?MODULE, Remote),
-    riak_repl2_rtsource_conn_data_mgr:delete(Remote).
+    riak_repl2_rtsource_conn_data_mgr:delete(realtime_connections, Remote).
 
 enabled() ->
-    [{Remote, Pid} || {Remote, Pid, _, riak_repl2_rtsource_remote_conn_sup} <- supervisor:which_children(?MODULE), is_pid(Pid)].
+    [ {Remote, ConnMgrPid} || {Remote, ConnMgrPid, _, [riak_repl2_rtsource_conn_mgr]}  <-
+        first_or_empty([ supervisor:which_children(P) || {_, P, _, [riak_repl2_rtsource_remote_conn_sup]} <- supervisor:which_children(?MODULE), is_pid(P)]), is_pid(ConnMgrPid)].
+
+first_or_empty(L) ->
+    case L of
+        [] ->
+            [];
+        X ->
+            lists:nth(1,X)
+    end.
 
 %% @private
 init([]) ->

@@ -139,7 +139,7 @@ register_remote_locator() ->
       fun(_, {use_only, Addrs}) ->
         {ok, Addrs};
         (Name, multi_connection) ->
-          riak_core_cluster_mgr:get_ipaddrs_of_cluster_multifix(Name);
+            riak_core_cluster_mgr:get_ipaddrs_of_cluster_multifix(Name);
         (Name, _Policy) ->
             riak_core_cluster_mgr:get_ipaddrs_of_cluster_multifix(Name)
       end,

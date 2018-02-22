@@ -4,11 +4,13 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/0,
+-export([
+  start_link/0,
   set_leader/2,
-  write/4,
-  delete/1
 
+  delete/2, delete/3, delete/5,
+  read/2, read/3,
+  write/5
 ]).
 
 %% gen_server callbacks
@@ -39,11 +41,23 @@ start_link() ->
 set_leader(LeaderNode, _LeaderPid) ->
   gen_server:cast(?SERVER, {set_leader_node, LeaderNode}).
 
-write(Remote, Node, IPPort, Primary) ->
-  gen_server:cast(?SERVER, {write, Remote, Node, IPPort, Primary}).
+read(realtime_connections, Remote) ->
+  gen_server:call(?SERVER, {read_realtime_connections, Remote}).
 
-delete(Remote) ->
-  gen_server:cast(?SERVER, {delete, Remote}).
+read(realtime_connections, Remote, Node) ->
+  gen_server:call(?SERVER, {read_realtime_connections, Remote, Node}).
+
+write(realtime_connections, Remote, Node, IPPort, Primary) ->
+  gen_server:cast(?SERVER, {write_realtime_connections, Remote, Node, IPPort, Primary}).
+
+delete(realtime_connections, Remote) ->
+  gen_server:cast(?SERVER, {delete_realtime_connections, Remote}).
+
+delete(realtime_connections, Remote, Node) ->
+  gen_server:cast(?SERVER, {delete_realtime_connections, Remote, Node}).
+
+delete(realtime_connections, Remote, Node, IPPort, Primary) ->
+  gen_server:cast(?SERVER, {delete_realtime_connections, Remote, Node, IPPort, Primary}).
 
 
 %%%===================================================================
@@ -51,15 +65,36 @@ delete(Remote) ->
 %%%===================================================================
 
 init([]) ->
-
   Leader = undefined,
   IsLeader = false,
   C = dict:new(),
-
   lager:debug("conn_data_mgr started"),
-  riak_core_ring_manager:ring_trans(fun riak_repl_ring:delete_realtime_connection_data/2, all),
-
+  riak_core_ring_manager:ring_trans(fun riak_repl_ring:overwrite_realtime_connection_data/2, C),
   {ok, #state{is_leader = IsLeader, leader_node = Leader, connections = C}}.
+
+
+%% -------------------------------------------------- Read ---------------------------------------------------------- %%
+
+handle_call(Msg={read_realtime_connections, Remote}, _From, State=#state{connections = C, is_leader = L}) ->
+  case L of
+    true ->
+      NodeDict = get_value(Remote, C, dictionary),
+      {reply, NodeDict, State};
+    false ->
+      NoLeaderResult = {ok, []},
+      proxy_call(Msg, NoLeaderResult, State)
+  end;
+
+handle_call(Msg={read_realtime_connections, Remote, Node}, _From, State=#state{connections = C, is_leader = L}) ->
+  case L of
+    true ->
+      NodeDict = get_value(Remote, C, dictionary),
+      ConnsList = get_value(Node, NodeDict, list),
+      {reply, ConnsList, State};
+    false ->
+      NoLeaderResult = {ok, []},
+      proxy_call(Msg, NoLeaderResult, State)
+  end;
 
 
 handle_call(_Request, _From, State) ->
@@ -75,43 +110,76 @@ handle_cast({set_leader_node, LeaderNode}, State) ->
       {noreply, become_proxy(State2, LeaderNode)}
   end;
 
-handle_cast(Msg = {delete, Remote}, State=#state{connections = C, is_leader = L}) ->
+%% -------------------------------------------------- Delete -------------------------------------------------------- %%
+
+handle_cast(Msg={delete_realtime_connections, Remote, Node, IPPort, Primary}, State=#state{connections = C, is_leader = L}) ->
   case L of
     true ->
-      NewC = dict:erase(Remote,C),
-      riak_core_ring_manager:ring_trans(fun riak_repl_ring:delete_realtime_connection_data/2,
-      {Remote}),
-      {noreply, State#state{connections = NewC}};
+      OldNodeDict = get_value(Remote, C, dictionary),
+      OldConnsList = get_value(Node, OldNodeDict, list),
+      NewConnsList = lists:delete({IPPort, Primary}, OldConnsList),
+      NewNodeDict = dict:store(Node, NewConnsList, OldNodeDict),
+      NewConnections = dict:store(Remote, NewNodeDict, C),
+
+      % push to ring
+      riak_core_ring_manager:ring_trans(fun riak_repl_ring:overwrite_realtime_connection_data/2, NewConnections),
+      {noreply, State#state{connections = NewConnections}};
+
     false ->
       proxy_cast(Msg, State),
       {noreply, State}
   end;
 
+handle_cast(Msg={delete_realtime_connections, Remote, Node}, State=#state{connections = C, is_leader = L}) ->
+  case L of
+    true ->
+      OldNodeDict = get_value(Remote, C, dictionary),
+      NewNodeDict = dict:erase(Node, OldNodeDict),
+      NewConnections = dict:store(Remote, NewNodeDict, C),
 
-handle_cast(Msg = {write, Remote, Node, IPPort, Primary}, State=#state{connections = C}) ->
+      % push to ring
+      riak_core_ring_manager:ring_trans(fun riak_repl_ring:overwrite_realtime_connection_data/2, NewConnections),
+      {noreply, State#state{connections = NewConnections}};
+
+    false ->
+      proxy_cast(Msg, State),
+      {noreply, State}
+  end;
+
+handle_cast(Msg = {delete_realtime_connections, Remote}, State=#state{connections = C, is_leader = L}) ->
+  case L of
+    true ->
+      NewConnections = dict:erase(Remote,C),
+
+      % push to ring
+      riak_core_ring_manager:ring_trans(fun riak_repl_ring:overwrite_realtime_connection_data/2, NewConnections),
+      {noreply, State#state{connections = NewConnections}};
+
+    false ->
+      proxy_cast(Msg, State),
+      {noreply, State}
+  end;
+
+%% -------------------------------------------------- Write -------------------------------------------------------- %%
+
+handle_cast(Msg = {write_realtime_connections, Remote, Node, IPPort, Primary}, State=#state{connections = C}) ->
   case State#state.is_leader of
     true ->
-
-      lager:debug("write leader messages: ~p", [Msg]),
-
       OldRemoteDict = get_value(Remote, C, dictionary),
       OldConnsList = get_value(Node, OldRemoteDict, list),
-
       NewConnsList = [{IPPort, Primary} |OldConnsList],
       NewRemoteDict = dict:store(Node, NewConnsList, OldRemoteDict),
       NewConnections = dict:store(Remote, NewRemoteDict, C),
 
       % push onto ring
-      riak_core_ring_manager:ring_trans(fun riak_repl_ring:overwrite_realtime_connection_data/2,
-        NewConnections),
-
+      riak_core_ring_manager:ring_trans(fun riak_repl_ring:overwrite_realtime_connection_data/2, NewConnections),
       {noreply, State#state{connections = NewConnections}};
 
     false ->
-      lager:debug("write proxy message: ~p", [Msg]),
       proxy_cast(Msg, State),
       {noreply, State}
   end;
+
 
 handle_cast(_Request, State) ->
   {noreply, State}.
@@ -143,7 +211,8 @@ become_leader(State, _LeaderNode) ->
 
 %% stop being a cluster manager leader
 become_proxy(State, _LeaderNode) when State#state.is_leader == true ->
-%%  erlang:send_after(5000, self(), update_new_leader),
+%%  update the ring?
+%%  erlang:send_after(5000, self(), update_ring_delete_connection_data),
   State#state{is_leader = false};
 become_proxy(State, _LeaderNode) ->
 %%  erlang:send_after(5000, self(), update_new_leader),
@@ -154,21 +223,21 @@ proxy_cast(_Cast, _State = #state{leader_node=Leader}) when Leader == undefined 
   ok;
 proxy_cast(Cast, _State = #state{leader_node=Leader}) ->
   gen_server:cast({?SERVER, Leader}, Cast).
-%%
-%%proxy_call(_Call, NoLeaderResult, State = #state{leader_node=Leader}) when Leader == undefined ->
-%%  {reply, NoLeaderResult, State};
-%%proxy_call(Call, NoLeaderResult, State = #state{leader_node=Leader}) ->
-%%  Reply = try gen_server:call({?SERVER(Remote), Leader}, Call, ?PROXY_CALL_TIMEOUT) of
-%%            R -> R
-%%          catch
-%%            exit:{noproc, _} ->
-%%              NoLeaderResult;
-%%            exit:{{nodedown, _}, _} ->
-%%              NoLeaderResult
-%%          end,
-%%  {reply, Reply, State}.
-%%
-%%
+
+proxy_call(_Call, NoLeaderResult, State = #state{leader_node=Leader}) when Leader == undefined ->
+  {reply, NoLeaderResult, State};
+proxy_call(Call, NoLeaderResult, State = #state{leader_node=Leader}) ->
+  Reply = try gen_server:call({?SERVER, Leader}, Call, ?PROXY_CALL_TIMEOUT) of
+            R -> R
+          catch
+            exit:{noproc, _} ->
+              NoLeaderResult;
+            exit:{{nodedown, _}, _} ->
+              NoLeaderResult
+          end,
+  {reply, Reply, State}.
+
+
 
 get_value(Key, Dictionary, Type) ->
   case dict:find(Key, Dictionary) of

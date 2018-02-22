@@ -48,7 +48,7 @@
          kill/2,
          status/1, status/2,
          address/1,
-         connected/6,
+         connected/7,
          legacy_status/1, legacy_status/2]).
 
 
@@ -64,7 +64,7 @@
                        {packet, 0},
                        {active, false}]).
 
--define(KILL_TIME, 60*1000).
+-define(KILL_TIME, 10*1000).
 
 %% nodes running 1.3.1 have a bug in the service_mgr module.
 %% this bug prevents it from being able to negotiate a version list longer
@@ -80,6 +80,7 @@
 
 -record(state, {remote,    % remote name
                 address,   % {IP, Port}
+                primary,
                 transport, % transport module
                 socket,    % socket to use with transport
                 peername,  % cached when socket becomes active
@@ -119,12 +120,12 @@ legacy_status(Pid, Timeout) ->
 
 % -------
 % Possible fix to issue with closing the port before it reaches here
-connected(Socket, Transport, IPPort, Proto, RtSourcePid, _Props) ->
+connected(Socket, Transport, IPPort, Proto, RtSourcePid, _Props, Primary) ->
   Transport:controlling_process(Socket, RtSourcePid),
   Transport:setopts(Socket, [{active, true}]),
   try
     gen_server:call(RtSourcePid,
-      {connected, Socket, Transport, IPPort, Proto},
+      {connected, Socket, Transport, IPPort, Proto, Primary},
       ?LONG_TIMEOUT)
   catch
     _:Reason ->
@@ -203,7 +204,7 @@ handle_call(legacy_status, _From, State = #state{remote = Remote}) ->
          {strategy, realtime},
          {socket, Socket}] ++ RTQStats,
     {reply, {status, Status}, State};
-handle_call({connected, Socket, Transport, EndPoint, Proto}, _From,
+handle_call({connected, Socket, Transport, EndPoint, Proto, Primary}, _From,
     State = #state{remote = Remote}) ->
   %% Check the socket is valid, may have been an error
   %% before turning it active (e.g. handoff of riak_core_service_mgr to handler
@@ -223,7 +224,8 @@ handle_call({connected, Socket, Transport, EndPoint, Proto}, _From,
         proto = Proto,
         peername = peername(Transport, Socket),
         helper_pid = HelperPid,
-        ver = Ver},
+        ver = Ver,
+        primary = Primary},
       lager:info("Established realtime connection to site ~p address ~s",
         [Remote, peername(State2)]),
 
@@ -410,7 +412,7 @@ schedule_heartbeat(State) ->
     lager:warning("Heartbeat is misconfigured and is not a valid integer."),
     State.
 
-kill(_State=#state{helper_pid = HelperPid, address = Addr},ConnMgrPid) ->
+kill(_State=#state{helper_pid = HelperPid, address = Addr, primary = P},ConnMgrPid) ->
 
   % Stop helper from pulling form queue
   riak_repl2_rtsource_helper:stop_pulling(HelperPid),
@@ -419,7 +421,7 @@ kill(_State=#state{helper_pid = HelperPid, address = Addr},ConnMgrPid) ->
   timer:sleep(?KILL_TIME),
 
   % call rtsource_mgr to kill this connection now,
-  riak_repl2_rtsource_conn_mgr:kill_connection(ConnMgrPid, Addr).
+  riak_repl2_rtsource_conn_mgr:kill_connection(ConnMgrPid, {Addr,P}).
 
 %% ===================================================================
 %% EUnit tests

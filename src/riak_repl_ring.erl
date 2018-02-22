@@ -43,10 +43,7 @@
          add_nat_map/2,
          del_nat_map/2,
          get_nat_map/1,
-         add_realtime_connection_data/2,
-         get_realtime_connection_data/1,
          get_realtime_connection_data/0,
-         delete_realtime_connection_data/2,
          overwrite_realtime_connection_data/2
          ]).
 
@@ -519,36 +516,6 @@ get_value(Key, Dictionary, Type) ->
       end
   end.
 
-
-add_realtime_connection_data(Ring, {ClusterName, Node, Endpoints, Action}) ->
-  RC = get_repl_config(ensure_config(Ring)),
-  OldConnectionsDict = get_value(realtime_connections, RC, dictionary),
-  OldClusterNameDict = get_value(ClusterName, OldConnectionsDict, dictionary),
-
-  NewEndpointList = case Action of
-                         append ->
-                           OldEndpointList = get_value(Node, OldClusterNameDict, list),
-                           lists:append(OldEndpointList, [Endpoints]);
-                         overwrite ->
-                           Endpoints
-                       end,
-
-  NewClusterNameDict = dict:store(Node, NewEndpointList, OldClusterNameDict),
-  NewConnectionsDict = dict:store(ClusterName, NewClusterNameDict, OldConnectionsDict),
-
-
-  RC2 = dict:store(realtime_connections, NewConnectionsDict, RC),
-  case RC == RC2 of
-    true ->
-      %% nothing changed
-      {ignore, {not_changed, clustername}};
-    false ->
-      {new_ring, riak_core_ring:update_meta(
-        ?MODULE,
-        RC2,
-        Ring)}
-  end.
-
 overwrite_realtime_connection_data(Ring, Dictionary) ->
   RC = get_repl_config(ensure_config(Ring)),
   RC2 = dict:store(realtime_connections, Dictionary, RC),
@@ -562,82 +529,6 @@ overwrite_realtime_connection_data(Ring, Dictionary) ->
         RC2,
         Ring)}
   end.
-
-
-delete_realtime_connection_data(Ring, {ClusterName, Node}) ->
-  RC = get_repl_config(ensure_config(Ring)),
-  OldConnectionsDict = get_value(realtime_connections, RC, dictionary),
-  OldClusterNameDict = get_value(ClusterName, OldConnectionsDict, dictionary),
-
-  NewClusterNameDict = dict:erase(Node, OldClusterNameDict),
-  NewConnectionsDict = dict:store(ClusterName, NewClusterNameDict, OldConnectionsDict),
-
-  RC2 = dict:store(realtime_connections, NewConnectionsDict, RC),
-  case RC == RC2 of
-    true ->
-      %% nothing changed
-      {ignore, {not_changed, clustername}};
-    false ->
-      {new_ring, riak_core_ring:update_meta(
-        ?MODULE,
-        RC2,
-        Ring)}
-  end;
-
-delete_realtime_connection_data(Ring, {ClusterName}) ->
-  RC = get_repl_config(ensure_config(Ring)),
-  OldConnectionsDict = get_value(realtime_connections, RC, dictionary),
-  NewConnectionsDict = dict:erase(ClusterName, OldConnectionsDict),
-
-  RC2 = dict:store(realtime_connections, NewConnectionsDict, RC),
-  case RC == RC2 of
-    true ->
-      %% nothing changed
-      {ignore, {not_changed, clustername}};
-    false ->
-      {new_ring, riak_core_ring:update_meta(
-        ?MODULE,
-        RC2,
-        Ring)}
-  end;
-
-delete_realtime_connection_data(Ring, all) ->
-  RC = get_repl_config(ensure_config(Ring)),
-  New = dict:new(),
-  RC2 = dict:store(realtime_connections, New, RC),
-  case RC == RC2 of
-    true ->
-      %% nothing changed
-      {ignore, {not_changed, clustername}};
-    false ->
-      {new_ring, riak_core_ring:update_meta(
-        ?MODULE,
-        RC2,
-        Ring)}
-  end.
-
-
-get_realtime_connection_data({ClusterName, Node}) ->
-  case riak_core_ring_manager:get_my_ring() of
-    {ok, Ring} ->
-      RC = get_repl_config(ensure_config(Ring)),
-      ConnectionDict = get_value(realtime_connections, RC, dictionary),
-      ClusterDict = get_value(ClusterName, ConnectionDict, dictionary),
-      get_value(Node, ClusterDict, list);
-    RingError ->
-      RingError
-  end;
-
-get_realtime_connection_data({ClusterName}) ->
-  case riak_core_ring_manager:get_my_ring() of
-    {ok, Ring} ->
-      RC = get_repl_config(ensure_config(Ring)),
-      ConnectionDict = get_value(realtime_connections, RC, dictionary),
-      get_value(ClusterName, ConnectionDict, dictionary);
-    RingError ->
-      RingError
-  end.
-
 
 get_realtime_connection_data() ->
   case riak_core_ring_manager:get_my_ring() of

@@ -91,11 +91,12 @@
          get_connections/0,
          get_ipaddrs_of_cluster/1,
          get_ipaddrs_of_cluster_multifix/1,
+         get_ipaddrs_of_cluster_multifix/2,
          set_gc_interval/1,
          stop/0,
          connect_to_clusters/0,
          shuffle_remote_ipaddrs/1,
-         get_my_remote_ip_list/1
+         get_my_remote_ip_list/2
          ]).
 
 %% gen_server callbacks
@@ -194,7 +195,15 @@ get_ipaddrs_of_cluster(ClusterName) ->
 get_ipaddrs_of_cluster_multifix(ClusterName) ->
   case gen_server:call(?SERVER, {get_known_ipaddrs_of_cluster, {name,ClusterName}}, infinity) of
     {ok, Reply} ->
-      get_my_remote_ip_list(Reply);
+      get_my_remote_ip_list(Reply, all);
+    Reply ->
+      Reply
+  end.
+
+get_ipaddrs_of_cluster_multifix(ClusterName, Return) ->
+  case gen_server:call(?SERVER, {get_known_ipaddrs_of_cluster, {name,ClusterName}}, infinity) of
+    {ok, Reply} ->
+      get_my_remote_ip_list(Reply, Return);
     Reply ->
       Reply
   end.
@@ -807,9 +816,9 @@ shuffle(List) ->
   [E || {E, _} <- lists:keysort(2, [{Elm, random:uniform()} || Elm <- List])].
 
 
-get_my_remote_ip_list([]) ->
+ get_my_remote_ip_list([], _Return) ->
   {ok, []};
-get_my_remote_ip_list(RemoteUnsorted) ->
+get_my_remote_ip_list(RemoteUnsorted, Return) ->
 
   RemoteAddrs = lists:sort(RemoteUnsorted),
 
@@ -838,7 +847,7 @@ get_my_remote_ip_list(RemoteUnsorted) ->
             {BeforeBuddy,[Buddy|AfterBuddy]} ->
               Primary = [{Buddy, true}],
               Secondary = [{X, false} || X <- shuffle(AfterBuddy++BeforeBuddy)],
-              {ok, Primary++Secondary}
+              filter_output(Primary, Secondary, Return)
 
           end;
         Res < 0 ->
@@ -848,10 +857,21 @@ get_my_remote_ip_list(RemoteUnsorted) ->
           RemoteNodesTagged = lists:zip(lists:seq(0, length(RemoteAddrs)-1), RemoteAddrs),
           Primary =   [ {X, true} || {_Index,X} <- [ {_Index,X}  || {_Index, X} <- RemoteNodesTagged, _Index rem NumberOfSourceNodes == MyPos-1]],
           Secondary = [ {X, false} || {_Index,X} <- [ {_Index,X} || {_Index, X} <- RemoteNodesTagged, _Index rem NumberOfSourceNodes /= MyPos-1]],
-          {ok, Primary ++ shuffle(Secondary)}
+          filter_output(Primary, Secondary, Return)
       end;
     false ->
       % This node is not part of the cluster
       % Therefore should not connect to the othe cluster as part of repl for this
       {ok, []}
+  end.
+
+
+filter_output(Primary, Secondary, Return) ->
+  case Return of
+    primary ->
+      {ok, Primary};
+    secondary->
+      {ok, Secondary};
+    _->
+      {ok, Primary++Secondary}
   end.
