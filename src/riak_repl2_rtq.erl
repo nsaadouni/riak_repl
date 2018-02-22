@@ -563,20 +563,25 @@ push(NumItems, Bin, Meta, State = #state{qtab = QTab,
     AllConsumers = [Consumer#c.name || Consumer <- Cs],
 
     FilteredConsumers = filter_consumers(FEnabled, AllConsumers, BucketName, Buckets),
+    lager:info("nick - filter_consumers: ~p", [FilteredConsumers]),
 
     QEntry2 = set_local_forwards_meta(FilteredConsumers, QEntry),
-    FilteredConsumerRecords = [C ||  C <- Cs, lists:member(C#c.name, FilteredConsumers)],
-    DeliverAndCs2 = [maybe_deliver_item(C, QEntry2) || C <- FilteredConsumerRecords],
+
+    % Deliver to all, but skip if needed
+    DeliverAndCs2 = [maybe_deliver_item(C, QEntry2) || C <- Cs],
+    lager:info("nick - DeliverAndCs2: ~p, QEntry2: ~p", [DeliverAndCs2, QEntry2]),
 
     {DeliverResults, Cs2} = lists:unzip(DeliverAndCs2),
     AllSkipped = lists:all(fun
         (skipped) -> true;
         (_) -> false
     end, DeliverResults),
+    lager:info("nick - AllSkipped: ~p", [AllSkipped]),
     State2 = if
         AllSkipped andalso length(Cs2) > 0 ->
             State;
         true ->
+            lager:info("nick - all were skipped, reinserting QEntry2"),
             ets:insert(QTab, QEntry2),
             Size = ets_obj_size(Bin, State),
             update_q_size(State, Size)
@@ -584,11 +589,13 @@ push(NumItems, Bin, Meta, State = #state{qtab = QTab,
     trim_q(State2#state{qseq = QSeq2, cs = merge_consumers(Cs, Cs2)});
 push(NumItems, Bin, Meta, State = #state{shutting_down = true}) ->
     riak_repl2_rtq_proxy:push(NumItems, Bin, Meta),
+    lager:info("nick - proxy pushed when shutting down"),
     State.
 
 pull(Name, DeliverFun, State = #state{qtab = QTab, qseq = QSeq, cs = Cs, filtered_buckets_enabled = FEnabled, filtered_buckets = FilterBuckets}) ->
     UpdCs = case lists:keytake(Name, #c.name, Cs) of
-                {value, C, Cs2} ->
+                {value, C, Cs2} = E ->
+                    lager:info("nick - lists:keytake took: ~p, maybe_pull called. QSeq: ~p", [E, QSeq]),
                     [maybe_pull(QTab, QSeq, C, DeliverFun, FEnabled, FilterBuckets) | Cs2];
                 false ->
                     lager:error("Consumer ~p pulled from RTQ, but was not registered", [Name]),
@@ -611,21 +618,25 @@ maybe_pull(QTab, QSeq, C = #c{cseq = CSeq, name = CName}, DeliverFun, FilteringE
                         {true, Config} when Config /= [] ->
                             case lists:member(CName, Config) of
                                 true ->
+                                    lager:info("nick - cluster: '~p' was a member of '~p' for queue entry", [CName, Config]),
                                     % if the item can't be delivered due to cascading rt,
                                     % just keep trying.
                                     case maybe_deliver_item(C#c{deliver = DeliverFun}, QEntry) of
                                         {skipped, C2} ->
+                                            lager:info("nick - skipped in maybe_deliver_item: ~p", [C2]),
                                             maybe_pull(QTab, QSeq, C2, DeliverFun, FilteringEnabled, FilteredBuckets);
                                         {_WorkedOrNoFun, C2} ->
                                             C2
                                     end;
                                 false ->
+                                    lager:info("nick - not allowed to send ~p to ~p, allowed: ~p", [_BucketName, CName, Config]),
                                     % TODO Return this or return error and do a merge_consumers above?
                                     % thinking: we can't do anything so skip and increase seq number so we don't see it again
                                     % we need to act as if it was delivered
                                     C#c{skips = 0, cseq = CSeq2, deliver = undefined, delivered = true}
                             end;
-                        _ ->
+                        _ = Else ->
+                            lager:info("nick - filtering not enabled, in case: ~p, calling as normal for ~p -> ~p (~p)", [Else, _BucketName, CName, AllowedRemotes]),
                             % if the item can't be delivered due to cascading rt,
                             % just keep trying.
                             case maybe_deliver_item(C#c{deliver = DeliverFun}, QEntry) of
@@ -643,13 +654,14 @@ maybe_pull(QTab, QSeq, C = #c{cseq = CSeq, name = CName}, DeliverFun, FilteringE
     end.
 
 maybe_deliver_item(C = #c{deliver = undefined}, QEntry) ->
-    {_Seq, _NumItem, _Bin, Meta, _BucketAndAllowedRemotes} = QEntry,
+    {_Seq, _NumItem, _Bin, Meta, {_Bucket, AllowedRemotes}} = QEntry,
     Name = C#c.name,
+    lager:info("nick - maybe_deliver_item no deliver function for consumer: ~p", [Name]),
     Routed = case orddict:find(routed_clusters, Meta) of
         error -> [];
         {ok, V} -> V
     end,
-    Cause = case lists:member(Name, Routed) of
+    Cause = case lists:member(Name, Routed) orelse (not lists:member(Name, AllowedRemotes)) of
         true ->
             skipped;
         false ->
@@ -657,19 +669,21 @@ maybe_deliver_item(C = #c{deliver = undefined}, QEntry) ->
     end,
     {Cause, C};
 maybe_deliver_item(C, QEntry) ->
-    {Seq, _NumItem, _Bin, Meta, _BucketAndAllowedRemotes} = QEntry,
+    {Seq, _NumItem, _Bin, Meta, {_Bucket, AllowedRemotes}} = QEntry,
     #c{name = Name} = C,
+    lager:info("nick - maybe_deliver_item called for: ~p = ~p", [Name, QEntry]),
     Routed = case orddict:find(routed_clusters, Meta) of
         error -> [];
         {ok, V} -> V
     end,
-    case lists:member(Name, Routed) of
+    case lists:member(Name, Routed) orelse (not lists:member(Name, AllowedRemotes)) of
         true when C#c.delivered ->
             Skipped = C#c.skips + 1,
             {skipped, C#c{skips = Skipped, cseq = Seq}};
         true ->
             {skipped, C#c{cseq = Seq, aseq = Seq}};
         false ->
+            lager:info("nick - actually delivered, deliver_item/3"),
             {delivered, deliver_item(C, C#c.deliver, QEntry)}
     end.
 
@@ -681,6 +695,7 @@ deliver_item(C, DeliverFun, {Seq,_NumItem, _Bin, _Meta, _} = QEntry) ->
         C#c{cseq = Seq, deliver = undefined, delivered = true, skips = 0}
     catch
         _:_ ->
+            lager:info("nick - deliver item failure: ~p", [QEntry]),
             riak_repl_stats:rt_source_errors(),
             %% do not advance head so it will be delivered again
             C#c{errs = C#c.errs + 1, deliver = undefined}
