@@ -252,16 +252,16 @@ waiting_for_cluster_members({cluster_members, NewMembers}, State = #state{ proto
     #state{address=Addr,
            name=Name,
            previous_name=PreviousName,
-           members=OldMembers,
+           members=_OldMembers,
            remote=Remote} = State,
     %% this is 1.0 code. NewMembers is list of {IP,Port}
 
-    SortedNew = ordsets:from_list(NewMembers),
-    Members =
-        NewMembers ++ lists:filter(fun(Mem) ->
-                                           not ordsets:is_element(Mem, SortedNew)
-                                   end,
-                                   OldMembers),
+    Members = ordsets:from_list(NewMembers),
+%%    Members =
+%%        NewMembers ++ lists:filter(fun(Mem) ->
+%%                                           not ordsets:is_element(Mem, SortedNew)
+%%                                   end,
+%%                                   OldMembers),
 
     ClusterUpdatedMsg = {cluster_updated,
                          PreviousName,

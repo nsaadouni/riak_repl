@@ -119,6 +119,7 @@ handle_info(Msg, State) ->
     {noreply, State}.
 
 terminate(_Reason, _State) ->
+    lager:debug("helper died"),
     ok.
 
 code_change(_OldVsn, State, _Extra) ->

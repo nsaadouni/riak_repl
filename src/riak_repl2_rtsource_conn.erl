@@ -136,8 +136,8 @@ connected(Socket, Transport, IPPort, Proto, RtSourcePid, _Props, Primary) ->
   end.
 
 
-kill_connection_gracefully(Pid, ConnMgr) ->
-  gen_server:cast(Pid, {kill_connection_gracefully, ConnMgr}).
+kill_connection_gracefully(RtsourceConnPid, ConnMgrPid) ->
+  gen_server:cast(RtsourceConnPid, {kill_connection_gracefully, ConnMgrPid}).
 
 % ======================================================================================================================
 
@@ -310,6 +310,7 @@ handle_info(Msg, State) ->
     {noreply, State}.
 
 terminate(_Reason, _State=#state{helper_pid=HelperPid}) ->
+  lager:debug("rtsource_chain_kill killling the helper as well ~p", [_Reason]),
     catch riak_repl2_rtsource_helper:stop(HelperPid),
     ok.
 
@@ -412,7 +413,7 @@ schedule_heartbeat(State) ->
     lager:warning("Heartbeat is misconfigured and is not a valid integer."),
     State.
 
-kill(_State=#state{helper_pid = HelperPid, address = Addr, primary = P},ConnMgrPid) ->
+kill(_State=#state{helper_pid = HelperPid},ConnMgrPid) ->
 
   % Stop helper from pulling form queue
   riak_repl2_rtsource_helper:stop_pulling(HelperPid),
@@ -421,7 +422,7 @@ kill(_State=#state{helper_pid = HelperPid, address = Addr, primary = P},ConnMgrP
   timer:sleep(?KILL_TIME),
 
   % call rtsource_mgr to kill this connection now,
-  riak_repl2_rtsource_conn_mgr:kill_connection(ConnMgrPid, {Addr,P}).
+  riak_repl2_rtsource_conn_mgr:kill_connection(ConnMgrPid, self()).
 
 %% ===================================================================
 %% EUnit tests

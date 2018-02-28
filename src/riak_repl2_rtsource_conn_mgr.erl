@@ -48,7 +48,7 @@
   rtsource_conn_sup, % The module name of the supervisor to start the child when we get a connection passed to us
   rb_timeout_tref, % Rebalance timeout timer reference
   rebalance_delay,
-  rebalanced_addrs,
+  rebalance_flag = false,
 
 
   endpoints
@@ -84,8 +84,9 @@ connect_failed(_ClientProto, Reason, RTSourceConnMgrPid) ->
   gen_server:cast(RTSourceConnMgrPid, {connect_failed, self(), Reason}).
 
 
-kill_connection(Pid, Addr) ->
-  gen_server:cast(Pid, {kill, Addr}).
+kill_connection(ConnMgrPid, RtsourcePid) ->
+  lager:debug("kill connection successful"),
+  gen_server:cast(ConnMgrPid, {kill_rtsource_conn, RtsourcePid}).
 
 %% @doc Check if we need to rebalance.
 %% If we do, delay some time, recheck that we still
@@ -113,8 +114,7 @@ init([Remote]) ->
       MaxDelaySecs = app_helper:get_env(riak_repl, realtime_connection_rebalance_max_delay_secs, 60),
       M = round(MaxDelaySecs * crypto:rand_uniform(0, 1000)),
 
-      {ok, #state{remote = Remote, connection_ref = Ref, rtsource_conn_sup = S, endpoints = E, rebalance_delay = M,
-      rebalanced_addrs = []}};
+      {ok, #state{remote = Remote, connection_ref = Ref, rtsource_conn_sup = S, endpoints = E, rebalance_delay = M}};
     {error, Reason}->
       lager:warning("Error connecting to remote"),
       {stop, Reason}
@@ -122,7 +122,7 @@ init([Remote]) ->
 
 %%%=====================================================================================================================
 handle_call({connected, Socket, Transport, IPPort, Proto, _Props, Primary}, _From,
-    State = #state{rtsource_conn_sup = S, remote = Remote, endpoints = E}) ->
+    State = #state{rtsource_conn_sup = S, remote = Remote, endpoints = E, rebalance_flag = RF}) ->
 
   lager:debug("rtsource_conn_mgr connection recieved"),
 
@@ -130,24 +130,24 @@ handle_call({connected, Socket, Transport, IPPort, Proto, _Props, Primary}, _Fro
     {ok, RtSourcePid} ->
       case riak_repl2_rtsource_conn:connected(Socket, Transport, IPPort, Proto, RtSourcePid, _Props, Primary) of
         ok ->
+
+          % check if this is a rebalanced connection
+          Endpoints = case RF of
+            true ->
+              remove_all_current_connections(State),
+              orddict:new();
+            false ->
+              E
+          end,
+
           %% Save {EndPoint, Pid}; Pid will come from the supervisor starting a child
-          Endpoints = orddict:store({IPPort, Primary}, RtSourcePid, E),
+          NewEndpoints = orddict:store({IPPort, Primary}, RtSourcePid, Endpoints),
 
           % save to ring
           lager:debug("rtsource_conn_mgr send connection data to data mgr"),
           riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, Remote, node(), IPPort, Primary),
 
-
-          % check if this is a rebalanced connection
-          case lists:member({IPPort,Primary}, State#state.rebalanced_addrs) of
-            true ->
-              % kill all current connections
-              Pid = orddict:fetch({IPPort,Primary}, State#state.endpoints),
-              riak_repl2_rtsource_conn:kill_connection_gracefully(Pid, self());
-            false ->
-              ok
-          end,
-          {reply, ok, State#state{endpoints = Endpoints}};
+          {reply, ok, State#state{endpoints = NewEndpoints, rebalance_flag = false}};
 
         Error ->
           lager:debug("rtsouce_conn failed to recieve connection"),
@@ -171,20 +171,10 @@ handle_cast({connect_failed, _HelperPid, Reason},
     [Remote, Reason]),
   {stop, normal, State};
 
-handle_cast({kill, Addr={IPPort, Primary}}, State = #state{endpoints = E, remote = R}) ->
-  case orddict:fetch(Addr, E) of
-    {Pid, _Primary} ->
-      riak_repl2_rtsource_conn:stop(Pid),
-      E1 = orddict:erase(Addr, E),
-
-      % also remove from the ring
-      riak_repl2_rtsource_conn_data_mgr:delete(realtime_connections, R, node(), IPPort, Primary),
-      {noreply, State#state{endpoints = E1}};
-    _ ->
-      % rtsource_conn has stopped pulling from queue but it is not in our endpoints dictionary!
-      % we should never reach this case
-      {noreply, State}
-  end;
+handle_cast({kill_rtsource_conn, Pid}, State) ->
+  lager:debug("rtsource_chain_kill rtsource_conn killed"),
+  catch riak_repl2_rtsource_conn:stop(Pid),
+  {noreply, State};
 
 
 handle_cast(rebalance_delayed, State) ->
@@ -227,24 +217,31 @@ start_rtsource_conn(Remote, S) ->
   Args = [Remote],
   supervisor:start_child(S, Args).
 
+remove_all_current_connections(_State=#state{endpoints = E, remote = R}) ->
+  AllKeys = orddict:fetch_keys(E),
+  lager:debug("realtime node connections deleted"),
+  riak_repl2_rtsource_conn_data_mgr:delete(realtime_connections, R, node()),
+  remove_connection(AllKeys, E).
 
+remove_connection([], _) ->
+  ok;
+remove_connection([Key | Rest], E) ->
+  RtsourcePid = orddict:fetch(Key, E),
+  lager:debug("rtsource_conn called to gracefully kill itself ~p", [Key]),
+  riak_repl2_rtsource_conn:kill_connection_gracefully(RtsourcePid, self()),
+  remove_connection(Rest, E).
 
 
 
 maybe_rebalance(State, now) ->
-
-  lager:debug("rebalancing has started"),
-
   case should_rebalance(State) of
     no ->
       State;
     {yes, UsefulAddrs} ->
+      lager:debug("we are rebalancing"),
       reconnect(State, UsefulAddrs)
   end;
 maybe_rebalance(State, delayed) ->
-
-  lager:debug("rebalancing has been called"),
-
   case State#state.rb_timeout_tref of
     undefined ->
       RbTimeoutTref = erlang:send_after(State#state.rebalance_delay, self(), rebalance_now),
@@ -302,7 +299,7 @@ reconnect(State=#state{remote=Remote}, BetterAddrs) ->
 
       lager:debug("rebalanced is complete"),
 
-      State#state{ connection_ref = Ref, rebalanced_addrs = BetterAddrs};
+      State#state{ connection_ref = Ref, rebalance_flag = true};
     {error, Reason}->
       lager:warning("Error connecting to remote ~p (ignoring as we're reconnecting)", [Reason]),
       State
