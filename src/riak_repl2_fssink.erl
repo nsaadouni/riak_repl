@@ -167,13 +167,21 @@ handle_info(init_ack, State=#state{socket=Socket,
     TheirCaps = maybe_exchange_caps(CommonMajor, OurCaps, Socket, Transport),
     Strategy = decide_common_strategy(OurCaps, TheirCaps),
 
+    BucketFilteringEnabledOnBothSides = compare_bucket_filtering_flags(OurCaps, TheirCaps),
+
+    %% This is the list of buckets that we need to do bucket filtering with
+    SharedBucketList = maybe_exchange_filtered_buckets(BucketFilteringEnabledOnBothSides, Cluster, Socket, Transport),
+
+
+
     case Strategy of
         keylist ->
             %% Keylist server strategy
             Transport:setopts(Socket, [{active, once}]),
             {ok, WorkDir} = riak_repl_fsm_common:work_dir(Transport, Socket, Cluster),
             {ok, FullsyncWorker} = riak_repl_keylist_client:start_link(Cluster, Transport,
-                                                                       Socket, WorkDir),
+                                                                       Socket, WorkDir,
+                                                                       BucketFilteringEnabledOnBothSides, SharedBucketList),
             {noreply, State#state{cluster=Cluster, fullsync_worker=FullsyncWorker, work_dir=WorkDir,
                                   strategy=keylist}};
         aae ->
@@ -231,7 +239,8 @@ decide_our_caps(CommonMajor) ->
             {false,_} -> keylist;
             {true,_} -> aae
         end,
-    [{strategy, SupportedStrategy}].
+    [{strategy, SupportedStrategy}, {bucket_filtering, riak_repl_util:bucket_filtering_enabled()}].
+
 
 %% Depending on the protocol version number, send our capabilities
 %% as a list of properties, in binary.
@@ -248,4 +257,28 @@ maybe_exchange_caps(_, Caps, Socket, Transport) ->
             throw({Error, Reason})
     end.
 
+compare_bucket_filtering_flags(OurCaps, TheirCaps) ->
+    OurBucketFilteringState = proplists:get_value(bucket_filtering, OurCaps, false),
+    TheirBucketFilteringState = proplists:get_value(bucket_filtering, TheirCaps, false),
 
+    case {OurBucketFilteringState, TheirBucketFilteringState} of
+        {true, true} -> true;
+        {_, _} -> false
+    end.
+
+maybe_exchange_filtered_buckets(false, _, _Socket, _Transport) ->
+    [];
+maybe_exchange_filtered_buckets(true, ClusterName, Socket, Transport) ->
+    BucketsToClusterName = riak_repl_util:filtered_buckets_for_clustername(ClusterName),
+    Transport:send(Socket, term_to_binary(BucketsToClusterName)),
+    TheirConfig =
+        case Transport:recv(Socket, 0, ?PEERINFO_TIMEOUT) of
+            {ok, Data} ->
+                binary_to_term(Data);
+            {Error, Socket} ->
+                throw(Error);
+            {Error, Socket, Reason} ->
+                throw({Error, Reason})
+        end,
+    %% is this too lazy?
+    lists:usort(BucketsToClusterName ++ TheirConfig).

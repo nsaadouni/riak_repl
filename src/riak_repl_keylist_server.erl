@@ -40,7 +40,7 @@
 -behaviour(gen_fsm).
 
 %% API
--export([start_link/6,
+-export([start_link/8,
         start_fullsync/1,
         start_fullsync/2,
         cancel_fullsync/1,
@@ -97,7 +97,9 @@
         generator_paused = false,
         pending_acks = 0,
         ver = w0,
-        proto
+        proto,
+        bucket_filtering_config = [],
+        bucket_filtering_enabled = false
     }).
 
 %% -define(TRACE(Stmt),Stmt).
@@ -114,8 +116,8 @@
 %% estimate of them.
 -define(KEY_LIST_THRESHOLD,(1024)).
 
-start_link(SiteName, Transport, Socket, WorkDir, Client, Proto) ->
-    gen_fsm:start_link(?MODULE, [SiteName, Transport, Socket, WorkDir, Client, Proto], []).
+start_link(SiteName, Transport, Socket, WorkDir, Client, Proto, FilteringEnabledOnBothSides, BucketConfig) ->
+    gen_fsm:start_link(?MODULE, [SiteName, Transport, Socket, WorkDir, Client, Proto, FilteringEnabledOnBothSides, BucketConfig], []).
 
 start_fullsync(Pid) ->
     gen_fsm:send_event(Pid, start_fullsync).
@@ -132,7 +134,7 @@ pause_fullsync(Pid) ->
 resume_fullsync(Pid) ->
     gen_fsm:send_event(Pid, resume_fullsync).
 
-init([SiteName, Transport, Socket, WorkDir, Client, Proto]) ->
+init([SiteName, Transport, Socket, WorkDir, Client, Proto, FilterEnabled, BucketConfig]) ->
     MinPool = app_helper:get_env(riak_repl, min_get_workers, 5),
     MaxPool = app_helper:get_env(riak_repl, max_get_workers, 100),
     VnodeGets = app_helper:get_env(riak_repl, vnode_gets, true),
@@ -141,8 +143,9 @@ init([SiteName, Transport, Socket, WorkDir, Client, Proto]) ->
             {worker_args, []},
             {size, MinPool}, {max_overflow, MaxPool}]),
     State = #state{sitename=SiteName, socket=Socket, transport=Transport,
-        work_dir=WorkDir, client=Client, pool=Pid, vnode_gets=VnodeGets,
-        diff_batch_size=DiffBatchSize, proto=Proto},
+                   work_dir=WorkDir, client=Client, pool=Pid, vnode_gets=VnodeGets,
+                   diff_batch_size=DiffBatchSize, proto=Proto, bucket_filtering_enabled = FilterEnabled,
+                   bucket_filtering_config=BucketConfig},
     riak_repl_util:schedule_fullsync(),
     {ok, wait_for_partition, State}.
 
@@ -734,7 +737,8 @@ bloom_fold({B, K}, V, {MPid, Bloom, Client, Transport, Socket, NSent0, WinSz}) -
             end,
     {MPid, Bloom, Client, Transport, Socket, NSent, WinSz}.
 
-wait_for_individual_partition(Partition, State=#state{work_dir=WorkDir}) ->
+wait_for_individual_partition(Partition, State=#state{work_dir=WorkDir, bucket_filtering_enabled = FilterEnabled,
+                                                      bucket_filtering_config = FilterConfig}) ->
     lager:info("Full-sync with site ~p; doing fullsync for ~p",
                [State#state.sitename, Partition]),
     lager:info("Full-sync with site ~p; building keylist for ~p",
@@ -745,7 +749,9 @@ wait_for_individual_partition(Partition, State=#state{work_dir=WorkDir}) ->
     {ok, KeyListPid} = riak_repl_fullsync_helper:start_link(self()),
     {ok, KeyListRef} = riak_repl_fullsync_helper:make_keylist(KeyListPid,
                                                               Partition,
-                                                              KeyListFn),
+                                                              KeyListFn,
+                                                              FilterEnabled,
+                                                              FilterConfig),
     {next_state, build_keylist, State#state{kl_pid=KeyListPid,
                                             kl_ref=KeyListRef, kl_fn=KeyListFn,
                                             partition=Partition,
@@ -801,7 +807,7 @@ kl_hunk(Hunk, #state{their_kl_fh=FH0} = State) ->
     _ = file:write(FH, Hunk),
     {next_state, wait_keylist, State#state{their_kl_fh=FH}}.
 
-kl_eof(#state{their_kl_fh=FH, num_diffs=NumKeys} = State) ->
+kl_eof(#state{their_kl_fh=FH, num_diffs=NumKeys, bucket_filtering_enabled = FilterEnabled, bucket_filtering_config = FilterConfig} = State) ->
     case FH of
         undefined ->
             %% client has a blank vnode, write a blank file
@@ -849,7 +855,7 @@ kl_eof(#state{their_kl_fh=FH, num_diffs=NumKeys} = State) ->
     {ok, Ref} = riak_repl_fullsync_helper:diff_stream(Pid, State#state.partition,
                                                       State#state.kl_fn,
                                                       State#state.their_kl_fn,
-                                                      DiffSize),
+                                                      DiffSize, FilterEnabled, FilterConfig),
 
     lager:info("Full-sync with site ~p; using ~p for ~p",
                [State#state.sitename, NextState, State#state.partition]),

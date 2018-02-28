@@ -626,7 +626,7 @@ maybe_pull(QTab, QSeq, C = #c{cseq = CSeq, name = CName}, DeliverFun, FilteringE
                                 false ->
                                     C#c{skips = 0, cseq = CSeq2, deliver = undefined, delivered = true}
                             end;
-                        _ = Else ->
+                        _ ->
                             % if the item can't be delivered due to cascading rt,
                             % just keep trying.
                             case maybe_deliver_item(C#c{deliver = DeliverFun}, QEntry) of
