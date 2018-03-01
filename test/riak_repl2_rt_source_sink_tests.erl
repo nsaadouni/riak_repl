@@ -99,7 +99,7 @@ v2_to_v2_comms(_State) ->
                                    ok
                            end,
                        meck:expect(riak_repl_fullsync_worker, do_binputs, SyncWorkerFun),
-                       riak_repl2_rtq:push(1, term_to_binary([<<"der object">>]), []),
+                       riak_repl2_rtq:push(1, term_to_binary([<<"der object">>]), [{bucket_name, Bucket}]),
                        MeckOk = wait_for_continue(),
                        ?assertEqual(ok, MeckOk),
                        meck:unload(riak_repl_fullsync_worker)
@@ -156,7 +156,7 @@ v1_to_v1_comms(_State) ->
                                    ok
                            end,
                        meck:expect(riak_repl_fullsync_worker, do_binputs, SyncWorkerFun),
-                       riak_repl2_rtq:push(1, term_to_binary([<<"der object">>])),
+                       riak_repl2_rtq:push(1, term_to_binary([<<"der object">>]), [{bucket_name, <<"eqc_test">>}]),
                        MeckOk = wait_for_continue(),
                        ?assertEqual(ok, MeckOk),
                        meck:unload(riak_repl_fullsync_worker)

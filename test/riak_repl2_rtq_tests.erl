@@ -60,7 +60,7 @@ status_test_() ->
 
         {"queue size has percentage, and is correct", fun() ->
             MyBin = crypto:rand_bytes(1024 * 1024),
-            [riak_repl2_rtq:push(1, MyBin) || _ <- lists:seq(1, 5)],
+            [riak_repl2_rtq:push(1, MyBin, [{bucket_name, <<"eqc_test">>}]) || _ <- lists:seq(1, 5)],
             Status = riak_repl2_rtq:status(),
             StatusMaxBytes = proplists:get_value(max_bytes, Status),
             StatusBytes = proplists:get_value(bytes, Status),
@@ -195,20 +195,20 @@ overload_test_() ->
     end, [
 
         fun(_) -> {"rtq increments sequence number on drop", fun() ->
-            riak_repl2_rtq:push(1, term_to_binary([<<"object">>])),
+            riak_repl2_rtq:push(1, term_to_binary([<<"object">>]), [{bucket_name, <<"eqc_test">>}]),
             Seq1 = pull(1),
             riak_repl2_rtq:report_drops(5),
-            riak_repl2_rtq:push(1, term_to_binary([<<"object">>])),
+            riak_repl2_rtq:push(1, term_to_binary([<<"object">>]), [{bucket_name, <<"eqc_test">>}]),
             Seq2 = pull(1),
             ?assertEqual(Seq1 + 5 + 1, Seq2)
         end} end,
 
         fun(_) -> {"rtq overload reports drops", fun() ->
-            riak_repl2_rtq:push(1, term_to_binary([<<"object">>])),
+            riak_repl2_rtq:push(1, term_to_binary([<<"object">>]), [{bucket_name, <<"eqc_test">>}]),
             Seq1 = pull(1),
             [riak_repl2_rtq_overload_counter:drop() || _ <- lists:seq(1, 5)],
             timer:sleep(1200),
-            riak_repl2_rtq:push(1, term_to_binary([<<"object">>])),
+            riak_repl2_rtq:push(1, term_to_binary([<<"object">>]), [{bucket_name, <<"eqc_test">>}]),
             Seq2 = pull(1),
             ?assertEqual(Seq1 + 5 + 1, Seq2)
         end} end,
@@ -217,27 +217,27 @@ overload_test_() ->
             % rtq can't process anything else while it's trying to deliver,
             % so we're going to use that to clog up it's queue.
             % Msgq = 0
-            riak_repl2_rtq:push(1, term_to_binary([<<"object">>])),
+            riak_repl2_rtq:push(1, term_to_binary([<<"object">>]), [{bucket_name, <<"eqc_test">>}]),
             % msg queue = 0 (it's handled)
             block_rtq_pull(),
             % msg queue = 0 (it's handled)
-            riak_repl2_rtq:push(1, term_to_binary([<<"object">>])),
+            riak_repl2_rtq:push(1, term_to_binary([<<"object">>]), [{bucket_name, <<"eqc_test">>}]),
             % msg queue = 1 (blocked by deliver)
             block_rtq_pull(),
             % msg queue = 2 (blocked by deliver)
-            [riak_repl2_rtq:push(1, term_to_binary([<<"object">>])) || _ <- lists:seq(1,5)],
+            [riak_repl2_rtq:push(1, term_to_binary([<<"object">>]), [{bucket_name, <<"eqc_test">>}]) || _ <- lists:seq(1,5)],
             % msg queue = 7 (blocked by deliver)
             unblock_rtq_pull(),
             % msq queue = 5 (push handled, blocking deliver handled)
             % that push should have flipped the overload switch
             % meaning these will be dropped
             % these will end up dropped
-            [riak_repl2_rtq:push(1, term_to_binary([<<"object">>])) || _ <- lists:seq(1,5)],
+            [riak_repl2_rtq:push(1, term_to_binary([<<"object">>]), [{bucket_name, <<"eqc_test">>}]) || _ <- lists:seq(1,5)],
             % msq queue = 7, drops = 5
             unblock_rtq_pull(),
             timer:sleep(1200),
             % msg queue = 0, totol objects dropped = 5
-            riak_repl2_rtq:push(1, term_to_binary([<<"object">>])),
+            riak_repl2_rtq:push(1, term_to_binary([<<"object">>]), [{bucket_name, <<"eqc_test">>}]),
             Seq1 = pull(5),
             Seq2 = pull(1),
             ?assertEqual(Seq1 + 1 + 5, Seq2),
@@ -246,15 +246,15 @@ overload_test_() ->
         end} end,
 
         fun(_) -> {"rtq does recover on drop report", fun() ->
-            riak_repl2_rtq:push(1, term_to_binary([<<"object">>])),
+            riak_repl2_rtq:push(1, term_to_binary([<<"object">>]), [{bucket_name, <<"eqc_test">>}]),
             block_rtq_pull(),
-            riak_repl2_rtq:push(1, term_to_binary([<<"object">>])),
+            riak_repl2_rtq:push(1, term_to_binary([<<"object">>]), [{bucket_name, <<"eqc_test">>}]),
             [riak_repl2_rtq ! goober || _ <- lists:seq(1, 10)],
             Seq1 = unblock_rtq_pull(),
             Seq2 = pull(1),
-            riak_repl2_rtq:push(1, term_to_binary([<<"object">>])),
+            riak_repl2_rtq:push(1, term_to_binary([<<"object">>]), [{bucket_name, <<"eqc_test">>}]),
             timer:sleep(1200),
-            riak_repl2_rtq:push(1, term_to_binary([<<"object">>])),
+            riak_repl2_rtq:push(1, term_to_binary([<<"object">>]), [{bucket_name, <<"eqc_test">>}]),
             Seq3 = pull(1),
             ?assertEqual(1, Seq1),
             ?assertEqual(2, Seq2),
@@ -262,9 +262,9 @@ overload_test_() ->
         end} end,
 
         fun(_) -> {"rtq overload sets rt_dirty to true", fun() ->
-            riak_repl2_rtq:push(1, term_to_binary([<<"object">>])),
+            riak_repl2_rtq:push(1, term_to_binary([<<"object">>]), [{bucket_name, <<"eqc_test">>}]),
             block_rtq_pull(),
-            riak_repl2_rtq:push(1, term_to_binary([<<"object">>])),
+            riak_repl2_rtq:push(1, term_to_binary([<<"object">>]), [{bucket_name, <<"eqc_test">>}]),
             [riak_repl2_rtq ! goober || _ <- lists:seq(1, 10)],
             unblock_rtq_pull(),
             History = meck:history(riak_repl_stats),
@@ -293,7 +293,7 @@ push_objects(Bucket, Keys) -> [push_object(Bucket, O) || O <- Keys].
 push_object(Bucket, Key) ->
     RandomData = crypto:rand_bytes(1024 * 1024),
     Obj = riak_object:new(Bucket, Key, RandomData),
-    riak_repl2_rtq:push(1, Obj),
+    riak_repl2_rtq:push(1, Obj, [{bucket_name, Bucket}]),
     Obj.
 
 pull(N) ->

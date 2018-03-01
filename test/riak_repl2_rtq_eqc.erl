@@ -352,12 +352,12 @@ push(List, Q) ->
     lager:info("pushed item ~p~n to ~p~n", [List, Q]),
     NumItems = length(List),
     Bin = term_to_binary(List),
-    riak_repl2_rtq:push(NumItems, Bin).
+    riak_repl2_rtq:push(NumItems, Bin, [{bucket_name, <<"eqc_test">>}]).
 
 push(List, RoutedClusters, _Q) ->
     NumItems = length(List),
     Bin = term_to_binary(List),
-    riak_repl2_rtq:push(NumItems, Bin, [{routed_clusters, RoutedClusters}]).
+    riak_repl2_rtq:push(NumItems, Bin, [{routed_clusters, RoutedClusters}, {bucket_name, <<"eqc_test">>}]).
 
 new_consumer(Name, Q) ->
     lager:info("registering ~p to ~p~n", [Name, Q]),
