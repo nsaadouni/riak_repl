@@ -1069,16 +1069,14 @@ filtered_buckets_for_clustername(ClusterName) ->
         [] -> [];
         Config ->
             %% Config is now [{BucketName, [Clusters]}, {BucketName2, [Clusters]}...]
-            Ret=lists:foldl(fun({Bucket, Clusters}, Acc) ->
+            lists:foldl(fun({Bucket, Clusters}, Acc) ->
                             case lists:member(ClusterName, Clusters) of
                                 true ->
                                     [Bucket | Acc];
                                 false ->
                                     Acc
                             end
-                        end, [], Config),
-            lager:info("nick - filtered buckets for cluster ~p = ~p", [ClusterName, Ret]),
-            Ret
+                        end, [], Config)
     end.
 
 %% Some eunit tests

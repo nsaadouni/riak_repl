@@ -129,7 +129,6 @@ handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
 
     %% This is the list of buckets that we need to do bucket filtering with
     SharedBucketList = maybe_exchange_filtered_buckets(BucketFilteringEnabledOnBothSides, Cluster, Socket, Transport),
-    lager:info("nick - shared bucket list for sink ~p = ~p", [Cluster, SharedBucketList]),
 
     {_, ClientVer, _} = Proto,
 

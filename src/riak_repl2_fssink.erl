@@ -171,7 +171,6 @@ handle_info(init_ack, State=#state{socket=Socket,
 
     %% This is the list of buckets that we need to do bucket filtering with
     SharedBucketList = maybe_exchange_filtered_buckets(BucketFilteringEnabledOnBothSides, Cluster, Socket, Transport),
-    lager:info("nick - shared bucket list for source ~p = ~p", [Cluster, SharedBucketList]),
 
     case Strategy of
         keylist ->
