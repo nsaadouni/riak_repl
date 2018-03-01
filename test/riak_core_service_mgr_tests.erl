@@ -59,6 +59,7 @@ service_test_() ->
        end,
        fun(Apps) ->
                process_flag(trap_exit, true),
+               true = is_process_alive(whereis(riak_core_ring_manager)),
                riak_core_ring_manager:stop(),
                catch exit(riak_core_ring_events, kill),
                application:stop(ranch),

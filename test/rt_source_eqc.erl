@@ -207,6 +207,7 @@ next_state(S, _Res, {call, _, disconnect, [{Remote, _}]}) ->
         Sources == [] ->
             [];
         true ->
+            lager:info("Master queue: ~p", [S#state.master_queue]),
             MasterKeys = ordsets:from_list([Seq || {Seq, _, _, _} <- S#state.master_queue]),
             SourceQueues = [Source#src_state.unacked_objects || {_, Source} <- Sources],
             ExtractSeqs = fun(Elem, Acc) ->

@@ -668,17 +668,17 @@ ensure_config_test() ->
     ?assertNot(undefined =:= riak_core_ring:get_meta(?MODULE, Ring)),
     Ring.
 
-bucket_filtering_enable_test() ->
-    Ring = ensure_config_test(),
-    {new_ring, Ring2} = set_bucket_filtering_state(Ring, true),
-    ?assertEqual(true, get_bucket_filtering_state(Ring2)),
-    Ring2.
-
-bucket_filtering_can_disable_test() ->
-    Ring = bucket_filtering_enable_test(),
-    {new_ring, Ring2} = set_bucket_filtering_state(Ring, false),
-    ?assertEqual(false, get_bucket_filtering_state(Ring2)),
-    Ring2.
+%%bucket_filtering_enable_test() ->
+%%    Ring = ensure_config_test(),
+%%    {new_ring, Ring2} = set_bucket_filtering_state(Ring, true),
+%%    ?assertEqual(true, get_bucket_filtering_state(Ring2)),
+%%    Ring2.
+%%
+%%bucket_filtering_can_disable_test() ->
+%%    Ring = bucket_filtering_enable_test(),
+%%    {new_ring, Ring2} = set_bucket_filtering_state(Ring, false),
+%%    ?assertEqual(false, get_bucket_filtering_state(Ring2)),
+%%    Ring2.
 
 add_get_site_test() ->
     Ring0 = ensure_config_test(),
