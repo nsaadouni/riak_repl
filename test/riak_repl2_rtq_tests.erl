@@ -29,7 +29,7 @@ rtq_trim_test() ->
 ask(Pid) ->
     Self = self(),
     gen_server:call(Pid, {pull_with_ack, rtq_test,
-             fun ({Seq, NumItem, Bin, _Meta}) ->
+             fun ({Seq, NumItem, Bin, _Meta, _}) ->
                     Self ! {rtq_entry, {NumItem, Bin}},
                     gen_server:cast(Pid, {ack, rtq_test, Seq}),
                     ok
@@ -303,7 +303,7 @@ pull(N) ->
 
 pull() ->
     Self = self(),
-    riak_repl2_rtq:pull("overload_test", fun({Seq, _, _, _}) ->
+    riak_repl2_rtq:pull("overload_test", fun({Seq, _, _, _, _}) ->
         Self ! {seq, Seq},
         ok
     end),
@@ -314,7 +314,7 @@ get_seq() ->
 
 block_rtq_pull() ->
     Self = self(),
-    riak_repl2_rtq:pull("overload_test", fun({Seq, _, _, _}) ->
+    riak_repl2_rtq:pull("overload_test", fun({Seq, _, _, _, _}) ->
         receive
             continue ->
                 ok

@@ -588,7 +588,7 @@ disconnect(ConnectState) ->
 
 push_object(Remotes, RiakObj, State) ->
     %% ?debugFmt("push_object remotes: ~p", [Remotes]),
-    Meta = [{routed_clusters, Remotes}, [{bucket_name, <<"eqc_test">>}]],
+    Meta = [{routed_clusters, Remotes}, {bucket_name, riak_object:bucket_only(RiakObj)}],
     riak_repl2_rtq:push(1, riak_repl_util:to_wire(w1, [RiakObj]), Meta),
     rt_source_helpers:wait_for_pushes(State, Remotes),
     {1, RiakObj, Meta}.

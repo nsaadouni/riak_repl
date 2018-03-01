@@ -370,7 +370,7 @@ handle_call(dumpq, _From, State = #state{qtab = QTab}) ->
     {reply, ets:tab2list(QTab), State};
 
 handle_call(summarize, _From, State = #state{qtab = QTab}) ->
-    Fun = fun({Seq, _NumItems, Bin, _Meta}, Acc) ->
+    Fun = fun({Seq, _NumItems, Bin, _Meta, _}, Acc) ->
         Obj = riak_repl_util:from_wire(Bin),
         {Key, Size} = summarize_object(Obj),
         Acc ++ [{Seq, Key, Size}]
@@ -382,7 +382,7 @@ handle_call({evict, Seq}, _From, State = #state{qtab = QTab}) ->
     {reply, ok, State};
 handle_call({evict, Seq, Key}, _From, State = #state{qtab = QTab}) ->
     case ets:lookup(QTab, Seq) of
-        [{Seq, _, Bin, _}] ->
+        [{Seq, _, Bin, _, _}] ->
             Obj = riak_repl_util:from_wire(Bin),
             case Key =:= riak_object:key(Obj) of
                 true ->
@@ -528,10 +528,11 @@ unregister_q(Name, State = #state{qtab = QTab, cs = Cs}) ->
             {{error, not_registered}, State}
     end.
 
--spec filter_consumers(Enabled :: boolean(), AllConsumers :: [list()], BucketName :: binary(), Buckets :: [binary()]) -> [list()].
+-spec filter_consumers(Enabled :: boolean(), AllConsumers :: [list()], BucketConfig :: {binary(), list(list())}, Buckets :: [binary()]) -> [list()].
+filter_consumers(_, AllConsumers, undefined, _) -> AllConsumers;
 filter_consumers(false, AllConsumers, _, _) -> AllConsumers;
 filter_consumers(true, AllConsumers, _, []) -> AllConsumers;
-filter_consumers(true, AllConsumers, BucketName, Buckets) ->
+filter_consumers(true, AllConsumers, {BucketName, _}, Buckets) ->
     case lists:keyfind(BucketName, 1, Buckets) of
         false ->
             % If we can't find config, then we send everywhere
@@ -555,21 +556,26 @@ push(NumItems, Bin, Meta, State = #state{qtab = QTab,
                                          filtered_buckets = Buckets}) ->
     QSeq2 = QSeq + 1,
 
-    % Move bucket name from Meta to the entry itself
-    {ok, BucketName} = orddict:find(bucket_name, Meta),
-    BucketConfig = config_for_bucket(BucketName, Buckets),
-    NewMeta = orddict:erase(bucket_name, Meta),
+    {NewMeta, BucketConfig} =
+        case orddict:find(bucket_name, Meta) of
+            {ok, BucketName} ->
+                BucketConfig2 = config_for_bucket(BucketName, Buckets),
+                NewMeta2 = orddict:erase(bucket_name, Meta),
+                {NewMeta2, {BucketName, BucketConfig2}};
+            error ->
+                {Meta, undefined}
+        end,
 
-    QEntry = {QSeq2, NumItems, Bin, NewMeta, {BucketName, BucketConfig}},
+    QEntry = {QSeq2, NumItems, Bin, NewMeta, BucketConfig},
 
     AllConsumers = [Consumer#c.name || Consumer <- Cs],
 
-    FilteredConsumers = filter_consumers(FEnabled, AllConsumers, BucketName, Buckets),
+    FilteredConsumers = filter_consumers(FEnabled, AllConsumers, BucketConfig, Buckets),
 
     QEntry2 = set_local_forwards_meta(FilteredConsumers, QEntry),
 
     % Deliver to all, but skip if needed
-    DeliverAndCs2 = [maybe_deliver_item(C, QEntry2) || C <- Cs],
+    DeliverAndCs2 = [maybe_deliver_item(C, QEntry2, FEnabled) || C <- Cs],
 
     {DeliverResults, Cs2} = lists:unzip(DeliverAndCs2),
     AllSkipped = lists:all(fun
@@ -609,15 +615,17 @@ maybe_pull(QTab, QSeq, C = #c{cseq = CSeq, name = CName}, DeliverFun, FilteringE
                     C2 = C#c{skips = C#c.skips + 1, cseq = CSeq2},
                     maybe_pull(QTab, QSeq, C2, DeliverFun, FilteringEnabled, FilteredBuckets);
                 [QEntry] ->
-                    {_, _, _, _, {_BucketName, AllowedRemotes}} = QEntry,
+                    % BucketConfig can be {_BucketName, AllowedRemotes} or undefined - we need to handle when
+                    % old items come into the queue
+                    {_, _, _, _, BucketConfig} = QEntry,
 
-                    case {FilteringEnabled, AllowedRemotes} of
+                    case BucketConfig of
                         {true, Config} when Config /= [] ->
                             case lists:member(CName, Config) orelse CName == "qm" of
                                 true ->
                                     % if the item can't be delivered due to cascading rt,
                                     % just keep trying.
-                                    case maybe_deliver_item(C#c{deliver = DeliverFun}, QEntry) of
+                                    case maybe_deliver_item(C#c{deliver = DeliverFun}, QEntry, FilteringEnabled) of
                                         {skipped, C2} ->
                                             maybe_pull(QTab, QSeq, C2, DeliverFun, FilteringEnabled, FilteredBuckets);
                                         {_WorkedOrNoFun, C2} ->
@@ -629,7 +637,7 @@ maybe_pull(QTab, QSeq, C = #c{cseq = CSeq, name = CName}, DeliverFun, FilteringE
                         _ ->
                             % if the item can't be delivered due to cascading rt,
                             % just keep trying.
-                            case maybe_deliver_item(C#c{deliver = DeliverFun}, QEntry) of
+                            case maybe_deliver_item(C#c{deliver = DeliverFun}, QEntry, FilteringEnabled) of
                                 {skipped, C2} ->
                                     maybe_pull(QTab, QSeq, C2, DeliverFun, FilteringEnabled, FilteredBuckets);
                                 {_WorkedOrNoFun, C2} ->
@@ -643,8 +651,8 @@ maybe_pull(QTab, QSeq, C = #c{cseq = CSeq, name = CName}, DeliverFun, FilteringE
             C#c{deliver = DeliverFun}
     end.
 
-maybe_deliver_item(C = #c{deliver = undefined}, QEntry) ->
-    {_Seq, _NumItem, _Bin, Meta, {_Bucket, AllowedRemotes}} = QEntry,
+maybe_deliver_item(C = #c{deliver = undefined}, QEntry, FilteringEnabled) ->
+    {_Seq, _NumItem, _Bin, Meta, BucketConfig} = QEntry,
     Name = C#c.name,
     Routed = case orddict:find(routed_clusters, Meta) of
         error -> [];
@@ -654,16 +662,21 @@ maybe_deliver_item(C = #c{deliver = undefined}, QEntry) ->
         true ->
             skipped;
         false ->
-            case lists:member(Name, AllowedRemotes) orelse Name == "qm" of
+            if FilteringEnabled andalso BucketConfig /= undefined ->
+                {_Bucket, AllowedRemotes} = BucketConfig,
+                case lists:member(Name, AllowedRemotes) orelse Name == "qm" of
+                    true ->
+                        no_fun;
+                    false ->
+                        filtered
+                end;
                 true ->
-                    no_fun;
-                false ->
-                    filtered
+                    no_fun
             end
     end,
     {Cause, C};
-maybe_deliver_item(C, QEntry) ->
-    {Seq, _NumItem, _Bin, Meta, {_Bucket, AllowedRemotes}} = QEntry,
+maybe_deliver_item(C, QEntry, FilteringEnabled) ->
+    {Seq, _NumItem, _Bin, Meta, BucketConfig} = QEntry,
     #c{name = Name} = C,
     Routed = case orddict:find(routed_clusters, Meta) of
         error -> [];
@@ -676,11 +689,16 @@ maybe_deliver_item(C, QEntry) ->
         true ->
             {skipped, C#c{cseq = Seq, aseq = Seq}};
         false ->
-            case lists:member(C#c.name, AllowedRemotes) orelse Name == "qm" of
+            if FilteringEnabled andalso BucketConfig /= undefined ->
+                {_Bucket, AllowedRemotes} = BucketConfig,
+                case lists:member(C#c.name, AllowedRemotes) orelse Name == "qm" of
+                    true ->
+                        {delivered, deliver_item(C, C#c.deliver, QEntry)};
+                    false ->
+                        {filtered, C#c{cseq = Seq, aseq = Seq, filtered = C#c.filtered + 1}}
+                end;
                 true ->
-                    {delivered, deliver_item(C, C#c.deliver, QEntry)};
-                false ->
-                    {filtered, C#c{cseq = Seq, aseq = Seq, filtered = C#c.filtered + 1}}
+                    {delivered, deliver_item(C, C#c.deliver, QEntry)}
             end
     end.
 
@@ -778,23 +796,6 @@ trim_q(State = #state{qtab = QTab, qseq = QSeq, max_bytes = MaxBytes}) ->
         false -> % Q size is less than MaxBytes words
             State
     end.
-
-%%merge_consumers(AllConsumers, FilteredConsumers) ->
-%%    merge_consumers(AllConsumers, FilteredConsumers, []).
-%%
-%%merge_consumers(Consumers, [], []) ->
-%%    Consumers;
-%%merge_consumers([], _, Acc) ->
-%%    Acc;
-%%merge_consumers([C = #c{name = Name} | Rest], FilteredConsumers, Acc) ->
-%%    case lists:keytake(Name, #c.name, FilteredConsumers) of
-%%        {value, C2, _} ->
-%%            % If the consumer has a counterpart in the list of used filtered consumers we replace it
-%%            merge_consumers(Rest, FilteredConsumers, [C2 | Acc]);
-%%        _ ->
-%%            % If the consumer is not in the filtered consumers, take it
-%%            merge_consumers(Rest, FilteredConsumers, [C | Acc])
-%%    end.
 
 trim_q_entries(QTab, MaxBytes, Cs, State) ->
     {Cs2, State2, Entries, Objects} = trim_q_entries(QTab, MaxBytes, Cs, State, 0, 0),
