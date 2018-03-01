@@ -807,7 +807,7 @@ kl_hunk(Hunk, #state{their_kl_fh=FH0} = State) ->
     _ = file:write(FH, Hunk),
     {next_state, wait_keylist, State#state{their_kl_fh=FH}}.
 
-kl_eof(#state{their_kl_fh=FH, num_diffs=NumKeys, bucket_filtering_enabled = FilterEnabled, bucket_filtering_config = FilterConfig} = State) ->
+kl_eof(#state{their_kl_fh=FH, num_diffs=NumKeys} = State) ->
     case FH of
         undefined ->
             %% client has a blank vnode, write a blank file
@@ -822,7 +822,7 @@ kl_eof(#state{their_kl_fh=FH, num_diffs=NumKeys, bucket_filtering_enabled = Filt
         [State#state.sitename, State#state.partition,
             riak_repl_util:elapsed_secs(State#state.stage_start)]),
     ?TRACE(lager:info("Full-sync with site ~p; calculating ~p differences for ~p",
-                      [State#state.sitename, NumDKeys, State#state.partition])),
+                      [State#state.sitename, NumKeys, State#state.partition])),
     {ok, Pid} = riak_repl_fullsync_helper:start_link(self()),
 
     %% check capability of all nodes for bloom fold ability.
@@ -855,7 +855,7 @@ kl_eof(#state{their_kl_fh=FH, num_diffs=NumKeys, bucket_filtering_enabled = Filt
     {ok, Ref} = riak_repl_fullsync_helper:diff_stream(Pid, State#state.partition,
                                                       State#state.kl_fn,
                                                       State#state.their_kl_fn,
-                                                      DiffSize, FilterEnabled, FilterConfig),
+                                                      DiffSize),
 
     lager:info("Full-sync with site ~p; using ~p for ~p",
                [State#state.sitename, NextState, State#state.partition]),

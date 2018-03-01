@@ -12,8 +12,8 @@
 -export([start_link/1,
          stop/1,
          make_keylist/5,
-         diff/6,
-         diff_stream/7,
+         diff/4,
+         diff_stream/5,
          itr_new/2]).
 
 %% gen_server callbacks
@@ -68,11 +68,11 @@ make_keylist(Pid, Partition, Filename, FilterEnabled, FilterConfig) ->
 %% Returns {ok, Ref} or {error, Reason}
 %% Differences are sent as {Ref, {merkle_diff, {Bkey, Vclock}}}
 %% and finally {Ref, diff_done}.  Any errors as {Ref, {error, Reason}}.
-diff(Pid, Partition, TheirFn, OurFn, FilterEnabled, FilterConfig) ->
-    riak_core_gen_server:call(Pid, {diff, Partition, TheirFn, OurFn, -1, true, FilterEnabled, FilterConfig}, ?LONG_TIMEOUT).
+diff(Pid, Partition, TheirFn, OurFn) ->
+    riak_core_gen_server:call(Pid, {diff, Partition, TheirFn, OurFn, -1, true}, ?LONG_TIMEOUT).
 
-diff_stream(Pid, Partition, TheirFn, OurFn, Count, FilterEnabled, FilterConfig) ->
-    riak_core_gen_server:call(Pid, {diff, Partition, TheirFn, OurFn, Count, false, FilterEnabled, FilterConfig}, ?LONG_TIMEOUT).
+diff_stream(Pid, Partition, TheirFn, OurFn, Count) ->
+    riak_core_gen_server:call(Pid, {diff, Partition, TheirFn, OurFn, Count, false}, ?LONG_TIMEOUT).
 
 %% ====================================================================
 %% gen_server callbacks
