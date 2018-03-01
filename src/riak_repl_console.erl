@@ -1058,7 +1058,7 @@ simple_parse(Str) ->
     Value.
 
 add_filtered_bucket([BucketName, ClusterName]) ->
-    lager:info("add filtered bucket: ~s, allowed to route to: ~p~s", [ClusterName, BucketName]),
+    lager:info("add filtered bucket: ~s, allowed to route to: ~p~n", [ClusterName, BucketName]),
     riak_core_ring_manager:ring_trans(fun riak_repl_ring:add_filtered_bucket/2,
         {ClusterName, list_to_binary(BucketName)}),
     ok.
@@ -1092,6 +1092,7 @@ print_bucket_filtering_config([]) ->
 
     case BucketConfig of
         [] ->
+            io:format("Enabled: ~s~n~n", [IsEnabled]),
             io:format("Bucket filtering not configured~n");
         _ ->
             io:format("Filtered bucket config~n~n"),

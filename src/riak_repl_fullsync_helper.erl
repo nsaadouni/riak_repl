@@ -464,4 +464,4 @@ keylist_fold({B,Key}=K, V, {MPid, Count, FilterEnabled, FilteredBucketsList}) ->
     end.
 
 should_we_filter(Enabled, B, BucketsList) ->
-    Enabled == true andalso lists:member(B, BucketsList).
+    Enabled andalso lists:member(B, BucketsList).
