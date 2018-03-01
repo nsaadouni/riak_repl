@@ -52,6 +52,10 @@
          remove_filtered_bucket/2
          ]).
 
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
 -spec(ensure_config/1 :: (ring()) -> ring()).
 %% @doc Ensure that Ring has replication config entry in the ring metadata dict.
 ensure_config(Ring) ->
@@ -655,7 +659,6 @@ remove_filtered_bucket(Ring, BucketName) ->
 %% unit tests
 
 -ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
 
 mock_ring() ->
     riak_core_ring:fresh(16, 'test@test').
