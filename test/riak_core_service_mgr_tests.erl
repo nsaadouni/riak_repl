@@ -108,7 +108,7 @@ service_test_() ->
                                                 %register_service_test_d(),
                                                  %% try to connect via a client that speaks our test protocol
                                                  ExpectedRevs = {expectedToPass, [{1,0}, {1,0}]},
-                                                 riak_core_connection:connect(?TEST_ADDR, {{testproto, [{1,0}]},
+                                                 riak_core_connection:connect(?TEST_ADDR, false, {{testproto, [{1,0}]},
                                                                                            {?TCP_OPTIONS, ?MODULE, ExpectedRevs}}),
                                                  %% allow client and server to connect and make assertions of success/failure
                                                  timer:sleep(1000),
@@ -121,7 +121,7 @@ service_test_() ->
                                                       %% there should be no services running now.
                                                       %% now start a client and confirm failure to connect
                                                       ExpectedArgs = expectedToFail,
-                                                      riak_core_connection:connect(?TEST_ADDR, {{testproto, [{1,0}]},
+                                                      riak_core_connection:connect(?TEST_ADDR, false, {{testproto, [{1,0}]},
                                                                                                 {?TCP_OPTIONS, ?MODULE, ExpectedArgs}}),
                                                       %% allow client and server to connect and make assertions of success/failure
                                                       timer:sleep(1000)

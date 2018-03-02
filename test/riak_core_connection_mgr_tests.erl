@@ -29,7 +29,7 @@
 
 %% internal functions
 -export([testService/5,
-         connected/6,
+         connected/7,
          connect_failed/3]).
 
 %% Locator selector types
@@ -43,8 +43,9 @@
 %% Remote cluster
 -define(REMOTE_CLUSTER_NAME, "betty").
 -define(REMOTE_CLUSTER_ADDR, {"127.0.0.1", 4096}).
--define(REMOTE_ADDRS, [{"127.0.0.1",5001}, {"127.0.0.1",5002}, {"127.0.0.1",5003},
-                       ?REMOTE_CLUSTER_ADDR]).
+-define(REMOTE_CLUSTER_ADDR_LOCATED, {{"127.0.0.1", 4096},false}).
+-define(REMOTE_ADDRS, [{{"127.0.0.1",5001},false}, {{"127.0.0.1",5002},false}, {{"127.0.0.1",5003},false},
+                       ?REMOTE_CLUSTER_ADDR_LOCATED]).
 
 -define(MAX_CONS, 2).
 -define(TCP_OPTIONS, [{keepalive, true},
@@ -68,7 +69,7 @@ register_remote_locator() ->
     ok = riak_core_connection_mgr:register_locator(?REMOTE_LOCATOR_TYPE, Locator).
 
 register_addr_locator() ->
-    Locator = fun(Name, _Policy) -> {ok, [Name]} end,
+    Locator = fun(Name, _Policy) -> {ok, [{Name,false}]} end,
     ok = riak_core_connection_mgr:register_locator(?ADDR_LOCATOR_TYPE, Locator).
 
 register_empty_locator() ->
@@ -114,7 +115,7 @@ connections_test_() ->
                                                     Target = {?ADDR_LOCATOR_TYPE, ?REMOTE_CLUSTER_ADDR},
                                                     Strategy = default,
                                                     Got = riak_core_connection_mgr:apply_locator(Target, Strategy),
-                                                    ?assertEqual({ok, [?REMOTE_CLUSTER_ADDR]}, Got)
+                                                    ?assertEqual({ok, [?REMOTE_CLUSTER_ADDR_LOCATED]}, Got)
                                             end},
 
                   {"bad locator args", fun() ->
@@ -234,7 +235,7 @@ testService(_Socket, _Transport, {ok, {Proto, MyVer, RemoteVer}}, Args, _Props) 
     {ok, self()}.
 
 %% Client side protocol callbacks
-connected(_Socket, _Transport, {_IP, _Port}, {Proto, MyVer, RemoteVer}, Args, _Props) ->
+connected(_Socket, _Transport, {_IP, _Port}, {Proto, MyVer, RemoteVer}, Args, _Props, _Primary) ->
     {_TestType, [ExpectedMyVer, ExpectedRemoteVer]} = Args,
     ?assert(Proto == testproto),
     ?assert(ExpectedMyVer == MyVer),

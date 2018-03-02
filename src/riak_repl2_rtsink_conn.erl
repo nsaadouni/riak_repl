@@ -554,19 +554,19 @@ start_source() ->
 start_source(NegotiatedVer) ->
     catch(meck:unload(riak_core_connection_mgr)),
     meck:new(riak_core_connection_mgr, [passthrough]),
-    meck:expect(riak_core_connection_mgr, connect, fun(_ServiceAndRemote, ClientSpec) ->
+    meck:expect(riak_core_connection_mgr, connect, fun(_ServiceAndRemote, ClientSpec, _Strategy) ->
         spawn_link(fun() ->
             {_Proto, {TcpOpts, Module, Pid}} = ClientSpec,
             {ok, Socket} = gen_tcp:connect("localhost", ?SINK_PORT, [binary | TcpOpts]),
             ok = Module:connected(Socket, gen_tcp, {"localhost", ?SINK_PORT},
-              ?PROTOCOL(NegotiatedVer), Pid, [])
+              ?PROTOCOL(NegotiatedVer), Pid, [], true)
         end),
         {ok, make_ref()}
     end),
     meck:expect(riak_core_connection_mgr, disconnect, fun(_Remote) ->
         ok
     end),
-    {ok, SourcePid} = riak_repl2_rtsource_conn:start_link("sink_cluster"),
+    {ok, SourcePid} = riak_repl2_rtsource_remote_conn_sup:start_link("sink_cluster"),
     receive
         {sink_started, SinkPid} ->
             {ok, {SourcePid, SinkPid}}

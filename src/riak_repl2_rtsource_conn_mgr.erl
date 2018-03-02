@@ -26,8 +26,10 @@
   connect_failed/3,
   maybe_rebalance_delayed/1,
   kill_connection/2,
-  should_rebalance/1
-
+  should_rebalance/1,
+  stop/1,
+  get_all_status/1,
+  get_all_status/2
 ]).
 
 -define(SERVER, ?MODULE).
@@ -95,6 +97,14 @@ kill_connection(ConnMgrPid, RtsourcePid) ->
 maybe_rebalance_delayed(Pid) ->
   gen_server:cast(Pid, rebalance_delayed).
 
+stop(Pid) ->
+  gen_server:call(Pid, stop).
+
+get_all_status(Pid) ->
+  get_all_status(Pid, infinity).
+get_all_status(Pid, Timeout) ->
+  gen_server:call(Pid, all_status, Timeout).
+
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -159,6 +169,13 @@ handle_call({connected, Socket, Transport, IPPort, Proto, _Props, Primary}, _Fro
       {reply, ER, State}
   end;
 
+handle_call(all_status, _From, State=#state{endpoints = E}) ->
+  AllKeys = orddict:fetch_keys(E),
+  {reply, collect_status_data(AllKeys, [], E), State};
+
+handle_call(stop, _From, State) ->
+  {stop, normal, ok, State};
+
 handle_call(_Request, _From, State) ->
   {reply, ok, State}.
 
@@ -197,6 +214,7 @@ handle_info(_Info, State) ->
 
 terminate(_Reason, _State=#state{remote = Remote, endpoints = E}) ->
   lager:debug("rtrsource_conn_mgr terminating"),
+  %% consider unregistering from rtq!
   riak_core_connection_mgr:disconnect({rt_repl, Remote}),
   [catch riak_repl2_rtsource_conn:stop(Pid) || {_,{Pid,_}} <- E],
   ok.
@@ -304,6 +322,16 @@ reconnect(State=#state{remote=Remote}, BetterAddrs) ->
       lager:warning("Error connecting to remote ~p (ignoring as we're reconnecting)", [Reason]),
       State
   end.
+
+
+
+collect_status_data([], Data, _E) ->
+  Data;
+collect_status_data([Key | Rest], Data, E) ->
+  Pid = orddict:fetch(Key, E),
+  NewData = [riak_repl2_rtsource_conn:status(Pid) | Data],
+  collect_status_data(Rest, NewData, E).
+
 
 
 

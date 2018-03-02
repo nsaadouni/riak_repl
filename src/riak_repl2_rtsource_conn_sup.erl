@@ -2,7 +2,14 @@
 %% Copyright 2007-2012 Basho Technologies, Inc. All Rights Reserved.
 -module(riak_repl2_rtsource_conn_sup).
 -behaviour(supervisor).
--export([start_link/0, enable/1, disable/1, enabled/0]).
+-export([
+    start_link/0,
+    enable/1,
+    disable/1,
+    enabled/0,
+    first_or_empty/1
+]).
+
 -export([init/1]).
 
 -define(SHUTDOWN, 5000). % how long to give rtsource processes to persist queue/shutdown
@@ -26,14 +33,6 @@ enabled() ->
     [ {Remote, ConnMgrPid} || {Remote, ConnMgrPid, _, [riak_repl2_rtsource_conn_mgr]}  <-
         first_or_empty([ supervisor:which_children(P) || {_, P, _, [riak_repl2_rtsource_remote_conn_sup]} <- supervisor:which_children(?MODULE), is_pid(P)]), is_pid(ConnMgrPid)].
 
-first_or_empty(L) ->
-    case L of
-        [] ->
-            [];
-        X ->
-            lists:nth(1,X)
-    end.
-
 %% @private
 init([]) ->
     %% TODO: Move before riak_repl2_rt_sup start
@@ -54,4 +53,12 @@ make_remote(Remote) ->
 make_data_mgr() ->
     {riak_repl2_rtsource_conn_data_mgr, {riak_repl2_rtsource_conn_data_mgr, start_link, []},
         permanent, ?SHUTDOWN, worker, [riak_repl2_rtsource_conn_data_mgr]}.
+
+first_or_empty(L) ->
+    case L of
+        [] ->
+            [];
+        X ->
+            lists:nth(1,X)
+    end.
 

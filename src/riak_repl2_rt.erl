@@ -192,7 +192,7 @@ init([]) ->
 handle_call(status, _From, State = #state{sinks = SinkPids}) ->
     Timeout = app_helper:get_env(riak_repl, status_timeout, 5000),
     Sources = [try
-                   riak_repl2_rtsource_conn:status(Pid, Timeout)
+                   riak_repl2_rtsource_conn_mgr:get_all_status(Pid, Timeout)
                catch
                    _:_ ->
                        {Remote, Pid, unavailable}
