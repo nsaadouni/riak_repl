@@ -606,6 +606,11 @@ pull(Name, DeliverFun, State = #state{qtab = QTab, qseq = QSeq, cs = Cs, filtere
             end,
     State#state{cs = UpdCs}.
 
+%% @doc check if the given remote name is allowed to be routed to when bucket filtering is enabled
+-spec allowed_to_route(list(), [list()]) -> boolean().
+allowed_to_route(RemoteName, RemoteNames) ->
+    lists:member(RemoteName, RemoteNames) orelse RemoteName == "qm".
+
 maybe_pull(QTab, QSeq, C = #c{cseq = CSeq, name = CName}, DeliverFun, FilteringEnabled, FilteredBuckets) ->
     CSeq2 = CSeq + 1,
     case CSeq2 =< QSeq of
@@ -620,8 +625,8 @@ maybe_pull(QTab, QSeq, C = #c{cseq = CSeq, name = CName}, DeliverFun, FilteringE
                     {_, _, _, _, BucketConfig} = QEntry,
 
                     case BucketConfig of
-                        {true, Config} when Config /= [] ->
-                            case lists:member(CName, Config) orelse CName == "qm" of
+                        {_, Config} when Config /= [] ->
+                            case allowed_to_route(CName, Config) of
                                 true ->
                                     % if the item can't be delivered due to cascading rt,
                                     % just keep trying.
@@ -651,6 +656,27 @@ maybe_pull(QTab, QSeq, C = #c{cseq = CSeq, name = CName}, DeliverFun, FilteringE
             C#c{deliver = DeliverFun}
     end.
 
+% We can't filter if bucket filtering is disabled or if the bucket config is undefined
+filter_if_enabled(true, Name, {_Bucket, AllowedRemotes} = _BucketConfig) ->
+    case allowed_to_route(Name, AllowedRemotes) of
+        true -> no_fun;
+        false -> filtered
+    end;
+filter_if_enabled(_, _, _) ->
+    no_fun.
+
+deliver_if_can_route(false, Consumer, QEntry) ->
+    {delivered, deliver_item(Consumer, Consumer#c.deliver, QEntry)};
+deliver_if_can_route(true, Consumer, {Seq, _NumItem, _Bin, _Meta, {_Bucket, Remotes}} = QEntry) ->
+    case allowed_to_route(Consumer#c.name, Remotes) of
+        true ->
+            {delivered, deliver_item(Consumer, Consumer#c.deliver, QEntry)};
+        false ->
+            {filtered, Consumer#c{cseq = Seq, aseq = Seq, filtered = Consumer#c.filtered + 1}}
+    end;
+deliver_if_can_route(_, Consumer, QEntry) ->
+    {delivered, deliver_item(Consumer, Consumer#c.deliver, QEntry)}.
+
 maybe_deliver_item(C = #c{deliver = undefined}, QEntry, FilteringEnabled) ->
     {_Seq, _NumItem, _Bin, Meta, BucketConfig} = QEntry,
     Name = C#c.name,
@@ -662,21 +688,11 @@ maybe_deliver_item(C = #c{deliver = undefined}, QEntry, FilteringEnabled) ->
         true ->
             skipped;
         false ->
-            if FilteringEnabled andalso BucketConfig /= undefined ->
-                {_Bucket, AllowedRemotes} = BucketConfig,
-                case lists:member(Name, AllowedRemotes) orelse Name == "qm" of
-                    true ->
-                        no_fun;
-                    false ->
-                        filtered
-                end;
-                true ->
-                    no_fun
-            end
+            filter_if_enabled(FilteringEnabled, Name, BucketConfig)
     end,
     {Cause, C};
 maybe_deliver_item(C, QEntry, FilteringEnabled) ->
-    {Seq, _NumItem, _Bin, Meta, BucketConfig} = QEntry,
+    {Seq, _NumItem, _Bin, Meta, _BucketConfig} = QEntry,
     #c{name = Name} = C,
     Routed = case orddict:find(routed_clusters, Meta) of
         error -> [];
@@ -689,17 +705,7 @@ maybe_deliver_item(C, QEntry, FilteringEnabled) ->
         true ->
             {skipped, C#c{cseq = Seq, aseq = Seq}};
         false ->
-            if FilteringEnabled andalso BucketConfig /= undefined ->
-                {_Bucket, AllowedRemotes} = BucketConfig,
-                case lists:member(C#c.name, AllowedRemotes) orelse Name == "qm" of
-                    true ->
-                        {delivered, deliver_item(C, C#c.deliver, QEntry)};
-                    false ->
-                        {filtered, C#c{cseq = Seq, aseq = Seq, filtered = C#c.filtered + 1}}
-                end;
-                true ->
-                    {delivered, deliver_item(C, C#c.deliver, QEntry)}
-            end
+            deliver_if_can_route(FilteringEnabled, C, QEntry)
     end.
 
 deliver_item(C, DeliverFun, {Seq,_NumItem, _Bin, _Meta, _} = QEntry) ->
