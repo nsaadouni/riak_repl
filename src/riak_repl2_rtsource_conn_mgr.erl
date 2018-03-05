@@ -35,7 +35,8 @@
   should_rebalance/1,
   stop/1,
   get_all_status/1,
-  get_all_status/2
+  get_all_status/2,
+  invert_connections/1
 ]).
 
 -define(SERVER, ?MODULE).
@@ -344,6 +345,23 @@ reconnect(State=#state{remote=Remote}, BetterAddrs) ->
       lager:warning("Error connecting to remote ~p (ignoring as we're reconnecting)", [Reason]),
       State
   end.
+
+invert_connections(Connections) ->
+  AllNodes = dict:fetch_keys(Connections),
+  InvertedConnections = dict:new(),
+  build_inverted_dictionary(AllNodes, Connections, InvertedConnections).
+
+build_inverted_dictionary([], _, Inverted) ->
+  Inverted;
+build_inverted_dictionary([SourceNode|Rest], Connections, InvertedConnections) ->
+  SinkNodes = dict:fetch(SourceNode, Connections),
+  UpdatedInvertedConnections = update_inverted(SourceNode, SinkNodes, InvertedConnections),
+  build_inverted_dictionary(Rest, Connections, UpdatedInvertedConnections).
+
+update_inverted(_,[], List) ->
+  List;
+update_inverted(SourceNode, [{SinkIP, Primary}|Rest], Dict) ->
+  update_inverted(SourceNode, Rest, dict:append(SinkIP, {SourceNode,Primary}, Dict)).
 
 
 

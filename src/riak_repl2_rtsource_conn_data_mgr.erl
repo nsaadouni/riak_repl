@@ -166,9 +166,7 @@ handle_cast(Msg = {write_realtime_connections, Remote, Node, IPPort, Primary}, S
   case State#state.is_leader of
     true ->
       OldRemoteDict = get_value(Remote, C, dictionary),
-      OldConnsList = get_value(Node, OldRemoteDict, list),
-      NewConnsList = [{IPPort, Primary} |OldConnsList],
-      NewRemoteDict = dict:store(Node, NewConnsList, OldRemoteDict),
+      NewRemoteDict = dict:append(Node, {IPPort, Primary}, OldRemoteDict),
       NewConnections = dict:store(Remote, NewRemoteDict, C),
 
       % push onto ring
