@@ -10,6 +10,11 @@
 
 -behaviour(gen_server).
 
+%%-ifdef(TEST).
+%%-include_lib("eunit/include/eunit.hrl").
+%%-export([riak_core_connection_mgr_connect/2]).
+%%-endif.
+
 %% API
 -export([start_link/1]).
 
@@ -25,7 +30,8 @@
   connected/7,
   connect_failed/3,
   maybe_rebalance_delayed/1,
-  kill_connection/2,
+  remove_connection_gracefully/2,
+  connection_closed/3,
   should_rebalance/1,
   stop/1,
   get_all_status/1,
@@ -34,6 +40,7 @@
 
 -define(SERVER, ?MODULE).
 -define(SHUTDOWN, 5000). % how long to give rtsource processes to persist queue/shutdown
+-define(KILL_TIME, 10*1000).
 
 -define(CLIENT_SPEC, {{realtime,[{3,0}, {2,0}, {1,5}]},
   {?TCP_OPTIONS, ?SERVER, self()}}).
@@ -85,11 +92,6 @@ connected(Socket, Transport, IPPort, Proto, RTSourceConnMgrPid, _Props, Primary)
 connect_failed(_ClientProto, Reason, RTSourceConnMgrPid) ->
   gen_server:cast(RTSourceConnMgrPid, {connect_failed, self(), Reason}).
 
-
-kill_connection(ConnMgrPid, RtsourcePid) ->
-  lager:debug("kill connection successful"),
-  gen_server:cast(ConnMgrPid, {kill_rtsource_conn, RtsourcePid}).
-
 %% @doc Check if we need to rebalance.
 %% If we do, delay some time, recheck that we still
 %% need to rebalance, and if we still do, then execute
@@ -100,11 +102,13 @@ maybe_rebalance_delayed(Pid) ->
 stop(Pid) ->
   gen_server:call(Pid, stop).
 
+connection_closed(Pid, Addr, Primary) ->
+  gen_server:call(Pid, {connection_closed, Addr, Primary}).
+
 get_all_status(Pid) ->
   get_all_status(Pid, infinity).
 get_all_status(Pid, Timeout) ->
   gen_server:call(Pid, all_status, Timeout).
-
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -134,10 +138,11 @@ init([Remote]) ->
 handle_call({connected, Socket, Transport, IPPort, Proto, _Props, Primary}, _From,
     State = #state{rtsource_conn_sup = S, remote = Remote, endpoints = E, rebalance_flag = RF}) ->
 
-  lager:debug("rtsource_conn_mgr connection recieved"),
+  lager:debug("rtsource_conn_mgr connection recieved ~p", [{IPPort, Primary}]),
 
   case start_rtsource_conn(Remote, S) of
     {ok, RtSourcePid} ->
+      lager:debug("we have added the connection"),
       case riak_repl2_rtsource_conn:connected(Socket, Transport, IPPort, Proto, RtSourcePid, _Props, Primary) of
         ok ->
 
@@ -173,6 +178,11 @@ handle_call(all_status, _From, State=#state{endpoints = E}) ->
   AllKeys = orddict:fetch_keys(E),
   {reply, collect_status_data(AllKeys, [], E), State};
 
+handle_call({connection_closed, Addr, Primary}, _From, State=#state{endpoints = E, remote = R}) ->
+  NewEndpoints = orddict:erase({Addr,Primary}, E),
+  riak_repl2_rtsource_conn_data_mgr:delete(realtime_connections, R, node(), Addr, Primary),
+  {reply, ok, State#state{endpoints = NewEndpoints}};
+
 handle_call(stop, _From, State) ->
   {stop, normal, ok, State};
 
@@ -196,7 +206,6 @@ handle_cast({kill_rtsource_conn, Pid}, State) ->
 
 handle_cast(rebalance_delayed, State) ->
   {noreply, maybe_rebalance(State, delayed)};
-
 
 handle_cast(_Request, State) ->
   {noreply, State}.
@@ -232,7 +241,7 @@ code_change(_OldVsn, State, _Extra) ->
 % rtsource_conn_mgr callback
 start_rtsource_conn(Remote, S) ->
   lager:info("Adding a connection and starting rtsource_conn ~p", [Remote]),
-  Args = [Remote],
+  Args = [Remote, self()],
   supervisor:start_child(S, Args).
 
 remove_all_current_connections(_State=#state{endpoints = E, remote = R}) ->
@@ -245,9 +254,15 @@ remove_connection([], _) ->
   ok;
 remove_connection([Key | Rest], E) ->
   RtsourcePid = orddict:fetch(Key, E),
+  HelperPid = riak_repl2_rtsource_conn:get_helper_pid(RtsourcePid),
   lager:debug("rtsource_conn called to gracefully kill itself ~p", [Key]),
-  riak_repl2_rtsource_conn:kill_connection_gracefully(RtsourcePid, self()),
+  spawn_link(?MODULE, remove_connection_gracefully, [RtsourcePid, HelperPid]),
   remove_connection(Rest, E).
+
+remove_connection_gracefully(RtSourceConnPid, HelperPid) ->
+  riak_repl2_rtsource_helper:stop_pulling(HelperPid),
+  timer:sleep(?KILL_TIME),
+  riak_repl2_rtsource_conn:stop(RtSourceConnPid).
 
 
 
@@ -296,10 +311,17 @@ check_addrs(Current, New) ->
 
 check_addrs_helper(_, _, false) ->
   false;
-check_addrs_helper([], _, true) ->
+check_addrs_helper([], [], true) ->
   true;
+check_addrs_helper([], _, true) ->
+  false;
 check_addrs_helper([Addr| Addrs], New, true) ->
-  check_addrs_helper(Addrs, New, lists:member(Addr, New)).
+  case lists:member(Addr, New) of
+    true ->
+      check_addrs_helper(Addrs, lists:delete(Addr, New), true);
+    false ->
+      check_addrs_helper(Addrs, New, false)
+  end.
 
 
 
@@ -333,10 +355,93 @@ collect_status_data([Key | Rest], Data, E) ->
   collect_status_data(Rest, NewData, E).
 
 
-
-
 %% ================================================================================================================
 %%rebalance_delay_millis() ->
 %%  MaxDelaySecs =
 %%    app_helper:get_env(riak_repl, realtime_connection_rebalance_max_delay_secs, 5*60),
 %%  round(MaxDelaySecs * crypto:rand_uniform(0, 1000)).
+
+
+%% ===================================================================
+%% EUnit tests
+%% ===================================================================
+%%-ifdef(TEST).
+%%
+%%riak_repl2_rtsource_conn_mgr_test_() ->
+%%  {spawn, [{
+%%    setup,
+%%    fun setup/0,
+%%    fun cleanup/1,
+%%    {timeout, 120, fun cache_peername_test_case/0}
+%%  }]}.
+%%
+%%setup() ->
+%%  % ?debugMsg("enter setup()"),
+%%  % make sure there aren't leftovers around from prior tests
+%%  sanitize(),
+%%  % now set up the environment for this test
+%%  process_flag(trap_exit, true),
+%%  riak_repl_test_util:start_test_ring(),
+%%  riak_repl_test_util:abstract_gen_tcp(),
+%%  riak_repl_test_util:abstract_stats(),
+%%  riak_repl_test_util:abstract_stateful(),
+%%  % ?debugMsg("leave setup()"),
+%%  ok.
+%%
+%%cleanup(_Ctx) ->
+%%  % ?debugFmt("enter cleanup(~p)", [_Ctx]),
+%%  R = sanitize(),
+%%  % ?debugFmt("leave cleanup(~p) -> ~p", [_Ctx, R]),
+%%  R.
+%%
+%%sanitize() ->
+%%  % ?debugMsg("enter sanitize()"),
+%%  rt_source_helpers:kill_fake_sink(),
+%%  riak_repl_test_util:kill_and_wait([
+%%    riak_repl2_rt,
+%%    riak_repl2_rtq,
+%%    riak_core_tcp_mon]),
+%%
+%%  riak_repl_test_util:stop_test_ring(),
+%%
+%%  riak_repl_test_util:maybe_unload_mecks([
+%%    riak_core_service_mgr,
+%%    riak_core_connection_mgr,
+%%    gen_tcp]),
+%%  meck:unload(),
+%%  % ?debugMsg("leave sanitize()"),
+%%  ok.
+%%
+%%
+%%setup_connection_manager(RemoteName) ->
+%%  % ?debugFmt("enter setup_connection_for_peername(~p)", [RemoteName]),
+%%  riak_repl_test_util:reset_meck(riak_core_connection_mgr, [no_link, passthrough]),
+%%  meck:expect(riak_core_connection_mgr, connect,
+%%    fun(_ServiceAndRemote, ClientSpec) ->
+%%      proc_lib:spawn_link(?MODULE, riak_core_connection_mgr_connect, [ClientSpec, RemoteName]),
+%%      {ok, make_ref()}
+%%    end).
+%%riak_core_connection_mgr_connect(ClientSpec, {RemoteHost, RemotePort} = RemoteName) ->
+%%  Version = stateful:version(),
+%%  {_Proto, {TcpOpts, Module, Pid}} = ClientSpec,
+%%  {ok, Socket} = gen_tcp:connect(RemoteHost, RemotePort, [binary | TcpOpts]),
+%%
+%%  ok = Module:connected(Socket, gen_tcp, RemoteName, Version, Pid, []),
+%%
+%%  % simulate local socket problem
+%%  inet:close(Socket),
+%%
+%%  % get the State from the source connection.
+%%  {status,Pid,_,[_,_,_,_,[_,_,{data,[{_,State}]}]]} = sys:get_status(Pid),
+%%  % getting the peername from the socket should produce error string
+%%  ?assertEqual("error:einval", peername(inet, Socket)),
+%%
+%%  % while getting the peername from the State should produce the cached string
+%%  % format the string we expect from peername(State) ...
+%%  {ok, HostIP} = inet:getaddr(RemoteHost, inet),
+%%  RemoteText = lists:flatten(io_lib:format("~B.~B.~B.~B:~B",
+%%    tuple_to_list(HostIP) ++ [RemotePort])),
+%%  % ... and hook the function to check for it
+%%  ?assertEqual(RemoteText, peername(State)).
+%%
+%%-endif.

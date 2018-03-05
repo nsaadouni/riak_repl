@@ -329,7 +329,7 @@ handle_call({get_known_ipaddrs_of_cluster, {name, ClusterName}}, _From, State) -
 %%            BalancerFun = State#state.balancer_fun,
 %%            RebalancedMembers = BalancerFun(Members),
 %%            lager:debug("Rebalancer: ~p -> ~p", [Members, RebalancedMembers]),
-            lager:debug("Rebalancing is currently not working"),
+%%            lager:debug("Rebalancing is currently not working"),
             {reply, {ok, Members}, State};
 %%             State#state{clusters=add_ips_to_cluster(ClusterName, Members,
 %%                                                     State#state.clusters)}};

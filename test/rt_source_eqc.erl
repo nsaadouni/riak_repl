@@ -122,7 +122,9 @@ g_remote_name() ->
 remote_name(#state{remotes_available = []}) ->
     erlang:error(no_name_available);
 remote_name(#state{remotes_available = Remotes}) ->
-    oneof(Remotes).
+    Name = oneof(Remotes),
+    % we need unique names as we are now starting a supervisor not a gen_server for connectionss
+    list_to_atom(lists:flatten(io_lib:format("~p ~p", [Name, random:uniform(999999)]))).
 
 precondition(#state{master_queue = MasterQ} = S, {call, _, Connect, [Remote, MasterQ]}) when Connect =:= connect_to_v1; Connect =:= connect_to_v2 ->
     %% ?debugFmt("Remote requested: ~p Remotes available: ~p", [Remote, S#state.remotes_available]),
@@ -369,12 +371,12 @@ model_ack_objects(NumAcked, Unacked) when length(Unacked) >= NumAcked ->
 
 postcondition(_State, {call, _, connect_to_v1, _Args}, {error, _}) ->
     ?P(false);
-postcondition(_State, {call, _, connect_to_v1, _Args}, {{Source, _SourceName}, Sink}) ->
+postcondition(_State, {call, _, connect_to_v1, _Args}, {Source, Sink}) ->
     ?P(is_pid(Source) andalso is_pid(Sink));
 
 postcondition(_State, {call, _, connect_to_v2, _Args}, {error, _}) ->
     ?P(false);
-postcondition(_State, {call, _, connect_to_v2, _Args}, {{Source,_SourceName}, Sink}) ->
+postcondition(_State, {call, _, connect_to_v2, _Args}, {Source, Sink}) ->
     ?P(is_pid(Source) andalso is_pid(Sink));
 
 postcondition(_State, {call, _, disconnect, [_SourceState]}, {Source, _Sink}) ->
@@ -527,17 +529,13 @@ fix_routed_meta(Meta, AdditionalRemotes) ->
 
 connect_to_v1(RemoteName, MasterQueue) ->
     %% ?debugFmt("connect_to_v1: ~p", [RemoteName]),
-    R = random:uniform(999999),
-    Remote = list_to_atom(lists:flatten(io_lib:format("~p ~p", [RemoteName,R]))),
     stateful:set(version, {realtime, {1,0}, {1,0}}),
-    connect(Remote, MasterQueue).
+    connect(RemoteName, MasterQueue).
 
 connect_to_v2(RemoteName, MasterQueue) ->
     %% ?debugFmt("connect_to_v2: ~p", [RemoteName]),
-    R = random:uniform(999999),
-    Remote = list_to_atom(lists:flatten(io_lib:format("~p ~p", [RemoteName,R]))),
     stateful:set(version, {realtime, {2,0}, {2,0}}),
-    connect(Remote, MasterQueue).
+    connect(RemoteName, MasterQueue).
 
 connect(RemoteName, MasterQueue) ->
     %% ?debugFmt("connect: ~p", [RemoteName]),
@@ -556,7 +554,7 @@ connect(RemoteName, MasterQueue) ->
             %% ?debugFmt("V1 SinkPid: ~p", [SinkPid]),
             rt_source_helpers:wait_for_valid_sink_history(SinkPid, RemoteName, MasterQueue),
             ok = rt_source_helpers:ensure_registered(RemoteName),
-            {{SourcePid,RemoteName}, SinkPid}
+            {SourcePid, SinkPid}
     after 5000 ->
             {error, timeout}
     end.

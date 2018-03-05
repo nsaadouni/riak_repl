@@ -42,10 +42,9 @@
 -endif.
 
 %% API
--export([start_link/1,
+-export([start_link/2,
          stop/1,
-         kill_connection_gracefully/2,
-         kill/2,
+         get_helper_pid/1,
          status/1, status/2,
          address/1,
          connected/7,
@@ -64,8 +63,6 @@
                        {packet, 0},
                        {active, false}]).
 
--define(KILL_TIME, 10*1000).
-
 %% nodes running 1.3.1 have a bug in the service_mgr module.
 %% this bug prevents it from being able to negotiate a version list longer
 %% than 2. Until we no longer support communicating with that version,
@@ -81,6 +78,7 @@
 -record(state, {remote,    % remote name
                 address,   % {IP, Port}
                 primary,
+                conn_mgr_pid,
                 transport, % transport module
                 socket,    % socket to use with transport
                 peername,  % cached when socket becomes active
@@ -96,8 +94,8 @@
                 cont = <<>>}). % continuation from previous TCP buffer
 
 %% API - start trying to send realtime repl to remote site
-start_link(Remote) ->
-    gen_server:start_link(?MODULE, [Remote], []).
+start_link(Remote, ConnMgrPid) ->
+    gen_server:start_link(?MODULE, [Remote, ConnMgrPid], []).
 
 stop(Pid) ->
     gen_server:call(Pid, stop, ?LONG_TIMEOUT).
@@ -135,17 +133,16 @@ connected(Socket, Transport, IPPort, Proto, RtSourcePid, _Props, Primary) ->
       ok
   end.
 
-
-kill_connection_gracefully(RtsourceConnPid, ConnMgrPid) ->
-  gen_server:cast(RtsourceConnPid, {kill_connection_gracefully, ConnMgrPid}).
+get_helper_pid(RtSourcePid) ->
+  gen_server:call(RtSourcePid, get_helper_pid).
 
 % ======================================================================================================================
 
 %% gen_server callbacks
 
 %% Initialize
-init([Remote]) ->
-  {ok, #state{remote = Remote}}.
+init([Remote, ConnMgrPid]) ->
+  {ok, #state{remote = Remote, conn_mgr_pid = ConnMgrPid}}.
 
 handle_call(stop, _From, State) ->
     {stop, normal, ok, State};
@@ -245,11 +242,10 @@ handle_call({connected, Socket, Transport, EndPoint, Proto, Primary}, _From,
       end;
     ER ->
       {reply, ER, State}
-  end.
+  end;
 
-handle_cast({kill_connection_gracefully, ConnMgr}, State) ->
-  spawn_link(?MODULE, kill, [State, ConnMgr]),
-  {noreply, State};
+handle_call(get_helper_pid, _From, State=#state{helper_pid = H}) ->
+  {reply, H, State}.
 
 handle_cast(_Request, State) ->
   {noreply, State}.
@@ -259,7 +255,7 @@ handle_info({Proto, _S, TcpBin}, State= #state{cont = Cont})
   when Proto == tcp; Proto == ssl ->
     recv(<<Cont/binary, TcpBin/binary>>, State);
 handle_info({Closed, _S},
-            State = #state{remote = Remote, cont = Cont})
+            State = #state{remote = Remote, cont = Cont, address = A, primary = P})
   when Closed == tcp_closed; Closed == ssl_closed ->
     case size(Cont) of
         0 ->
@@ -271,6 +267,9 @@ handle_info({Closed, _S},
     end,
     %% go to sleep for 1s so a sink that opens the connection ok but then
     %% dies will not make the server restart too fst.
+
+%%  remove this connection from the manager
+    riak_repl2_rtsource_conn_mgr:connection_closed(State#state.conn_mgr_pid, A, P),
     timer:sleep(1000),
     {stop, normal, State};
 handle_info({Error, _S, Reason},
@@ -311,8 +310,8 @@ handle_info(Msg, State) ->
 
 terminate(_Reason, _State=#state{helper_pid=HelperPid}) ->
   lager:debug("rtsource_chain_kill killling the helper as well ~p", [_Reason]),
-    catch riak_repl2_rtsource_helper:stop(HelperPid),
-    ok.
+  catch riak_repl2_rtsource_helper:stop(HelperPid),
+  ok.
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
@@ -412,17 +411,6 @@ schedule_heartbeat(State = #state{hb_interval_tref = _TRef,
 schedule_heartbeat(State) ->
     lager:warning("Heartbeat is misconfigured and is not a valid integer."),
     State.
-
-kill(_State=#state{helper_pid = HelperPid},ConnMgrPid) ->
-
-  % Stop helper from pulling form queue
-  riak_repl2_rtsource_helper:stop_pulling(HelperPid),
-
-  % Wait for acknowledgements (currently 2 mins, might be too long)
-  timer:sleep(?KILL_TIME),
-
-  % call rtsource_mgr to kill this connection now,
-  riak_repl2_rtsource_conn_mgr:kill_connection(ConnMgrPid, self()).
 
 %% ===================================================================
 %% EUnit tests
@@ -528,7 +516,10 @@ connect(RemoteName) ->
     stateful:set(version, {realtime, {1,0}, {1,0}}),
     stateful:set(remote, RemoteName),
 
-    {ok, SourcePid} = riak_repl2_rtsource_conn:start_link(RemoteName),
+    %% rtsource_conn now takes in the remote name and the conn_mgr pid
+    %% As this test does not require the conn_mgr we pass self() as the conn_mgr pid in order to start
+    %% rtsource_conn without failure.
+    {ok, SourcePid} = riak_repl2_rtsource_conn:start_link(RemoteName, self()),
 
     {status, Status} = riak_repl2_rtsource_conn:legacy_status(SourcePid),
     RTQStats = proplists:get_value(realtime_queue_stats, Status),
