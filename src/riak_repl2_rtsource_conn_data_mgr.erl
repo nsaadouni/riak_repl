@@ -9,7 +9,7 @@
   set_leader/2,
 
   delete/2, delete/3, delete/5,
-  read/2, read/3,
+  read/1, read/2, read/3,
   write/5
 ]).
 
@@ -23,12 +23,14 @@
 
 -define(SERVER, ?MODULE).
 -define(PROXY_CALL_TIMEOUT, 30 * 1000).
+-define(NODE_WATCHER_POLLING_INTERVAL, 10*1000).
 
 -record(state, {
 
   leader_node,
   is_leader,
-  connections
+  connections,
+  active_nodes
 
 }).
 
@@ -46,6 +48,9 @@ read(realtime_connections, Remote) ->
 
 read(realtime_connections, Remote, Node) ->
   gen_server:call(?SERVER, {read_realtime_connections, Remote, Node}).
+
+read(active_nodes) ->
+  gen_server:call(?SERVER, read_active_nodes).
 
 write(realtime_connections, Remote, Node, IPPort, Primary) ->
   gen_server:cast(?SERVER, {write_realtime_connections, Remote, Node, IPPort, Primary}).
@@ -68,9 +73,11 @@ init([]) ->
   Leader = undefined,
   IsLeader = false,
   C = dict:new(),
+  AN = [],
   lager:debug("conn_data_mgr started"),
   riak_core_ring_manager:ring_trans(fun riak_repl_ring:overwrite_realtime_connection_data/2, C),
-  {ok, #state{is_leader = IsLeader, leader_node = Leader, connections = C}}.
+  erlang:send_after(?NODE_WATCHER_POLLING_INTERVAL, self(), poll_node_watcher),
+  {ok, #state{is_leader = IsLeader, leader_node = Leader, connections = C, active_nodes = AN}}.
 
 
 %% -------------------------------------------------- Read ---------------------------------------------------------- %%
@@ -91,6 +98,15 @@ handle_call(Msg={read_realtime_connections, Remote, Node}, _From, State=#state{c
       NodeDict = get_value(Remote, C, dictionary),
       ConnsList = get_value(Node, NodeDict, list),
       {reply, ConnsList, State};
+    false ->
+      NoLeaderResult = {ok, []},
+      proxy_call(Msg, NoLeaderResult, State)
+  end;
+
+handle_call(Msg=read_active_nodes, _From, State=#state{active_nodes = AN, is_leader = L}) ->
+  case L of
+    true ->
+      {reply, AN, State};
     false ->
       NoLeaderResult = {ok, []},
       proxy_call(Msg, NoLeaderResult, State)
@@ -136,6 +152,7 @@ handle_cast(Msg={delete_realtime_connections, Remote, Node}, State=#state{connec
       OldNodeDict = get_value(Remote, C, dictionary),
       NewNodeDict = dict:erase(Node, OldNodeDict),
       NewConnections = dict:store(Remote, NewNodeDict, C),
+      lager:debug("delted realtime connection data ~p ~p", [Remote, Node]),
 
       % push to ring
       riak_core_ring_manager:ring_trans(fun riak_repl_ring:overwrite_realtime_connection_data/2, NewConnections),
@@ -160,6 +177,7 @@ handle_cast(Msg = {delete_realtime_connections, Remote}, State=#state{connection
       {noreply, State}
   end;
 
+
 %% -------------------------------------------------- Write -------------------------------------------------------- %%
 
 handle_cast(Msg = {write_realtime_connections, Remote, Node, IPPort, Primary}, State=#state{connections = C}) ->
@@ -183,9 +201,36 @@ handle_cast(_Request, State) ->
   {noreply, State}.
 
 
-handle_info(restore_realtime_connection_info, State) ->
+handle_info(restore_leader_data, State) ->
   RemoteRealtimeConnections = riak_repl_ring:get_realtime_connection_data(),
-  {noreply, State#state{connections = RemoteRealtimeConnections}};
+  ActiveNodes = riak_repl_ring:get_active_nodes(),
+  {noreply, State#state{connections = RemoteRealtimeConnections, active_nodes = ActiveNodes}};
+
+handle_info(poll_node_watcher, State=#state{active_nodes = AN, connections = C}) when State#state.is_leader == true ->
+  ActiveNodes = riak_core_node_watcher:nodes(riak_kv),
+  Connections = case ActiveNodes == AN of
+
+                 true ->
+                   C;
+                 false ->
+                   riak_core_ring_manager:ring_trans(fun riak_repl_ring:overwrite_active_nodes/2, ActiveNodes),
+                   case AN -- ActiveNodes of
+                     [] ->
+                       C;
+                     DownNodes ->
+                       AllRemotes = dict:fetch_keys(C),
+                       lager:debug("down nodes = ~p; known remotes = ~p; connections = ~p", [DownNodes, AllRemotes, C]),
+                       NewC = remove_nodes_remotes(DownNodes, AllRemotes, C),
+                       lager:debug("down nodes, new connections dictionary ~p", [NewC]),
+                       riak_core_ring_manager:ring_trans(fun riak_repl_ring:overwrite_realtime_connection_data/2, NewC),
+                       NewC
+                   end
+               end,
+  erlang:send_after(?NODE_WATCHER_POLLING_INTERVAL, self(), poll_node_watcher),
+  {noreply, State#state{active_nodes = ActiveNodes, connections = Connections}};
+handle_info(poll_node_watcher, State) ->
+  erlang:send_after(?NODE_WATCHER_POLLING_INTERVAL, self(), poll_node_watcher),
+  {noreply, State};
 
 handle_info(_Info, State) ->
   {noreply, State}.
@@ -200,9 +245,20 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+remove_nodes_remotes(_Nodes, [], ConnetionsDict) ->
+  ConnetionsDict;
+remove_nodes_remotes(Nodes, [Remote|Remotes], ConnectionsDict) ->
+  remove_nodes_remotes(Nodes, Remotes, remove_nodes(Nodes, Remote, ConnectionsDict)).
+remove_nodes([], _Remote, ConnectionsDict) ->
+  ConnectionsDict;
+remove_nodes([Node|Nodes], Remote, ConnectionsDict) ->
+  OldNodeDict = get_value(Remote, ConnectionsDict, dictionary),
+  NewNodeDict = dict:erase(Node, OldNodeDict),
+  remove_nodes(Nodes, Remote, dict:store(Remote, NewNodeDict, ConnectionsDict)).
+
 %% start being a cluster manager leader
 become_leader(State, _LeaderNode) when State#state.is_leader == false ->
-  erlang:send_after(5000, self(), restore_realtime_connection_info),
+  erlang:send_after(5000, self(), restore_leader_data),
   State#state{is_leader = true};
 become_leader(State, _LeaderNode) ->
   State.

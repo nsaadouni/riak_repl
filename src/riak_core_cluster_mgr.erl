@@ -816,14 +816,11 @@ shuffle(List) ->
   [E || {E, _} <- lists:keysort(2, [{Elm, random:uniform()} || Elm <- List])].
 
 
- get_my_remote_ip_list([], _Return) ->
+get_my_remote_ip_list([], _Return) ->
   {ok, []};
 get_my_remote_ip_list(RemoteUnsorted, Return) ->
-
   RemoteAddrs = lists:sort(RemoteUnsorted),
-
-  {ok, MyRing} = riak_core_ring_manager:get_my_ring(),
-  SourceSortedNodes = lists:sort(riak_core_ring:all_members(MyRing)),
+  SourceSortedNodes = lists:sort(riak_repl2_rtsource_conn_data_mgr:read(active_nodes)),
   SourceNodesTagged = lists:zip(lists:seq(1, length(SourceSortedNodes)), SourceSortedNodes),
   case lists:keyfind(node(), 2, SourceNodesTagged) of
     {MyPos, _MyNode} ->

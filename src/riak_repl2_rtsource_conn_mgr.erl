@@ -36,7 +36,8 @@
   stop/1,
   get_all_status/1,
   get_all_status/2,
-  invert_connections/1
+  invert_connections/1,
+  connection_numbers/1
 ]).
 
 -define(SERVER, ?MODULE).
@@ -346,6 +347,8 @@ reconnect(State=#state{remote=Remote}, BetterAddrs) ->
       State
   end.
 
+%% -------------------------------------------------------------------------------------------------------------- %%
+% returns the connections inverted (key = {sinkip,port}, value = {soureNode, Primary})
 invert_connections(Connections) ->
   AllNodes = dict:fetch_keys(Connections),
   InvertedConnections = dict:new(),
@@ -360,8 +363,39 @@ build_inverted_dictionary([SourceNode|Rest], Connections, InvertedConnections) -
 
 update_inverted(_,[], List) ->
   List;
-update_inverted(SourceNode, [{SinkIP, Primary}|Rest], Dict) ->
-  update_inverted(SourceNode, Rest, dict:append(SinkIP, {SourceNode,Primary}, Dict)).
+update_inverted(SourceNode, [{SinkIPPort, Primary}|Rest], Dict) ->
+  update_inverted(SourceNode, Rest, dict:append(SinkIPPort, {SourceNode,Primary}, Dict)).
+
+%% -------------------------------------------------------------------------------------------------------------- %%
+%% -------------------------------------------------------------------------------------------------------------- %%
+connection_numbers(Connections) ->
+  AllKeys = dict:fetch_keys(Connections),
+  CN = dict:new(),
+  build_connection_numbers(AllKeys,Connections,CN).
+
+build_connection_numbers([], _, CN) ->
+  CN;
+build_connection_numbers([Node|Rest], Connections, CN) ->
+  ConnectionList = dict:fetch(Node, Connections),
+  ConnectionsNumbers = calculate_connections(ConnectionList, {0,0}),
+  UpdatedCN = dict:store(Node, ConnectionsNumbers, CN),
+  build_connection_numbers(Rest, Connections, UpdatedCN).
+
+calculate_connections([], X) ->
+  X;
+calculate_connections([{_IPPort, P}|Rest], {Primary, Secondary}) ->
+  {Primary1, Secondary1} = case P of
+                             true ->
+                               {Primary+1, Secondary};
+                             false ->
+                               {Primary, Secondary+1}
+                           end,
+  calculate_connections(Rest, {Primary1, Secondary1}).
+
+
+
+%% -------------------------------------------------------------------------------------------------------------- %%
+
 
 
 
