@@ -96,7 +96,8 @@
          stop/0,
          connect_to_clusters/0,
          shuffle_remote_ipaddrs/1,
-         get_my_remote_ip_list/2
+         get_my_remote_ip_list/2,
+         get_unsuhffled_remote_ip_addrs_of_cluster/1
          ]).
 
 %% gen_server callbacks
@@ -207,6 +208,15 @@ get_ipaddrs_of_cluster_multifix(ClusterName, Return) ->
     Reply ->
       Reply
   end.
+
+get_unsuhffled_remote_ip_addrs_of_cluster(ClusterName) ->
+  case gen_server:call(?SERVER, {get_known_ipaddrs_of_cluster, {name,ClusterName}}, infinity) of
+    {ok, Reply} ->
+      Reply;
+    _Reply ->
+      []
+  end.
+
 
 
 %% @doc stops the local server.
@@ -859,6 +869,7 @@ get_my_remote_ip_list(RemoteUnsorted, Return) ->
     false ->
       % This node is not part of the cluster
       % Therefore should not connect to the othe cluster as part of repl for this
+      lager:debug("we are reaching the state that we are not in the cluster! ~p", [SourceSortedNodes]),
       {ok, []}
   end.
 

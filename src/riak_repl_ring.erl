@@ -46,7 +46,8 @@
          get_realtime_connection_data/0,
          overwrite_realtime_connection_data/2,
          get_active_nodes/0,
-         overwrite_active_nodes/2
+         overwrite_active_nodes/2,
+         overwrite_active_nodes_and_realtime_connection_data/2
          ]).
 
 -ifdef(TEST).
@@ -552,6 +553,21 @@ overwrite_active_nodes(Ring, ActiveNodeList) ->
       {new_ring, riak_core_ring:update_meta(
         ?MODULE,
         RC2,
+        Ring)}
+  end.
+
+overwrite_active_nodes_and_realtime_connection_data(Ring, {RealtimeDictionary, ActiveNodeList}) ->
+  RC = get_repl_config(ensure_config(Ring)),
+  RC2 = dict:store(active_nodes, ActiveNodeList, RC),
+  RC3 = dict:store(realtime_connections, RealtimeDictionary, RC2),
+  case RC == RC3 of
+    true ->
+      %% nothing changed
+      {ignore, {not_changed, clustername}};
+    false ->
+      {new_ring, riak_core_ring:update_meta(
+        ?MODULE,
+        RC3,
         Ring)}
   end.
 

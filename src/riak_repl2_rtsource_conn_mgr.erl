@@ -32,7 +32,7 @@
   maybe_rebalance_delayed/1,
   remove_connection_gracefully/2,
   connection_closed/3,
-  should_rebalance/1,
+  should_rebalance/3,
   stop/1,
   get_all_status/1,
   get_all_status/2,
@@ -61,6 +61,8 @@
   rebalance_delay,
   rebalance_flag = false,
 
+  source_nodes,
+  sink_nodes,
 
   endpoints
   % Want a store for the following information
@@ -112,6 +114,7 @@ get_all_status(Pid) ->
 get_all_status(Pid, Timeout) ->
   gen_server:call(Pid, all_status, Timeout).
 
+
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
@@ -130,7 +133,13 @@ init([Remote]) ->
       MaxDelaySecs = app_helper:get_env(riak_repl, realtime_connection_rebalance_max_delay_secs, 60),
       M = round(MaxDelaySecs * crypto:rand_uniform(0, 1000)),
 
-      {ok, #state{remote = Remote, connection_ref = Ref, rtsource_conn_sup = S, endpoints = E, rebalance_delay = M}};
+      {SourceNodes, SinkNodes} = get_source_and_sink_nodes(Remote),
+
+      lager:debug("conn_mgr node source: ~p", [SourceNodes]),
+      lager:debug("conn_mgr node sink: ~p", [SinkNodes]),
+
+      {ok, #state{remote = Remote, connection_ref = Ref, rtsource_conn_sup = S, endpoints = E, rebalance_delay = M,
+        source_nodes = SourceNodes, sink_nodes = SinkNodes}};
     {error, Reason}->
       lager:warning("Error connecting to remote"),
       {stop, Reason}
@@ -269,12 +278,14 @@ remove_connection_gracefully(RtSourceConnPid, HelperPid) ->
 
 
 maybe_rebalance(State, now) ->
-  case should_rebalance(State) of
-    no ->
+  {NewSource, NewSink} = get_source_and_sink_nodes(State#state.remote),
+  case should_rebalance(State, NewSource, NewSink) of
+    false ->
+      lager:debug("rebalancing triggered for no reason"),
       State;
-    {yes, UsefulAddrs} ->
-      lager:debug("we are rebalancing"),
-      reconnect(State, UsefulAddrs)
+    {true, UsefulAddrs} ->
+      lager:debug("rebalancing triggered and is needed"),
+      reconnect(State#state{sink_nodes = NewSink, source_nodes = NewSource}, UsefulAddrs)
   end;
 maybe_rebalance(State, delayed) ->
   case State#state.rb_timeout_tref of
@@ -287,46 +298,132 @@ maybe_rebalance(State, delayed) ->
   end.
 
 
-should_rebalance(#state{endpoints = E, remote=Remote}) ->
+should_rebalance(#state{remote=Remote, sink_nodes = OldSink, source_nodes = OldSource}, NewSource, NewSink) ->
 
-  case riak_core_cluster_mgr:get_ipaddrs_of_cluster_multifix(Remote, primary) of
-    {ok, []} ->
-      no;
-    {ok, Primaries} ->
-      check_addrs(orddict:fetch_keys(E), Primaries)
-  end.
+  {SourceComparison, _SourceNodesDown, _SourceNodesUp} = compare_nodes(OldSource, NewSource),
+  {SinkComparison, _SinkNodesDown, _SinkNodesUp} = compare_nodes(OldSink, NewSink),
 
-check_addrs(Current, New) ->
-  case check_addrs_helper(Current, New, true) of
-    true ->
-      no;
-    false ->
-      UsefulAddrs = riak_core_connection_mgr:filter_blacklisted_ipaddrs(New),
-      case UsefulAddrs of
-        [] ->
-          no;
-        X ->
-          {yes, X}
+  lager:debug("zzz source comparison = ~p", [SourceComparison]),
+  lager:debug("zzz sink comparison = ~p", [SinkComparison]),
+
+%%  case {SourceComparison, SinkComparison} of
+%%  {equal,equal} ->
+%%    ok;
+%%  {equal,nodes_up_and_down} ->
+%%    ok;
+%%  {equal,nodes_down} ->
+%%    ok;
+%%  {equal,nodes_up} ->
+%%    ok;
+%%  {nodes_up_and_down,equal} ->
+%%    ok;
+%%  {nodes_up_and_down,nodes_up_and_down} ->
+%%    ok;
+%%  {nodes_up_and_down,nodes_down} ->
+%%    ok;
+%%  {nodes_up_and_down,nodes_up} ->
+%%    ok;
+%%  {nodes_down,equal} ->
+%%    ok;
+%%  {nodes_down,nodes_up_and_down} ->
+%%    ok;
+%%  {nodes_down,nodes_down} ->
+%%    ok;
+%%  {nodes_down,nodes_up} ->
+%%    ok;
+%%  {nodes_up,equal} ->
+%%    ok;
+%%  {nodes_up,nodes_up_and_down} ->
+%%    ok;
+%%  {nodes_up,nodes_down} ->
+%%    ok;
+%%  {nodes_up,nodes_up} ->
+%%    ok
+%%  end,
+
+
+  case {SourceComparison, SinkComparison} of
+    {equal, equal} ->
+      false;
+    _ ->
+      case riak_core_cluster_mgr:get_ipaddrs_of_cluster_multifix(Remote, primary) of
+        {ok, []} ->
+          false;
+        {ok, Primaries} ->
+          case riak_core_connection_mgr:filter_blacklisted_ipaddrs(Primaries) of
+            [] ->
+              false;
+            UsefulAddrs ->
+              {true, UsefulAddrs}
+          end
       end
+
   end.
 
 
-check_addrs_helper(_, _, false) ->
-  false;
-check_addrs_helper([], [], true) ->
-  true;
-check_addrs_helper([], _, true) ->
-  false;
-check_addrs_helper([Addr| Addrs], New, true) ->
-  case lists:member(Addr, New) of
-    true ->
-      check_addrs_helper(Addrs, lists:delete(Addr, New), true);
-    false ->
-      check_addrs_helper(Addrs, New, false)
+%%  case riak_core_cluster_mgr:get_ipaddrs_of_cluster_multifix(Remote, primary) of
+%%    {ok, []} ->
+%%      no;
+%%    {ok, Primaries} ->
+%%      check_addrs(orddict:fetch_keys(E), Primaries)
+%%  end.
+%%
+%%check_addrs(Current, New) ->
+%%  case check_addrs_helper(Current, New, true) of
+%%    true ->
+%%      no;
+%%    false ->
+%%      UsefulAddrs = riak_core_connection_mgr:filter_blacklisted_ipaddrs(New),
+%%      case UsefulAddrs of
+%%        [] ->
+%%          no;
+%%        X ->
+%%          {yes, X}
+%%      end
+%%  end.
+%%
+%%
+%%check_addrs_helper(_, _, false) ->
+%%  false;
+%%check_addrs_helper([], [], true) ->
+%%  true;
+%%check_addrs_helper([], _, true) ->
+%%  false;
+%%check_addrs_helper([Addr| Addrs], New, true) ->
+%%  case lists:member(Addr, New) of
+%%    true ->
+%%      check_addrs_helper(Addrs, lists:delete(Addr, New), true);
+%%    false ->
+%%      check_addrs_helper(Addrs, New, false)
+%%  end.
+
+
+get_source_and_sink_nodes(Remote) ->
+  SourceNodes = riak_repl2_rtsource_conn_data_mgr:read(active_nodes),
+  SinkNodes = riak_core_cluster_mgr:get_unsuhffled_remote_ip_addrs_of_cluster(Remote),
+  {SourceNodes, SinkNodes}.
+
+compare_nodes(Old, New) ->
+  NodesDown = diff_nodes(Old, New),
+  NodesUp = diff_nodes(New, Old),
+  case {NodesDown, NodesUp} of
+    {true, true} ->
+      {nodes_up_and_down, NodesDown, NodesUp};
+    {true, false} ->
+      {nodes_down, NodesDown, NodesUp};
+    {false, true} ->
+      {nodes_up, NodesDown, NodesUp};
+    {false, false} ->
+      {equal, NodesDown, NodesUp}
   end.
 
-
-
+diff_nodes(N1, N2) ->
+  case N1 -- N2 of
+    [] ->
+      false;
+    _ ->
+      true
+  end.
 
 reconnect(State=#state{remote=Remote}, BetterAddrs) ->
   lager:info("trying reconnect to one of: ~p", [BetterAddrs]),
@@ -405,7 +502,6 @@ collect_status_data([Key | Rest], Data, E) ->
   Pid = orddict:fetch(Key, E),
   NewData = [riak_repl2_rtsource_conn:status(Pid) | Data],
   collect_status_data(Rest, NewData, E).
-
 
 %% ================================================================================================================
 %%rebalance_delay_millis() ->

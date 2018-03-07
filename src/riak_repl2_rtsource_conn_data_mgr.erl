@@ -108,7 +108,7 @@ handle_call(Msg=read_active_nodes, _From, State=#state{active_nodes = AN, is_lea
     true ->
       {reply, AN, State};
     false ->
-      NoLeaderResult = {ok, []},
+      NoLeaderResult = [],
       proxy_call(Msg, NoLeaderResult, State)
   end;
 
@@ -213,16 +213,16 @@ handle_info(poll_node_watcher, State=#state{active_nodes = AN, connections = C})
                  true ->
                    C;
                  false ->
-                   riak_core_ring_manager:ring_trans(fun riak_repl_ring:overwrite_active_nodes/2, ActiveNodes),
                    case AN -- ActiveNodes of
                      [] ->
+                       riak_core_ring_manager:ring_trans(fun riak_repl_ring:overwrite_active_nodes/2, ActiveNodes),
                        C;
                      DownNodes ->
                        AllRemotes = dict:fetch_keys(C),
                        lager:debug("down nodes = ~p; known remotes = ~p; connections = ~p", [DownNodes, AllRemotes, C]),
                        NewC = remove_nodes_remotes(DownNodes, AllRemotes, C),
                        lager:debug("down nodes, new connections dictionary ~p", [NewC]),
-                       riak_core_ring_manager:ring_trans(fun riak_repl_ring:overwrite_realtime_connection_data/2, NewC),
+                       riak_core_ring_manager:ring_trans(fun riak_repl_ring:overwrite_active_nodes_and_realtime_connection_data/2, {NewC, ActiveNodes}),
                        NewC
                    end
                end,
@@ -279,6 +279,7 @@ proxy_cast(Cast, _State = #state{leader_node=Leader}) ->
   gen_server:cast({?SERVER, Leader}, Cast).
 
 proxy_call(_Call, NoLeaderResult, State = #state{leader_node=Leader}) when Leader == undefined ->
+  lager:debug("data_mgr no leader call: ~p", [_Call]),
   {reply, NoLeaderResult, State};
 proxy_call(Call, NoLeaderResult, State = #state{leader_node=Leader}) ->
   Reply = try gen_server:call({?SERVER, Leader}, Call, ?PROXY_CALL_TIMEOUT) of
