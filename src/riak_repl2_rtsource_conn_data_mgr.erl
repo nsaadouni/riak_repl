@@ -88,7 +88,7 @@ handle_call(Msg={read_realtime_connections, Remote}, _From, State=#state{connect
       NodeDict = get_value(Remote, C, dictionary),
       {reply, NodeDict, State};
     false ->
-      NoLeaderResult = {ok, []},
+      NoLeaderResult = dict:new(),
       proxy_call(Msg, NoLeaderResult, State)
   end;
 
@@ -99,7 +99,7 @@ handle_call(Msg={read_realtime_connections, Remote, Node}, _From, State=#state{c
       ConnsList = get_value(Node, NodeDict, list),
       {reply, ConnsList, State};
     false ->
-      NoLeaderResult = {ok, []},
+      NoLeaderResult = dict:new(),
       proxy_call(Msg, NoLeaderResult, State)
   end;
 

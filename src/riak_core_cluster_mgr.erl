@@ -96,7 +96,7 @@
          stop/0,
          connect_to_clusters/0,
          shuffle_remote_ipaddrs/1,
-         get_my_remote_ip_list/2,
+         get_my_remote_ip_list/3,
          get_unsuhffled_remote_ip_addrs_of_cluster/1
          ]).
 
@@ -196,7 +196,7 @@ get_ipaddrs_of_cluster(ClusterName) ->
 get_ipaddrs_of_cluster_multifix(ClusterName) ->
   case gen_server:call(?SERVER, {get_known_ipaddrs_of_cluster, {name,ClusterName}}, infinity) of
     {ok, Reply} ->
-      get_my_remote_ip_list(Reply, all);
+      get_my_remote_ip_list(ClusterName, Reply, all);
     Reply ->
       Reply
   end.
@@ -204,7 +204,7 @@ get_ipaddrs_of_cluster_multifix(ClusterName) ->
 get_ipaddrs_of_cluster_multifix(ClusterName, Return) ->
   case gen_server:call(?SERVER, {get_known_ipaddrs_of_cluster, {name,ClusterName}}, infinity) of
     {ok, Reply} ->
-      get_my_remote_ip_list(Reply, Return);
+      get_my_remote_ip_list(ClusterName, Reply, Return);
     Reply ->
       Reply
   end.
@@ -826,52 +826,117 @@ shuffle(List) ->
   [E || {E, _} <- lists:keysort(2, [{Elm, random:uniform()} || Elm <- List])].
 
 
-get_my_remote_ip_list([], _Return) ->
+get_my_remote_ip_list(_Remote, [], _Return) ->
   {ok, []};
-get_my_remote_ip_list(RemoteUnsorted, Return) ->
-  RemoteAddrs = lists:sort(RemoteUnsorted),
-  SourceSortedNodes = lists:sort(riak_repl2_rtsource_conn_data_mgr:read(active_nodes)),
-  SourceNodesTagged = lists:zip(lists:seq(1, length(SourceSortedNodes)), SourceSortedNodes),
+get_my_remote_ip_list(Remote, RemoteUnsorted, Return) ->
+  SinkNodes = lists:sort(RemoteUnsorted),
+  SinkNodesLink = lists:seq(1, length(SinkNodes)),
+  SourceSortedNodes = lists:reverse(riak_repl2_rtsource_conn_data_mgr:read(active_nodes)),
+  NumberOfSinkNodes = length(SinkNodes),
+  NumberOfSourceNodes = length(SourceSortedNodes),
+
+
+  SourceNodesTagged = case NumberOfSinkNodes < NumberOfSourceNodes of
+                        true ->
+                          fix_indecies(NumberOfSinkNodes, lists:reverse(lists:zip(lists:seq(0, length(SourceSortedNodes)-1), SourceSortedNodes)), []);
+                        false ->
+                          lists:zip(lists:seq(1, length(SourceSortedNodes)), SourceSortedNodes)
+                      end,
+  SinkNodesTagged = lists:zip(lists:seq(0, length(SinkNodes)-1), SinkNodes),
+  SinkNodesLinkTagged = lists:zip(lists:seq(0, length(SinkNodesLink)-1), SinkNodesLink),
+
   case lists:keyfind(node(), 2, SourceNodesTagged) of
     {MyPos, _MyNode} ->
 
-      NumberOfSinkNodes = length(RemoteUnsorted),
-      NumberOfSourceNodes = length(SourceSortedNodes),
-      Res = NumberOfSourceNodes - NumberOfSinkNodes,
+      AllPrimariesList = [ {So, Si}  || {SinkIndex, Si} <- SinkNodesLinkTagged, {SourceIndex, So} <- SourceNodesTagged, SinkIndex rem NumberOfSourceNodes == SourceIndex-1],
+      AllPrimariesDict = build_primary_dict(AllPrimariesList, dict:new()),
 
-      if
-        Res >= 0 ->
-          % Res = 0
-          % Same number of source and sink nodes
-          % one to one connections
-          %-------------------------------------------------------------------------------------------------
-          % Res > 0
-          % More source nodes, than sink nodes
-          % Each source node has one connection out, some sink nodes will have multiple connections
+      lager:debug("zzz old All Primary Dict = ~p", [AllPrimariesDict]),
 
-          SplitPos = ((MyPos-1) rem length(RemoteAddrs)),
-          case lists:split(SplitPos,RemoteAddrs) of
-            {BeforeBuddy,[Buddy|AfterBuddy]} ->
-              Primary = [{Buddy, true}],
-              Secondary = [{X, false} || X <- shuffle(AfterBuddy++BeforeBuddy)],
-              filter_output(Primary, Secondary, Return)
+      {LinkedActive, LeftOverSinkNodes, NewPrimaryLinkDict} = link_addrs(AllPrimariesDict, SinkNodes, Remote),
+      lager:debug("zzz active linked address ~p", [LinkedActive]),
+      lager:debug("zzz Left over sink nodes ~p", [LeftOverSinkNodes]),
+      lager:debug("zzz new primary link dictionary ~p", [NewPrimaryLinkDict]),
 
-          end;
-        Res < 0 ->
-          % Less source nodes, than sink nodes
-          % Some source nodes will have multiple connections to different sink nodes (this is to distribute the load on sink)
 
-          RemoteNodesTagged = lists:zip(lists:seq(0, length(RemoteAddrs)-1), RemoteAddrs),
-          Primary =   [ {X, true} || {_Index,X} <- [ {_Index,X}  || {_Index, X} <- RemoteNodesTagged, _Index rem NumberOfSourceNodes == MyPos-1]],
-          Secondary = [ {X, false} || {_Index,X} <- [ {_Index,X} || {_Index, X} <- RemoteNodesTagged, _Index rem NumberOfSourceNodes /= MyPos-1]],
-          filter_output(Primary, Secondary, Return)
-      end;
+      Primary =   [ {X, true} || {_Index,X} <- [ {_Index,X}  || {_Index, X} <- SinkNodesTagged, _Index rem NumberOfSourceNodes == MyPos-1]],
+      Secondary = [ {X, false} || {_Index,X} <- [ {_Index,X} || {_Index, X} <- SinkNodesTagged, _Index rem NumberOfSourceNodes /= MyPos-1]],
+      filter_output(Primary, shuffle(Secondary), Return);
+
+
+
     false ->
       % This node is not part of the cluster
       % Therefore should not connect to the othe cluster as part of repl for this
       lager:debug("we are reaching the state that we are not in the cluster! ~p", [SourceSortedNodes]),
       {ok, []}
   end.
+
+
+%%
+build_primary_dict([], Dict) ->
+  Dict;
+build_primary_dict([{Key, Value}| Rest], Dict) ->
+  Dict2 = dict:append(Key, Value, Dict),
+  build_primary_dict(Rest, Dict2).
+
+
+%% TODO: make sure all dict:fetches are checked before they're run. This is causing the crash!
+link_addrs(AllPrimariesDict, SinkNodes, Remote) ->
+
+  lager:debug("link_addr called"),
+
+  % grab active connections
+  ActiveConnsDict = riak_repl2_rtsource_conn_data_mgr:read(realtime_connections, Remote),
+  ActiveSources = dict:fetch_keys(ActiveConnsDict),
+  link_active_addr(ActiveConnsDict, ActiveSources, AllPrimariesDict, dict:new(), SinkNodes).
+
+link_active_addr(_,[],AllPrimariesDict,LinkedActive,SinkNodes) ->
+  lager:debug("just finished link active addr call"),
+  {LinkedActive, SinkNodes, AllPrimariesDict};
+link_active_addr(ActiveConnsDict, [ActiveSourceNode|Rest], AllPrimariesDict, LinkedActiveDict, SinkNodes) ->
+  ConnectedSinkNodes = dict:fetch(ActiveSourceNode, ActiveConnsDict),
+  {NewLinkActiveDict, NewSinkNodes, NewAllPrimariesDict} = link_active_node_connections(ActiveSourceNode, ConnectedSinkNodes, AllPrimariesDict, LinkedActiveDict, SinkNodes),
+  link_active_addr(ActiveConnsDict, Rest, NewAllPrimariesDict, NewLinkActiveDict, NewSinkNodes).
+
+link_active_node_connections(_ActiveSourceNode, [], AllPrimariesDict, LinkedActiveDict, SinkNodes) ->
+  lager:debug("just finished lnk active node connections call"),
+  {LinkedActiveDict, SinkNodes, AllPrimariesDict};
+link_active_node_connections(ActiveSourceNode, [ConnectedSinkNode={_IPPort, Primary}|Rest], AllPrimariesDict, LinkedActiveDict, SinkNodes) ->
+
+  case Primary of
+    false ->
+      link_active_node_connections(ActiveSourceNode, Rest, AllPrimariesDict, LinkedActiveDict, SinkNodes);
+    true ->
+      [Idx|Idxs] = dict:fetch(ActiveSourceNode, AllPrimariesDict),
+
+      %% Need to check that it doesnt already exist!
+      case dict:is_key(ConnectedSinkNode, LinkedActiveDict) of
+        true ->
+          link_active_node_connections(ActiveSourceNode, Rest, AllPrimariesDict, LinkedActiveDict, SinkNodes);
+        false ->
+          NewLinkedActiveDict = dict:store(ConnectedSinkNode, Idx, LinkedActiveDict),
+          NewSinkNodes = lists:delete(ConnectedSinkNode, SinkNodes),
+
+          NewAllPrimariesDict = case Idxs of
+                                  [] ->
+                                    dict:erase(ConnectedSinkNode, LinkedActiveDict);
+                                  X ->
+                                    dict:store(ConnectedSinkNode, X, LinkedActiveDict)
+                                end,
+          link_active_node_connections(ActiveSourceNode, Rest, NewAllPrimariesDict, NewLinkedActiveDict, NewSinkNodes)
+      end
+  end.
+
+
+
+
+
+
+fix_indecies(_NumberOfSinkNodes, [], Output) ->
+  Output;
+fix_indecies(NumberOfSinkNodes, [{Index, Node} | Rest], Output) ->
+  fix_indecies(NumberOfSinkNodes, Rest, [{(Index rem NumberOfSinkNodes)+1, Node} | Output]).
 
 
 filter_output(Primary, Secondary, Return) ->

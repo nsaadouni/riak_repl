@@ -41,7 +41,6 @@
 ]).
 
 -define(SERVER, ?MODULE).
--define(SHUTDOWN, 5000). % how long to give rtsource processes to persist queue/shutdown
 -define(KILL_TIME, 10*1000).
 
 -define(CLIENT_SPEC, {{realtime,[{3,0}, {2,0}, {1,5}]},
@@ -195,6 +194,7 @@ handle_call({connection_closed, Addr, Primary}, _From, State=#state{endpoints = 
   {reply, ok, State#state{endpoints = NewEndpoints}};
 
 handle_call(stop, _From, State) ->
+  lager:debug("stop rtsource_conn_mgr"),
   {stop, normal, ok, State};
 
 handle_call(_Request, _From, State) ->
@@ -404,17 +404,23 @@ get_source_and_sink_nodes(Remote) ->
   {SourceNodes, SinkNodes}.
 
 compare_nodes(Old, New) ->
-  NodesDown = diff_nodes(Old, New),
-  NodesUp = diff_nodes(New, Old),
-  case {NodesDown, NodesUp} of
-    {true, true} ->
-      {nodes_up_and_down, NodesDown, NodesUp};
-    {true, false} ->
-      {nodes_down, NodesDown, NodesUp};
-    {false, true} ->
-      {nodes_up, NodesDown, NodesUp};
-    {false, false} ->
-      {equal, NodesDown, NodesUp}
+  case Old == New of
+    true ->
+      {equal, [],[]};
+    false ->
+      NodesDown = diff_nodes(Old, New),
+      NodesUp = diff_nodes(New, Old),
+      case {NodesDown, NodesUp} of
+        {true, true} ->
+          {nodes_up_and_down, NodesDown, NodesUp};
+        {true, false} ->
+          {nodes_down, NodesDown, NodesUp};
+        {false, true} ->
+          {nodes_up, NodesDown, NodesUp};
+        {false, false} ->
+          %% we should never reach these case statement
+          {equal, NodesDown, NodesUp}
+      end
   end.
 
 diff_nodes(N1, N2) ->
