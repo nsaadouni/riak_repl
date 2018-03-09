@@ -298,7 +298,7 @@ maybe_rebalance(State, delayed) ->
   end.
 
 
-should_rebalance(#state{remote=Remote, sink_nodes = OldSink, source_nodes = OldSource}, NewSource, NewSink) ->
+should_rebalance(#state{endpoints = Endpoints, remote=Remote, sink_nodes = OldSink, source_nodes = OldSource}, NewSource, NewSink) ->
 
   {SourceComparison, _SourceNodesDown, _SourceNodesUp} = compare_nodes(OldSource, NewSource),
   {SinkComparison, _SinkNodesDown, _SinkNodesUp} = compare_nodes(OldSink, NewSink),
@@ -306,97 +306,40 @@ should_rebalance(#state{remote=Remote, sink_nodes = OldSink, source_nodes = OldS
   lager:debug("zzz source comparison = ~p", [SourceComparison]),
   lager:debug("zzz sink comparison = ~p", [SinkComparison]),
 
-%%  case {SourceComparison, SinkComparison} of
-%%  {equal,equal} ->
-%%    ok;
-%%  {equal,nodes_up_and_down} ->
-%%    ok;
-%%  {equal,nodes_down} ->
-%%    ok;
-%%  {equal,nodes_up} ->
-%%    ok;
-%%  {nodes_up_and_down,equal} ->
-%%    ok;
-%%  {nodes_up_and_down,nodes_up_and_down} ->
-%%    ok;
-%%  {nodes_up_and_down,nodes_down} ->
-%%    ok;
-%%  {nodes_up_and_down,nodes_up} ->
-%%    ok;
-%%  {nodes_down,equal} ->
-%%    ok;
-%%  {nodes_down,nodes_up_and_down} ->
-%%    ok;
-%%  {nodes_down,nodes_down} ->
-%%    ok;
-%%  {nodes_down,nodes_up} ->
-%%    ok;
-%%  {nodes_up,equal} ->
-%%    ok;
-%%  {nodes_up,nodes_up_and_down} ->
-%%    ok;
-%%  {nodes_up,nodes_down} ->
-%%    ok;
-%%  {nodes_up,nodes_up} ->
-%%    ok
-%%  end,
-
-
   case {SourceComparison, SinkComparison} of
     {equal, equal} ->
       false;
     _ ->
-      case riak_core_cluster_mgr:get_ipaddrs_of_cluster_multifix(Remote, primary) of
+      case riak_core_cluster_mgr:get_ipaddrs_of_cluster_multifix(Remote, split) of
         {ok, []} ->
           false;
-        {ok, Primaries} ->
-          case riak_core_connection_mgr:filter_blacklisted_ipaddrs(Primaries) of
+        {ok, {Primary, _Secondary}} ->
+
+          lager:debug("conn_mgr endpoints ~p", [Endpoints]),
+
+          ConnectedSinkNodes = [ {IPPort, P} || {{IPPort, P},_Pid} <- orddict:to_list(Endpoints)],
+          {Action, DropNodes, ConnectToNodes} = compare_nodes(ConnectedSinkNodes, Primary),
+          lager:debug("www
+          New connections: ~p
+          Old connections: ~p
+          Action: ~p
+          Drop Nodes: ~p
+          Connect to Nodes: ~p", [Primary, ConnectedSinkNodes, Action, DropNodes, ConnectToNodes]),
+
+
+          %% ----------------------------------------------------------------------------------- %%
+          %% is this needed as its done in riak_core_connection manager when we ask to connect!
+          case riak_core_connection_mgr:filter_blacklisted_ipaddrs(Primary) of
             [] ->
               false;
             UsefulAddrs ->
               {true, UsefulAddrs}
           end
+          %% ----------------------------------------------------------------------------------- %%
+
       end
 
   end.
-
-
-%%  case riak_core_cluster_mgr:get_ipaddrs_of_cluster_multifix(Remote, primary) of
-%%    {ok, []} ->
-%%      no;
-%%    {ok, Primaries} ->
-%%      check_addrs(orddict:fetch_keys(E), Primaries)
-%%  end.
-%%
-%%check_addrs(Current, New) ->
-%%  case check_addrs_helper(Current, New, true) of
-%%    true ->
-%%      no;
-%%    false ->
-%%      UsefulAddrs = riak_core_connection_mgr:filter_blacklisted_ipaddrs(New),
-%%      case UsefulAddrs of
-%%        [] ->
-%%          no;
-%%        X ->
-%%          {yes, X}
-%%      end
-%%  end.
-%%
-%%
-%%check_addrs_helper(_, _, false) ->
-%%  false;
-%%check_addrs_helper([], [], true) ->
-%%  true;
-%%check_addrs_helper([], _, true) ->
-%%  false;
-%%check_addrs_helper([Addr| Addrs], New, true) ->
-%%  case lists:member(Addr, New) of
-%%    true ->
-%%      check_addrs_helper(Addrs, lists:delete(Addr, New), true);
-%%    false ->
-%%      check_addrs_helper(Addrs, New, false)
-%%  end.
-
 
 get_source_and_sink_nodes(Remote) ->
   SourceNodes = riak_repl2_rtsource_conn_data_mgr:read(active_nodes),
@@ -408,9 +351,9 @@ compare_nodes(Old, New) ->
     true ->
       {equal, [],[]};
     false ->
-      NodesDown = diff_nodes(Old, New),
-      NodesUp = diff_nodes(New, Old),
-      case {NodesDown, NodesUp} of
+      {NodesDownRes, NodesDown} = diff_nodes(Old, New),
+      {NodesUpRes, NodesUp} = diff_nodes(New, Old),
+      case {NodesDownRes, NodesUpRes} of
         {true, true} ->
           {nodes_up_and_down, NodesDown, NodesUp};
         {true, false} ->
@@ -426,9 +369,9 @@ compare_nodes(Old, New) ->
 diff_nodes(N1, N2) ->
   case N1 -- N2 of
     [] ->
-      false;
-    _ ->
-      true
+      {false, []};
+    X ->
+      {true, X}
   end.
 
 reconnect(State=#state{remote=Remote}, BetterAddrs) ->
@@ -599,3 +542,51 @@ collect_status_data([Key | Rest], Data, E) ->
 %%  ?assertEqual(RemoteText, peername(State)).
 %%
 %%-endif.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+%%  case {SourceComparison, SinkComparison} of
+%%  {equal,equal} ->
+%%    ok;
+%%  {equal,nodes_up_and_down} ->
+%%    ok;
+%%  {equal,nodes_down} ->
+%%    ok;
+%%  {equal,nodes_up} ->
+%%    ok;
+%%  {nodes_up_and_down,equal} ->
+%%    ok;
+%%  {nodes_up_and_down,nodes_up_and_down} ->
+%%    ok;
+%%  {nodes_up_and_down,nodes_down} ->
+%%    ok;
+%%  {nodes_up_and_down,nodes_up} ->
+%%    ok;
+%%  {nodes_down,equal} ->
+%%    ok;
+%%  {nodes_down,nodes_up_and_down} ->
+%%    ok;
+%%  {nodes_down,nodes_down} ->
+%%    ok;
+%%  {nodes_down,nodes_up} ->
+%%    ok;
+%%  {nodes_up,equal} ->
+%%    ok;
+%%  {nodes_up,nodes_up_and_down} ->
+%%    ok;
+%%  {nodes_up,nodes_down} ->
+%%    ok;
+%%  {nodes_up,nodes_up} ->
+%%    ok
+%%  end,
