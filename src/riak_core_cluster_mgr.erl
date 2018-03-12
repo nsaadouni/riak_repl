@@ -895,17 +895,16 @@ unlinked_indexes([{Node, [Idx|Idxs]}|Rest], ListOfIndexes) ->
 link_unactive_addr([],[], AllLinkedDict) ->
   AllLinkedDict;
 link_unactive_addr([],SinkNodes,AllLinkedDict) ->
-  lager:error("Spare Sink Nodes not linked!,
+  lager:warning("Spare Sink Nodes not linked!,
       Unlinked indexes: ~p
       Left Over Sink Nodes: ~p", [[], SinkNodes]),
   AllLinkedDict;
 link_unactive_addr(Indexes,[],AllLinkedDict) ->
-  lager:error("Spare Indexes not linked!,
+  lager:warning("Spare Indexes not linked!,
       Unlinked indexes: ~p
       Left Over Sink Nodes: ~p", [Indexes, []]),
   AllLinkedDict;
 link_unactive_addr([Idx|Idxs], [SinkNode|Y], LinkedDict) ->
-
   case dict:is_key(Idx, LinkedDict) of
     true ->
       link_unactive_addr(Idxs, [SinkNode|Y], LinkedDict);
@@ -933,17 +932,14 @@ link_active_addr({ActiveConnsDict, [ActiveSourceNode|Rest]}, AllPrimariesDict, L
       link_active_addr({ActiveConnsDict, Rest}, AllPrimariesDict, LinkedActiveDict, SinkNodes)
   end.
 
-%% TODO: fix the case statements in this function!
+
 link_active_node_connections(_ActiveSourceNode, [], AllPrimariesDict, LinkedActiveDict, SinkNodes) ->
   {LinkedActiveDict, SinkNodes, AllPrimariesDict};
 link_active_node_connections(ActiveSourceNode, CS=[{IPPort, Primary}|Rest], AllPrimariesDict, LinkedActiveDict, SinkNodes) ->
-
-
   lager:debug("cluster_mgr 2
       ActiveNode: ~p
       AllPrimariesDict ~p
       Connected Sinks ~p", [ActiveSourceNode ,AllPrimariesDict, CS]),
-
   case Primary of
     false ->
       link_active_node_connections(ActiveSourceNode, Rest, AllPrimariesDict, LinkedActiveDict, SinkNodes);
@@ -957,44 +953,33 @@ link_active_node_connections(ActiveSourceNode, CS=[{IPPort, Primary}|Rest], AllP
       IP-Port ~p
       Index is key ~p ", [ActiveSourceNode, Idx, Idxs, IPPort, dunno_yet]),
 
-      case dict:is_key(Idx, LinkedActiveDict) of
-        true ->
-          case Idxs of
-            [] ->
-              NewAllPrimariesDict = dict:erase(ActiveSourceNode, AllPrimariesDict),
-              {LinkedActiveDict, SinkNodes, NewAllPrimariesDict};
-            X ->
-              NewAllPrimariesDict = dict:store(ActiveSourceNode, X, AllPrimariesDict),
-              link_active_node_connections(ActiveSourceNode, Rest, NewAllPrimariesDict, LinkedActiveDict, SinkNodes)
-          end;
-
-        false ->
-          case lists:member(IPPort, SinkNodes) of
-            false ->
-              case Idxs of
-                [] ->
-                  {LinkedActiveDict, SinkNodes, AllPrimariesDict};
-                _ ->
-                  link_active_node_connections(ActiveSourceNode, Rest, AllPrimariesDict, LinkedActiveDict, SinkNodes)
-              end;
-            true ->
-              NewLinkedActiveDict = dict:store(Idx, IPPort,  LinkedActiveDict),
-              NewSinkNodes = lists:delete(IPPort, SinkNodes),
-              case Idxs of
-                [] ->
-                  NewAllPrimariesDict = dict:erase(ActiveSourceNode, AllPrimariesDict),
-                  {NewLinkedActiveDict, NewSinkNodes, NewAllPrimariesDict};
-                X ->
-                  NewAllPrimariesDict = dict:store(ActiveSourceNode, X, AllPrimariesDict),
-                  link_active_node_connections(ActiveSourceNode, Rest, NewAllPrimariesDict, NewLinkedActiveDict, NewSinkNodes)
-              end
-
-          end
+      NewLinkedActiveDict = dict:store(Idx, IPPort,  LinkedActiveDict),
+      NewSinkNodes = lists:delete(IPPort, SinkNodes),
+      case {dict:is_key(Idx, LinkedActiveDict), lists:member(IPPort, SinkNodes), Idxs} of
+        {true, _, []} ->
+          %% Index has already been linked to a SINK IP-PORT; Idxs = []
+          NewAllPrimariesDict = dict:erase(ActiveSourceNode, AllPrimariesDict),
+          {LinkedActiveDict, SinkNodes, NewAllPrimariesDict};
+        {true, _, _} ->
+          %% Index has already been linked to a SINK IP-PORT; Idxs /= []
+          NewAllPrimariesDict = dict:store(ActiveSourceNode, Idxs, AllPrimariesDict),
+          link_active_node_connections(ActiveSourceNode, Rest, NewAllPrimariesDict, LinkedActiveDict, SinkNodes);
+        {false, true, []} ->
+          %% Index has not been linked to a SINK IP-PORT; and the SINK IP-PORT has not been linked yet; Idxs = []
+          NewAllPrimariesDict = dict:erase(ActiveSourceNode, AllPrimariesDict),
+          {NewLinkedActiveDict, NewSinkNodes, NewAllPrimariesDict};
+        {false, true, _} ->
+          %% Index has not been linked to a SINK IP-PORT; and the SINK IP-PORT has not been linked yet; Idxs /= []
+          NewAllPrimariesDict = dict:store(ActiveSourceNode, Idxs, AllPrimariesDict),
+          link_active_node_connections(ActiveSourceNode, Rest, NewAllPrimariesDict, NewLinkedActiveDict, NewSinkNodes);
+        {false, false, []} ->
+          %% Index has not been linked to a SINK IP-PORT; and the SINK IP-PORT has already been linked to another index; Idxs = []
+          {LinkedActiveDict, SinkNodes, AllPrimariesDict};
+        {false, false, _} ->
+          %% Index has not been linked to a SINK IP-PORT; and the SINK IP-PORT has already been linked to another index; Idxs /= []
+          link_active_node_connections(ActiveSourceNode, Rest, AllPrimariesDict, LinkedActiveDict, SinkNodes)
       end
   end.
-
-
-
 
 
 

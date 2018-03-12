@@ -34,7 +34,8 @@
   should_rebalance/3,
   stop/1,
   get_all_status/1,
-  get_all_status/2
+  get_all_status/2,
+  get_source_and_sink_nodes/1
 ]).
 
 -define(SERVER, ?MODULE).
