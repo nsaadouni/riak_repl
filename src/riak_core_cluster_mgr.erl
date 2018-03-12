@@ -73,7 +73,6 @@
                 all_member_fun = fun(_Addr) -> [] end,             % return members of local cluster
                 restore_targets_fun = fun() -> [] end,         % returns persisted cluster targets
                 save_members_fun = fun(_C,_M) -> ok end,       % persists remote cluster members
-                balancer_fun = fun(Addrs) -> Addrs end,        % registered balancer function
                 clusters = orddict:new() :: orddict:orddict()  % resolved clusters by name
                }).
 
@@ -106,8 +105,7 @@
 
 %% internal functions
 -export([%ctrlService/5, ctrlServiceProcess/5,
-         round_robin_balancer/1, cluster_mgr_sites_fun/0,
-         get_my_members/1, get_all_members/1]).
+         cluster_mgr_sites_fun/0, get_my_members/1, get_all_members/1]).
 
 -export([ensure_valid_ip_addresses/1]).
 
@@ -185,6 +183,7 @@ get_all_members(MyAddr) ->
     gen_server:call(?SERVER, {get_all_members, MyAddr}, infinity).
 
 %% @doc Return a list of the known IP addresses of all nodes in the remote cluster.
+%% REMOVE
 get_ipaddrs_of_cluster(ClusterName) ->
     case gen_server:call(?SERVER, {get_known_ipaddrs_of_cluster, {name,ClusterName}}, infinity) of
         {ok, Reply} ->
@@ -246,11 +245,9 @@ init(Defaults) ->
     end,
     %% schedule a timer to poll remote clusters occasionaly
     erlang:send_after(?CLUSTER_POLLING_INTERVAL, self(), poll_clusters_timer),
-    BalancerFun = fun(Addr) -> round_robin_balancer(Addr) end,
     MeNode = node(),
     State = register_defaults(Defaults, #state{
-                is_leader = false,
-                balancer_fun = BalancerFun}),
+                is_leader = false}),
 
     %% Schedule a delayed connection to know clusters
     schedule_cluster_connections(),
@@ -322,27 +319,11 @@ handle_call(get_connections, _From, State) ->
 
 %% Return possible IP addrs of nodes on the named remote cluster.
 %% If a leader has not been elected yet, return an empty list.
-%% This list will get rotated or randomized depending on the balancer
-%% function installed. Every time we poll the remote cluster or it
-%% pushes an update, the list will get reset to whatever the remote
-%% thinks is the best order. The first call here will return the most
-%% recently updated list and then it will rebalance and save for next time.
-%% So, if no updates come from the remote, we'll just keep cycling through
-%% the list of known members according to the balancer fun.
 handle_call({get_known_ipaddrs_of_cluster, {name, ClusterName}}, _From, State) ->
     case State#state.is_leader of
         true ->
-            %% Call a balancer function that will rotate or randomize
-            %% the list. Return original members and save reblanced ones
-            %% for next iteration.
             Members = members_of_cluster(ClusterName, State),
-%%            BalancerFun = State#state.balancer_fun,
-%%            RebalancedMembers = BalancerFun(Members),
-%%            lager:debug("Rebalancer: ~p -> ~p", [Members, RebalancedMembers]),
-%%            lager:debug("Rebalancing is currently not working"),
             {reply, {ok, Members}, State};
-%%             State#state{clusters=add_ips_to_cluster(ClusterName, Members,
-%%                                                     State#state.clusters)}};
         false ->
             NoLeaderResult = {ok, []},
             proxy_call({get_known_ipaddrs_of_cluster, {name, ClusterName}},
@@ -354,10 +335,8 @@ handle_cast({set_leader_node, LeaderNode}, State) ->
     State2 = State#state{leader_node = LeaderNode},
     case node() of
         LeaderNode ->
-            %% oh crap, it's me!
             {noreply, become_leader(State2, LeaderNode)};
         _ ->
-            %% not me.
             {noreply, become_proxy(State2, LeaderNode)}
     end;
 
@@ -648,12 +627,6 @@ remove_remote(RemoteName, State) ->
             State#state{clusters = UpdatedClusters}
     end.
 
-%% Simple Round Robin Balancer moves head to tail each time called.
-round_robin_balancer([]) ->
-    [];
-round_robin_balancer([Addr|Addrs]) ->
-    Addrs ++ [Addr].
-
 %% Convert an inet:address to a string if needed.
 string_of_ip(IP) when is_tuple(IP) ->    
     inet_parse:ntoa(IP);
@@ -718,10 +691,10 @@ remove_ips_from_all_clusters(Addrs, Clusters) ->
                 Clusters).
 
 %% Add Members to Name'd cluster. Returns revised clusters orddict.
-add_ips_to_cluster(Name, RebalancedMembers, Clusters) ->
+add_ips_to_cluster(Name, Members, Clusters) ->
     orddict:store(Name,
                   #cluster{name = Name,
-                           members = RebalancedMembers,
+                           members = Members,
                            last_conn = erlang:now()},
                   Clusters).
 

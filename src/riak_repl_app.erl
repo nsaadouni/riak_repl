@@ -181,8 +181,8 @@ prune_old_workdirs(WorkRoot) ->
 %% Get the list of nodes of our ring
 %% This list includes all up-nodes, that host the riak_kv service
 cluster_mgr_member_fun({IP, Port}) ->
-    lists_shuffle([ {XIP,XPort} || {_Node,{XIP,XPort}} <- cluster_mgr_members({IP, Port}, riak_core_node_watcher:nodes(riak_kv)),
-                                 is_integer(XPort) ]).
+    [ {XIP,XPort} || {_Node,{XIP,XPort}} <- cluster_mgr_members({IP, Port}, riak_core_node_watcher:nodes(riak_kv)),
+                                 is_integer(XPort) ].
 
 %% this list includes *all* members of the ring (even those marked down).
 %% returns a list [ { node(), {IP, Port} | unreachable }, ... ]
@@ -258,18 +258,6 @@ maybe_retry_ip_rpc(Results, Nodes, BadNodes, Args) ->
             {Node, Result}
     end,
     lists:map(MaybeRetry, Zipped).
-
-lists_shuffle([]) ->
-    [];
-
-lists_shuffle([E]) ->
-    [E];
-
-lists_shuffle(List) ->
-    Max = length(List),
-    Keyed = [{random:uniform(Max), E} || E <- List],
-    Sorted = lists:sort(Keyed),
-    [N || {_, N} <- Sorted].
 
 %% TODO: check the config for a name. Don't overwrite one a user has set via cmd-line
 name_this_cluster() ->
@@ -388,19 +376,3 @@ unmask_address(IP, Mask, Size) ->
         _ ->
             unmask_address(IP, Mask, Size - 1)
     end.
-
-%%%%%%%%%%%%%%%%
-%% Unit Tests %%
-%%%%%%%%%%%%%%%%
-
--ifdef(TEST).
-
-lists_shuffle_test() ->
-    %% We can rely on the output to "expected" to be deterministic only as long
-    %% as lists_shuffle/1 uses a deterministic random function. It does for now.
-    In = lists:seq(0,9),
-    Expected = [4,0,8,3,5,9,7,1,2,6],
-    Out = lists_shuffle(In),
-    ?assert(Expected == Out).
-
--endif.
