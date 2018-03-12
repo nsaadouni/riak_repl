@@ -30,14 +30,11 @@
   connected/7,
   connect_failed/3,
   maybe_rebalance_delayed/1,
-  remove_connection_gracefully/2,
   connection_closed/3,
   should_rebalance/3,
   stop/1,
   get_all_status/1,
-  get_all_status/2,
-  invert_connections/1,
-  connection_numbers/1
+  get_all_status/2
 ]).
 
 -define(SERVER, ?MODULE).
@@ -58,11 +55,11 @@
   rtsource_conn_sup, % The module name of the supervisor to start the child when we get a connection passed to us
   rb_timeout_tref, % Rebalance timeout timer reference
   rebalance_delay,
-  rebalance_flag = false,
 
   source_nodes,
   sink_nodes,
 
+  remove_endpoint,
   endpoints
   % Want a store for the following information
   % Key = {IP, Port}; Value = {Primary, Pid}    [Pid will be the Pid of the rtsource_conn]
@@ -146,7 +143,7 @@ init([Remote]) ->
 
 %%%=====================================================================================================================
 handle_call({connected, Socket, Transport, IPPort, Proto, _Props, Primary}, _From,
-    State = #state{rtsource_conn_sup = S, remote = Remote, endpoints = E, rebalance_flag = RF}) ->
+    State = #state{rtsource_conn_sup = S, remote = Remote, endpoints = E}) ->
 
   lager:debug("rtsource_conn_mgr connection recieved ~p", [{IPPort, Primary}]),
 
@@ -156,23 +153,23 @@ handle_call({connected, Socket, Transport, IPPort, Proto, _Props, Primary}, _Fro
       case riak_repl2_rtsource_conn:connected(Socket, Transport, IPPort, Proto, RtSourcePid, _Props, Primary) of
         ok ->
 
-          % check if this is a rebalanced connection
-          Endpoints = case RF of
-            true ->
-              remove_all_current_connections(State),
-              orddict:new();
-            false ->
-              E
-          end,
+          % check remove_endpoint
+          NewState = case State#state.remove_endpoint of
+                       undefined ->
+                        State;
+                      RC ->
+                        E2 = remove_connections(RC, E),
+                        State#state{endpoints = E2, remove_endpoint = undefined}
+                     end,
 
           %% Save {EndPoint, Pid}; Pid will come from the supervisor starting a child
-          NewEndpoints = orddict:store({IPPort, Primary}, RtSourcePid, Endpoints),
+          NewEndpoints = orddict:store({IPPort, Primary}, RtSourcePid, NewState#state.endpoints),
 
           % save to ring
           lager:debug("rtsource_conn_mgr send connection data to data mgr"),
           riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, Remote, node(), IPPort, Primary),
 
-          {reply, ok, State#state{endpoints = NewEndpoints, rebalance_flag = false}};
+          {reply, ok, NewState#state{endpoints = NewEndpoints}};
 
         Error ->
           lager:debug("rtsouce_conn failed to recieve connection"),
@@ -226,6 +223,10 @@ handle_cast(_Request, State) ->
 handle_info(rebalance_now, State) ->
   {noreply, maybe_rebalance(State#state{rb_timeout_tref = undefined}, now)};
 
+handle_info({kill_rtsource_conn, RtSourceConnPid}, State) ->
+  riak_repl2_rtsource_conn:stop(RtSourceConnPid),
+  {noreply, State};
+
 
 handle_info(_Info, State) ->
   {noreply, State}.
@@ -255,25 +256,16 @@ start_rtsource_conn(Remote, S) ->
   Args = [Remote, self()],
   supervisor:start_child(S, Args).
 
-remove_all_current_connections(_State=#state{endpoints = E, remote = R}) ->
-  AllKeys = orddict:fetch_keys(E),
-  lager:debug("realtime node connections deleted"),
-  riak_repl2_rtsource_conn_data_mgr:delete(realtime_connections, R, node()),
-  remove_connection(AllKeys, E).
+%%remove_all_current_connections(_State=#state{endpoints = E, remote = R}) ->
+%%  AllKeys = orddict:fetch_keys(E),
+%%  lager:debug("realtime node connections deleted"),
+%%  riak_repl2_rtsource_conn_data_mgr:delete(realtime_connections, R, node()),
+%%  remove_connection(AllKeys, E).
 
-remove_connection([], _) ->
-  ok;
-remove_connection([Key | Rest], E) ->
-  RtsourcePid = orddict:fetch(Key, E),
-  HelperPid = riak_repl2_rtsource_conn:get_helper_pid(RtsourcePid),
-  lager:debug("rtsource_conn called to gracefully kill itself ~p", [Key]),
-  spawn_link(?MODULE, remove_connection_gracefully, [RtsourcePid, HelperPid]),
-  remove_connection(Rest, E).
-
-remove_connection_gracefully(RtSourceConnPid, HelperPid) ->
-  riak_repl2_rtsource_helper:stop_pulling(HelperPid),
-  timer:sleep(?KILL_TIME),
-  riak_repl2_rtsource_conn:stop(RtSourceConnPid).
+%%remove_connection_gracefully(RtSourceConnPid, HelperPid) ->
+%%  riak_repl2_rtsource_helper:stop_pulling(HelperPid),
+%%  timer:sleep(?KILL_TIME),
+%%  riak_repl2_rtsource_conn:stop(RtSourceConnPid).
 
 
 
@@ -281,11 +273,36 @@ maybe_rebalance(State, now) ->
   {NewSource, NewSink} = get_source_and_sink_nodes(State#state.remote),
   case should_rebalance(State, NewSource, NewSink) of
     false ->
-      lager:debug("rebalancing triggered for no reason"),
+      lager:debug("rebalancing triggered but there is no change in source or sink node status"),
       State;
-    {true, UsefulAddrs} ->
-      lager:debug("rebalancing triggered and is needed"),
-      reconnect(State#state{sink_nodes = NewSink, source_nodes = NewSource}, UsefulAddrs)
+
+    {true, {equal, _DropNodes, _ConnectToNodes, _Primary, _Secondary, _ConnectedSinkNodes}} ->
+      lager:debug("rebalancing triggered but avoided via active connection matching"),
+      State;
+
+    {true, {nodes_up, _DropNodes, ConnectToNodes, _Primary, _Secondary, _ConnectedSinkNodes}} ->
+      lager:debug("rebalancing triggered and new connections are required"),
+      NewState1 = check_remove_endpoint(State, ConnectToNodes),
+      rebalance_connect(NewState1#state{sink_nodes = NewSink, source_nodes = NewSource}, ConnectToNodes);
+
+    {true, {nodes_down, DropNodes, _ConnectToNodes, _Primary, _Secondary, ConnectedSinkNodes}} ->
+      lager:debug("rebalancing triggered and active connections required to be dropped"),
+      {_RemoveAllConnections, NewState1} = check_and_drop_connections(State, DropNodes, ConnectedSinkNodes),
+      riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, NewState1#state.remote, node(), orddict:fetch_keys(NewState1#state.endpoints)),
+      NewState1#state{sink_nodes = NewSink, source_nodes = NewSource};
+
+    {true, {nodes_up_and_down, DropNodes, ConnectToNodes, Primary, Secondary, ConnectedSinkNodes}} ->
+      %% we need to check the remove_endpoints!!
+      lager:debug("rebalancing triggered and some active connections required to be dropped, and also new connections to be made"),
+      {RemoveAllConnections, NewState1} = check_and_drop_connections(State, DropNodes, ConnectedSinkNodes),
+      NewState2 = check_remove_endpoint(NewState1, ConnectToNodes),
+      riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, NewState2#state.remote, node(), orddict:fetch_keys(NewState2#state.endpoints)),
+      case RemoveAllConnections of
+        true ->
+          rebalance_connect(NewState2#state{sink_nodes = NewSink, source_nodes = NewSource}, Primary++Secondary);
+        false ->
+          rebalance_connect(NewState2#state{sink_nodes = NewSink, source_nodes = NewSource}, ConnectToNodes)
+      end
   end;
 maybe_rebalance(State, delayed) ->
   case State#state.rb_timeout_tref of
@@ -313,7 +330,7 @@ should_rebalance(#state{endpoints = Endpoints, remote=Remote, sink_nodes = OldSi
       case riak_core_cluster_mgr:get_ipaddrs_of_cluster_multifix(Remote, split) of
         {ok, []} ->
           false;
-        {ok, {Primary, _Secondary}} ->
+        {ok, {Primary, Secondary}} ->
 
           lager:debug("conn_mgr endpoints ~p", [Endpoints]),
 
@@ -325,21 +342,40 @@ should_rebalance(#state{endpoints = Endpoints, remote=Remote, sink_nodes = OldSi
           Action: ~p
           Drop Nodes: ~p
           Connect to Nodes: ~p", [Primary, ConnectedSinkNodes, Action, DropNodes, ConnectToNodes]),
-
-
-          %% ----------------------------------------------------------------------------------- %%
-          %% is this needed as its done in riak_core_connection manager when we ask to connect!
-          case riak_core_connection_mgr:filter_blacklisted_ipaddrs(Primary) of
-            [] ->
-              false;
-            UsefulAddrs ->
-              {true, UsefulAddrs}
-          end
-          %% ----------------------------------------------------------------------------------- %%
-
+          {true, {Action, DropNodes, ConnectToNodes, Primary, Secondary, ConnectedSinkNodes}}
       end
 
   end.
+
+check_remove_endpoint(State=#state{remove_endpoint = RE}, ConnectToNodes) ->
+  case lists:member(RE, ConnectToNodes) of
+    true ->
+      State#state{remove_endpoint = undefined};
+    false ->
+      State
+  end.
+
+
+check_and_drop_connections(State=#state{endpoints = E}, DropNodes=[X|Xs], ConnectedSinkNodes) ->
+  case ConnectedSinkNodes -- DropNodes of
+    [] ->
+      NewEndpoints = remove_connections(Xs, E),
+      {true, State#state{endpoints = NewEndpoints, remove_endpoint = X}};
+    _ ->
+      NewEndpoints = remove_connections(DropNodes, E),
+      {false, State#state{endpoints = NewEndpoints, remove_endpoint = undefined}}
+  end.
+
+remove_connections([], E) ->
+  E;
+remove_connections([Key | Rest], E) ->
+  RtSourcePid = orddict:fetch(Key, E),
+  HelperPid = riak_repl2_rtsource_conn:get_helper_pid(RtSourcePid),
+  riak_repl2_rtsource_helper:stop_pulling(HelperPid),
+  lager:debug("rtsource_conn called to gracefully kill itself ~p", [Key]),
+  erlang:send_after(?KILL_TIME, self(), {kill_rtsource_conn, RtSourcePid}),
+%%  spawn_link(?MODULE, remove_connection_gracefully, [RtsourcePid, HelperPid]),
+  remove_connections(Rest, orddict:erase(Key, E)).
 
 get_source_and_sink_nodes(Remote) ->
   SourceNodes = riak_repl2_rtsource_conn_data_mgr:read(active_nodes),
@@ -374,7 +410,7 @@ diff_nodes(N1, N2) ->
       {true, X}
   end.
 
-reconnect(State=#state{remote=Remote}, BetterAddrs) ->
+rebalance_connect(State=#state{remote=Remote}, BetterAddrs) ->
   lager:info("trying reconnect to one of: ~p", [BetterAddrs]),
 
   %% if we have a pending connection attempt - drop that
@@ -387,7 +423,7 @@ reconnect(State=#state{remote=Remote}, BetterAddrs) ->
 
       lager:debug("rebalanced is complete"),
 
-      State#state{ connection_ref = Ref, rebalance_flag = true};
+      State#state{connection_ref = Ref};
     {error, Reason}->
       lager:warning("Error connecting to remote ~p (ignoring as we're reconnecting)", [Reason]),
       State
@@ -395,51 +431,48 @@ reconnect(State=#state{remote=Remote}, BetterAddrs) ->
 
 %% -------------------------------------------------------------------------------------------------------------- %%
 % returns the connections inverted (key = {sinkip,port}, value = {soureNode, Primary})
-invert_connections(Connections) ->
-  AllNodes = dict:fetch_keys(Connections),
-  InvertedConnections = dict:new(),
-  build_inverted_dictionary(AllNodes, Connections, InvertedConnections).
-
-build_inverted_dictionary([], _, Inverted) ->
-  Inverted;
-build_inverted_dictionary([SourceNode|Rest], Connections, InvertedConnections) ->
-  SinkNodes = dict:fetch(SourceNode, Connections),
-  UpdatedInvertedConnections = update_inverted(SourceNode, SinkNodes, InvertedConnections),
-  build_inverted_dictionary(Rest, Connections, UpdatedInvertedConnections).
-
-update_inverted(_,[], List) ->
-  List;
-update_inverted(SourceNode, [{SinkIPPort, Primary}|Rest], Dict) ->
-  update_inverted(SourceNode, Rest, dict:append(SinkIPPort, {SourceNode,Primary}, Dict)).
-
-%% -------------------------------------------------------------------------------------------------------------- %%
-%% -------------------------------------------------------------------------------------------------------------- %%
-connection_numbers(Connections) ->
-  AllKeys = dict:fetch_keys(Connections),
-  CN = dict:new(),
-  build_connection_numbers(AllKeys,Connections,CN).
-
-build_connection_numbers([], _, CN) ->
-  CN;
-build_connection_numbers([Node|Rest], Connections, CN) ->
-  ConnectionList = dict:fetch(Node, Connections),
-  ConnectionsNumbers = calculate_connections(ConnectionList, {0,0}),
-  UpdatedCN = dict:store(Node, ConnectionsNumbers, CN),
-  build_connection_numbers(Rest, Connections, UpdatedCN).
-
-calculate_connections([], X) ->
-  X;
-calculate_connections([{_IPPort, P}|Rest], {Primary, Secondary}) ->
-  {Primary1, Secondary1} = case P of
-                             true ->
-                               {Primary+1, Secondary};
-                             false ->
-                               {Primary, Secondary+1}
-                           end,
-  calculate_connections(Rest, {Primary1, Secondary1}).
-
-
-
+%%invert_connections(Connections) ->
+%%  AllNodes = dict:fetch_keys(Connections),
+%%  InvertedConnections = dict:new(),
+%%  build_inverted_dictionary(AllNodes, Connections, InvertedConnections).
+%%
+%%build_inverted_dictionary([], _, Inverted) ->
+%%  Inverted;
+%%build_inverted_dictionary([SourceNode|Rest], Connections, InvertedConnections) ->
+%%  SinkNodes = dict:fetch(SourceNode, Connections),
+%%  UpdatedInvertedConnections = update_inverted(SourceNode, SinkNodes, InvertedConnections),
+%%  build_inverted_dictionary(Rest, Connections, UpdatedInvertedConnections).
+%%
+%%update_inverted(_,[], List) ->
+%%  List;
+%%update_inverted(SourceNode, [{SinkIPPort, Primary}|Rest], Dict) ->
+%%  update_inverted(SourceNode, Rest, dict:append(SinkIPPort, {SourceNode,Primary}, Dict)).
+%%
+%%%% -------------------------------------------------------------------------------------------------------------- %%
+%%%% -------------------------------------------------------------------------------------------------------------- %%
+%%connection_numbers(Connections) ->
+%%  AllKeys = dict:fetch_keys(Connections),
+%%  CN = dict:new(),
+%%  build_connection_numbers(AllKeys,Connections,CN).
+%%
+%%build_connection_numbers([], _, CN) ->
+%%  CN;
+%%build_connection_numbers([Node|Rest], Connections, CN) ->
+%%  ConnectionList = dict:fetch(Node, Connections),
+%%  ConnectionsNumbers = calculate_connections(ConnectionList, {0,0}),
+%%  UpdatedCN = dict:store(Node, ConnectionsNumbers, CN),
+%%  build_connection_numbers(Rest, Connections, UpdatedCN).
+%%
+%%calculate_connections([], X) ->
+%%  X;
+%%calculate_connections([{_IPPort, P}|Rest], {Primary, Secondary}) ->
+%%  {Primary1, Secondary1} = case P of
+%%                             true ->
+%%                               {Primary+1, Secondary};
+%%                             false ->
+%%                               {Primary, Secondary+1}
+%%                           end,
+%%  calculate_connections(Rest, {Primary1, Secondary1}).
 %% -------------------------------------------------------------------------------------------------------------- %%
 
 

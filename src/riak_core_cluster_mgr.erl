@@ -970,14 +970,14 @@ link_active_node_connections(ActiveSourceNode, CS=[{IPPort, Primary}|Rest], AllP
 
         false ->
           case lists:member(IPPort, SinkNodes) of
-            true ->
+            false ->
               case Idxs of
                 [] ->
                   {LinkedActiveDict, SinkNodes, AllPrimariesDict};
                 _ ->
                   link_active_node_connections(ActiveSourceNode, Rest, AllPrimariesDict, LinkedActiveDict, SinkNodes)
               end;
-            false ->
+            true ->
               NewLinkedActiveDict = dict:store(Idx, IPPort,  LinkedActiveDict),
               NewSinkNodes = lists:delete(IPPort, SinkNodes),
               case Idxs of

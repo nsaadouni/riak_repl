@@ -10,7 +10,7 @@
 
   delete/2, delete/3, delete/5,
   read/1, read/2, read/3,
-  write/5
+  write/4, write/5
 ]).
 
 %% gen_server callbacks
@@ -54,6 +54,9 @@ read(active_nodes) ->
 
 write(realtime_connections, Remote, Node, IPPort, Primary) ->
   gen_server:cast(?SERVER, {write_realtime_connections, Remote, Node, IPPort, Primary}).
+
+write(realtime_connections, Remote, Node, ConnectionList) ->
+  gen_server:cast(?SERVER, {write_realtime_connections, Remote, Node, ConnectionList}).
 
 delete(realtime_connections, Remote) ->
   gen_server:cast(?SERVER, {delete_realtime_connections, Remote}).
@@ -185,6 +188,22 @@ handle_cast(Msg = {write_realtime_connections, Remote, Node, IPPort, Primary}, S
     true ->
       OldRemoteDict = get_value(Remote, C, dictionary),
       NewRemoteDict = dict:append(Node, {IPPort, Primary}, OldRemoteDict),
+      NewConnections = dict:store(Remote, NewRemoteDict, C),
+
+      % push onto ring
+      riak_core_ring_manager:ring_trans(fun riak_repl_ring:overwrite_realtime_connection_data/2, NewConnections),
+      {noreply, State#state{connections = NewConnections}};
+
+    false ->
+      proxy_cast(Msg, State),
+      {noreply, State}
+  end;
+
+handle_cast(Msg = {write_realtime_connections, Remote, Node, ConnectionList}, State=#state{connections = C}) ->
+  case State#state.is_leader of
+    true ->
+      OldRemoteDict = get_value(Remote, C, dictionary),
+      NewRemoteDict = dict:store(Node, ConnectionList, OldRemoteDict),
       NewConnections = dict:store(Remote, NewRemoteDict, C),
 
       % push onto ring
