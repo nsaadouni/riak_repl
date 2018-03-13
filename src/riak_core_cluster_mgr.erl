@@ -183,7 +183,6 @@ get_all_members(MyAddr) ->
     gen_server:call(?SERVER, {get_all_members, MyAddr}, infinity).
 
 %% @doc Return a list of the known IP addresses of all nodes in the remote cluster.
-%% REMOVE
 get_ipaddrs_of_cluster(ClusterName) ->
     case gen_server:call(?SERVER, {get_known_ipaddrs_of_cluster, {name,ClusterName}}, infinity) of
         {ok, Reply} ->

@@ -21,8 +21,8 @@
 
 %% all_remotes defines the list of remote clients the test will manage
 
- -define(all_remotes, ["a", "b", "c", "d", "e"]).
-%%-define(all_remotes, ["a"]).
+%% -define(all_remotes, ["a", "b", "c", "d", "e"]).
+-define(all_remotes, ["a"]).
 
 -record(state, {
     remotes_available = ?all_remotes,

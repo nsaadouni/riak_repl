@@ -518,7 +518,7 @@ start_request(Req = #req{ref=Ref, target=Target, spec=ClientSpec, strategy=Strat
             %% schedule a retry and exit
             schedule_retry(Interval, Ref, State);
         {ok, Addrs} ->
-            lager:debug("Connection Manager located primary endpoints: ~p", [Addrs]),
+            lager:debug("Connection Manager located endpoints: ~p", [Addrs]),
             AllEps = update_endpoints(Addrs, State#state.endpoints),
             TryAddrs = filter_blacklisted_endpoints(Addrs, AllEps),
 
@@ -557,8 +557,6 @@ string_of_ip(IP) ->
 
 string_of_ipport({IP,Port}) ->
     string_of_ip(IP) ++ ":" ++ erlang:integer_to_list(Port).
-
-% -------------------------------------------------------------------------------------------------- %
 
 %% A spawned process that will walk down the list of endpoints and try them
 %% all until exhausting the list. This process is responsible for waiting for
@@ -623,9 +621,6 @@ connection_helper(Ref, Protocol, Strategy, [{Addr, Primary}|Addrs], ConnectedToP
                        [ProtocolId, string_of_ipport(Addr)]),
             {ok, cancelled}
     end.
-% -------------------------------------------------------------------------------------------------- %
-
-
 
 locate_endpoints({Type, Name}, Strategy, Locators) ->
     case orddict:find(Type, Locators) of
@@ -724,8 +719,6 @@ fail_request(Reason, #req{ref = Ref, spec = Spec},
     %% Remove the request from the pending list
     State#state{pending = lists:keydelete(Ref, #req.ref, Pending)}.
 
-% Note: this function will not re-order primary or secondary nodes if they are already present
-% in the dictionary!
 update_endpoints(Addrs, Endpoints) ->
     %% add addr to Endpoints if not already there
     Fun = (fun({Addr,P}, EPs) ->
@@ -756,9 +749,6 @@ filter_blacklisted_endpoints(EpAddrs, AllEps) ->
                     end),
     lists:filter(PredicateFun, EpAddrs).
 
-
-
-% CC These never get used!
 identity_locator({IP,Port}, _Policy) ->
   {ok, [{{IP,Port}, false}]};
 identity_locator([Ips], _Policy) ->

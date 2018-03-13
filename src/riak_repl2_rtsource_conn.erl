@@ -116,8 +116,6 @@ legacy_status(Pid) ->
 legacy_status(Pid, Timeout) ->
     gen_server:call(Pid, legacy_status, Timeout).
 
-% -------
-% Possible fix to issue with closing the port before it reaches here
 connected(Socket, Transport, IPPort, Proto, RtSourcePid, _Props, Primary) ->
   Transport:controlling_process(Socket, RtSourcePid),
   Transport:setopts(Socket, [{active, true}]),
@@ -315,7 +313,6 @@ terminate(_Reason, _State=#state{helper_pid=HelperPid}) ->
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
-% ======================================================================================================================
 
 
 cancel_timer(undefined) -> ok;

@@ -1,19 +1,6 @@
-%% Realtime Source Connection Manager
-%% This is a worker that takes away some of the responsability that belonged to rtsource_conn
-
-%% Here we will connect to the remote sink cluster
-%% recieve connections from riak_core_connection_mgr and start children (rtsource_conn) for each connection
-%% We save the state of the connections that have been made and complete rebalacning in this gen_server
-
 -module(riak_repl2_rtsource_conn_mgr).
--author("nordine saadouni"). % this will be altered as I am taking code from rtsource_conn to place in here
-
+-author("nordine saadouni").
 -behaviour(gen_server).
-
-%%-ifdef(TEST).
-%%-include_lib("eunit/include/eunit.hrl").
-%%-export([riak_core_connection_mgr_connect/2]).
-%%-endif.
 
 %% API
 -export([start_link/1]).
@@ -50,25 +37,15 @@
   {active, false}]).
 
 -record(state, {
-
   remote, % remote sink cluster name
   connection_ref, % reference handed out by connection manager
   rtsource_conn_sup, % The module name of the supervisor to start the child when we get a connection passed to us
   rb_timeout_tref, % Rebalance timeout timer reference
   rebalance_delay,
-
   source_nodes,
   sink_nodes,
-
   remove_endpoint,
   endpoints
-  % Want a store for the following information
-  % Key = {IP, Port}; Value = {Primary, Pid}    [Pid will be the Pid of the rtsource_conn]
-  % This information will aid the reblancing process!
-
-  % In the supervisor we need a method of gracefully killing a child (will add that to rtsource_conn as a callback)
-  % Rebalancing will find new best buddies, attempt the connection, if not secondary then we replace them!
-
 }).
 
 %%%===================================================================
@@ -79,13 +56,6 @@
 start_link([Remote]) ->
   gen_server:start_link(?MODULE, [Remote], []).
 
-%%make_module_name(Remote) ->
-%%  list_to_atom(lists:flatten(io_lib:format("riak_repl2_rtsource_conn_mgr_~s", [Remote]))).
-
-
-% Replacement for connected from rtsource_conn! (This needs to be changed in riak_core_connection (gen_fsm)
-% I do not have information regarding the connection type (primary or secondary)
-% I can pass it to here or request it from the core_connection_mgr (Either way I need it)
 connected(Socket, Transport, IPPort, Proto, RTSourceConnMgrPid, _Props, Primary) ->
   Transport:controlling_process(Socket, RTSourceConnMgrPid),
   gen_server:call(RTSourceConnMgrPid, {connected, Socket, Transport, IPPort, Proto, _Props, Primary}).
@@ -93,10 +63,6 @@ connected(Socket, Transport, IPPort, Proto, RTSourceConnMgrPid, _Props, Primary)
 connect_failed(_ClientProto, Reason, RTSourceConnMgrPid) ->
   gen_server:cast(RTSourceConnMgrPid, {connect_failed, self(), Reason}).
 
-%% @doc Check if we need to rebalance.
-%% If we do, delay some time, recheck that we still
-%% need to rebalance, and if we still do, then execute
-%% reconnection to the better sink node.
 maybe_rebalance_delayed(Pid) ->
   gen_server:cast(Pid, rebalance_delayed).
 
@@ -118,7 +84,6 @@ get_all_status(Pid, Timeout) ->
 
 
 init([Remote]) ->
-  %% Todo: check for bad remote name
   lager:debug("connecting to remote ~p", [Remote]),
   case riak_core_connection_mgr:connect({rt_repl, Remote}, ?CLIENT_SPEC, multi_connection) of
     {ok, Ref} ->
@@ -257,18 +222,6 @@ start_rtsource_conn(Remote, S) ->
   Args = [Remote, self()],
   supervisor:start_child(S, Args).
 
-%%remove_all_current_connections(_State=#state{endpoints = E, remote = R}) ->
-%%  AllKeys = orddict:fetch_keys(E),
-%%  lager:debug("realtime node connections deleted"),
-%%  riak_repl2_rtsource_conn_data_mgr:delete(realtime_connections, R, node()),
-%%  remove_connection(AllKeys, E).
-
-%%remove_connection_gracefully(RtSourceConnPid, HelperPid) ->
-%%  riak_repl2_rtsource_helper:stop_pulling(HelperPid),
-%%  timer:sleep(?KILL_TIME),
-%%  riak_repl2_rtsource_conn:stop(RtSourceConnPid).
-
-
 
 maybe_rebalance(State, now) ->
   {NewSource, NewSink} = get_source_and_sink_nodes(State#state.remote),
@@ -293,7 +246,6 @@ maybe_rebalance(State, now) ->
       NewState1#state{sink_nodes = NewSink, source_nodes = NewSource};
 
     {true, {nodes_up_and_down, DropNodes, ConnectToNodes, Primary, Secondary, ConnectedSinkNodes}} ->
-      %% we need to check the remove_endpoints!!
       lager:debug("rebalancing triggered and some active connections required to be dropped, and also new connections to be made"),
       {RemoveAllConnections, NewState1} = check_and_drop_connections(State, DropNodes, ConnectedSinkNodes),
       NewState2 = check_remove_endpoint(NewState1, ConnectToNodes),
@@ -375,7 +327,6 @@ remove_connections([Key | Rest], E) ->
   riak_repl2_rtsource_helper:stop_pulling(HelperPid),
   lager:debug("rtsource_conn called to gracefully kill itself ~p", [Key]),
   erlang:send_after(?KILL_TIME, self(), {kill_rtsource_conn, RtSourcePid}),
-%%  spawn_link(?MODULE, remove_connection_gracefully, [RtsourcePid, HelperPid]),
   remove_connections(Rest, orddict:erase(Key, E)).
 
 get_source_and_sink_nodes(Remote) ->
@@ -430,197 +381,9 @@ rebalance_connect(State=#state{remote=Remote}, BetterAddrs) ->
       State
   end.
 
-%% -------------------------------------------------------------------------------------------------------------- %%
-% returns the connections inverted (key = {sinkip,port}, value = {soureNode, Primary})
-%%invert_connections(Connections) ->
-%%  AllNodes = dict:fetch_keys(Connections),
-%%  InvertedConnections = dict:new(),
-%%  build_inverted_dictionary(AllNodes, Connections, InvertedConnections).
-%%
-%%build_inverted_dictionary([], _, Inverted) ->
-%%  Inverted;
-%%build_inverted_dictionary([SourceNode|Rest], Connections, InvertedConnections) ->
-%%  SinkNodes = dict:fetch(SourceNode, Connections),
-%%  UpdatedInvertedConnections = update_inverted(SourceNode, SinkNodes, InvertedConnections),
-%%  build_inverted_dictionary(Rest, Connections, UpdatedInvertedConnections).
-%%
-%%update_inverted(_,[], List) ->
-%%  List;
-%%update_inverted(SourceNode, [{SinkIPPort, Primary}|Rest], Dict) ->
-%%  update_inverted(SourceNode, Rest, dict:append(SinkIPPort, {SourceNode,Primary}, Dict)).
-%%
-%%%% -------------------------------------------------------------------------------------------------------------- %%
-%%%% -------------------------------------------------------------------------------------------------------------- %%
-%%connection_numbers(Connections) ->
-%%  AllKeys = dict:fetch_keys(Connections),
-%%  CN = dict:new(),
-%%  build_connection_numbers(AllKeys,Connections,CN).
-%%
-%%build_connection_numbers([], _, CN) ->
-%%  CN;
-%%build_connection_numbers([Node|Rest], Connections, CN) ->
-%%  ConnectionList = dict:fetch(Node, Connections),
-%%  ConnectionsNumbers = calculate_connections(ConnectionList, {0,0}),
-%%  UpdatedCN = dict:store(Node, ConnectionsNumbers, CN),
-%%  build_connection_numbers(Rest, Connections, UpdatedCN).
-%%
-%%calculate_connections([], X) ->
-%%  X;
-%%calculate_connections([{_IPPort, P}|Rest], {Primary, Secondary}) ->
-%%  {Primary1, Secondary1} = case P of
-%%                             true ->
-%%                               {Primary+1, Secondary};
-%%                             false ->
-%%                               {Primary, Secondary+1}
-%%                           end,
-%%  calculate_connections(Rest, {Primary1, Secondary1}).
-%% -------------------------------------------------------------------------------------------------------------- %%
-
-
-
-
 collect_status_data([], Data, _E) ->
   Data;
 collect_status_data([Key | Rest], Data, E) ->
   Pid = orddict:fetch(Key, E),
   NewData = [riak_repl2_rtsource_conn:status(Pid) | Data],
   collect_status_data(Rest, NewData, E).
-
-%% ================================================================================================================
-%%rebalance_delay_millis() ->
-%%  MaxDelaySecs =
-%%    app_helper:get_env(riak_repl, realtime_connection_rebalance_max_delay_secs, 5*60),
-%%  round(MaxDelaySecs * crypto:rand_uniform(0, 1000)).
-
-
-%% ===================================================================
-%% EUnit tests
-%% ===================================================================
-%%-ifdef(TEST).
-%%
-%%riak_repl2_rtsource_conn_mgr_test_() ->
-%%  {spawn, [{
-%%    setup,
-%%    fun setup/0,
-%%    fun cleanup/1,
-%%    {timeout, 120, fun cache_peername_test_case/0}
-%%  }]}.
-%%
-%%setup() ->
-%%  % ?debugMsg("enter setup()"),
-%%  % make sure there aren't leftovers around from prior tests
-%%  sanitize(),
-%%  % now set up the environment for this test
-%%  process_flag(trap_exit, true),
-%%  riak_repl_test_util:start_test_ring(),
-%%  riak_repl_test_util:abstract_gen_tcp(),
-%%  riak_repl_test_util:abstract_stats(),
-%%  riak_repl_test_util:abstract_stateful(),
-%%  % ?debugMsg("leave setup()"),
-%%  ok.
-%%
-%%cleanup(_Ctx) ->
-%%  % ?debugFmt("enter cleanup(~p)", [_Ctx]),
-%%  R = sanitize(),
-%%  % ?debugFmt("leave cleanup(~p) -> ~p", [_Ctx, R]),
-%%  R.
-%%
-%%sanitize() ->
-%%  % ?debugMsg("enter sanitize()"),
-%%  rt_source_helpers:kill_fake_sink(),
-%%  riak_repl_test_util:kill_and_wait([
-%%    riak_repl2_rt,
-%%    riak_repl2_rtq,
-%%    riak_core_tcp_mon]),
-%%
-%%  riak_repl_test_util:stop_test_ring(),
-%%
-%%  riak_repl_test_util:maybe_unload_mecks([
-%%    riak_core_service_mgr,
-%%    riak_core_connection_mgr,
-%%    gen_tcp]),
-%%  meck:unload(),
-%%  % ?debugMsg("leave sanitize()"),
-%%  ok.
-%%
-%%
-%%setup_connection_manager(RemoteName) ->
-%%  % ?debugFmt("enter setup_connection_for_peername(~p)", [RemoteName]),
-%%  riak_repl_test_util:reset_meck(riak_core_connection_mgr, [no_link, passthrough]),
-%%  meck:expect(riak_core_connection_mgr, connect,
-%%    fun(_ServiceAndRemote, ClientSpec) ->
-%%      proc_lib:spawn_link(?MODULE, riak_core_connection_mgr_connect, [ClientSpec, RemoteName]),
-%%      {ok, make_ref()}
-%%    end).
-%%riak_core_connection_mgr_connect(ClientSpec, {RemoteHost, RemotePort} = RemoteName) ->
-%%  Version = stateful:version(),
-%%  {_Proto, {TcpOpts, Module, Pid}} = ClientSpec,
-%%  {ok, Socket} = gen_tcp:connect(RemoteHost, RemotePort, [binary | TcpOpts]),
-%%
-%%  ok = Module:connected(Socket, gen_tcp, RemoteName, Version, Pid, []),
-%%
-%%  % simulate local socket problem
-%%  inet:close(Socket),
-%%
-%%  % get the State from the source connection.
-%%  {status,Pid,_,[_,_,_,_,[_,_,{data,[{_,State}]}]]} = sys:get_status(Pid),
-%%  % getting the peername from the socket should produce error string
-%%  ?assertEqual("error:einval", peername(inet, Socket)),
-%%
-%%  % while getting the peername from the State should produce the cached string
-%%  % format the string we expect from peername(State) ...
-%%  {ok, HostIP} = inet:getaddr(RemoteHost, inet),
-%%  RemoteText = lists:flatten(io_lib:format("~B.~B.~B.~B:~B",
-%%    tuple_to_list(HostIP) ++ [RemotePort])),
-%%  % ... and hook the function to check for it
-%%  ?assertEqual(RemoteText, peername(State)).
-%%
-%%-endif.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-%%  case {SourceComparison, SinkComparison} of
-%%  {equal,equal} ->
-%%    ok;
-%%  {equal,nodes_up_and_down} ->
-%%    ok;
-%%  {equal,nodes_down} ->
-%%    ok;
-%%  {equal,nodes_up} ->
-%%    ok;
-%%  {nodes_up_and_down,equal} ->
-%%    ok;
-%%  {nodes_up_and_down,nodes_up_and_down} ->
-%%    ok;
-%%  {nodes_up_and_down,nodes_down} ->
-%%    ok;
-%%  {nodes_up_and_down,nodes_up} ->
-%%    ok;
-%%  {nodes_down,equal} ->
-%%    ok;
-%%  {nodes_down,nodes_up_and_down} ->
-%%    ok;
-%%  {nodes_down,nodes_down} ->
-%%    ok;
-%%  {nodes_down,nodes_up} ->
-%%    ok;
-%%  {nodes_up,equal} ->
-%%    ok;
-%%  {nodes_up,nodes_up_and_down} ->
-%%    ok;
-%%  {nodes_up,nodes_down} ->
-%%    ok;
-%%  {nodes_up,nodes_up} ->
-%%    ok
-%%  end,
