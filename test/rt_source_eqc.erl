@@ -46,7 +46,7 @@ setup() ->
     {ok, _RTQPid} = rt_source_helpers:start_rtq(),
     {ok, _TCPMonPid} = rt_source_helpers:start_tcp_mon(),
     %% {ok, _Pid1} = riak_core_service_mgr:start_link(ClusterAddr),
-%%     {ok, _Pid2} = riak_core_connection_mgr:start_link(),
+    %% {ok, _Pid2} = riak_core_connection_mgr:start_link(),
     %% {ok, _Pid3} = riak_core_cluster_conn_sup:start_link(),
     %% {ok, _Pid4 } = riak_core_cluster_mgr:start_link(),
     {ok, FsPid, FsPort} = rt_source_helpers:init_fake_sink(),
