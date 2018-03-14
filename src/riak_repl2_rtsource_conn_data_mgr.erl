@@ -225,28 +225,26 @@ handle_info(restore_leader_data, State) ->
   ActiveNodes = riak_repl_ring:get_active_nodes(),
   {noreply, State#state{connections = RemoteRealtimeConnections, active_nodes = ActiveNodes}};
 
-handle_info(poll_node_watcher, State=#state{active_nodes = AN, connections = C}) when State#state.is_leader == true ->
-  ActiveNodes = riak_core_node_watcher:nodes(riak_kv),
-  Connections = case ActiveNodes == AN of
-
-                 true ->
-                   C;
-                 false ->
-                   case AN -- ActiveNodes of
-                     [] ->
-                       riak_core_ring_manager:ring_trans(fun riak_repl_ring:overwrite_active_nodes/2, ActiveNodes),
-                       C;
-                     DownNodes ->
-                       AllRemotes = dict:fetch_keys(C),
-                       lager:debug("down nodes = ~p; known remotes = ~p; connections = ~p", [DownNodes, AllRemotes, C]),
-                       NewC = remove_nodes_remotes(DownNodes, AllRemotes, C),
-                       lager:debug("down nodes, new connections dictionary ~p", [NewC]),
-                       riak_core_ring_manager:ring_trans(fun riak_repl_ring:overwrite_active_nodes_and_realtime_connection_data/2, {NewC, ActiveNodes}),
-                       NewC
-                   end
-               end,
+handle_info(poll_node_watcher, State=#state{active_nodes = OldActiveNodes, connections = C}) when State#state.is_leader == true ->
+  NewActiveNodes = riak_core_node_watcher:nodes(riak_kv),
+  DownNodes = OldActiveNodes -- NewActiveNodes,
+  UpNodes = NewActiveNodes -- OldActiveNodes,
+  Connections = case {DownNodes, UpNodes} of
+                  {[], []} ->
+                    C;
+                  {[], _Up} ->
+                    riak_core_ring_manager:ring_trans(fun riak_repl_ring:overwrite_active_nodes/2, NewActiveNodes),
+                    C;
+                  {Down, _} ->
+                    AllRemotes = dict:fetch_keys(C),
+                    lager:debug("down nodes = ~p; known remotes = ~p; connections = ~p", [DownNodes, AllRemotes, C]),
+                    NewC = remove_nodes_remotes(Down, AllRemotes, C),
+                    lager:debug("down nodes, new connections dictionary ~p", [NewC]),
+                    riak_core_ring_manager:ring_trans(fun riak_repl_ring:overwrite_active_nodes_and_realtime_connection_data/2, {NewC, NewActiveNodes}),
+                    NewC
+                end,
   erlang:send_after(?NODE_WATCHER_POLLING_INTERVAL, self(), poll_node_watcher),
-  {noreply, State#state{active_nodes = ActiveNodes, connections = Connections}};
+  {noreply, State#state{active_nodes = NewActiveNodes, connections = Connections}};
 handle_info(poll_node_watcher, State) ->
   erlang:send_after(?NODE_WATCHER_POLLING_INTERVAL, self(), poll_node_watcher),
   {noreply, State};
