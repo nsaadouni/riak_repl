@@ -3,6 +3,13 @@ REBAR ?= ./rebar
 test: compile
 	${REBAR} eunit skip_deps=true
 
+test-module: compile
+	@if [ -z "$(suite)" ]; then \
+            echo "No suite specified to be ran, please use make test-module suite=<module>"; \
+        else \
+            ${REBAR} eunit skip_deps=true suite=$(suite); \
+        fi
+
 docs:
 	${REBAR} doc skip_deps=true
 

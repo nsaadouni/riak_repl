@@ -576,10 +576,10 @@ start_source(NegotiatedVer) ->
                                                        end),
   catch(meck:unload(riak_core_cluster_mgr)),
   meck:new(riak_core_cluster_mgr, [passthrough]),
-  meck:expect(riak_core_cluster_mgr, get_unsuhffled_remote_ip_addrs_of_cluster, fun(_Remote) -> {ok,[]} end ),
-  meck:expect(riak_core_cluster_mgr, get_ipaddrs_of_cluster_multifix, fun(_) -> {ok,[]} end ),
-  meck:expect(riak_core_cluster_mgr, get_ipaddrs_of_cluster_multifix, fun(_, split) -> {ok, {[],[]}} end ),
-  meck:expect(riak_core_cluster_mgr, get_ipaddrs_of_cluster_multifix, fun(_, _) -> {ok,[]} end ),
+  meck:expect(riak_core_cluster_mgr, get_unsuhffled_ipaddrs_of_cluster, fun(_Remote) -> {ok,[]} end ),
+  meck:expect(riak_core_cluster_mgr, get_ipaddrs_of_cluster, fun(_) -> {ok,[]} end ),
+  meck:expect(riak_core_cluster_mgr, get_ipaddrs_of_cluster, fun(_, split) -> {ok, {[],[]}} end ),
+  meck:expect(riak_core_cluster_mgr, get_ipaddrs_of_cluster, fun(_, _) -> {ok,[]} end ),
     {ok, SourcePid} = riak_repl2_rtsource_remote_conn_sup:start_link("sink_cluster"),
     receive
         {sink_started, SinkPid} ->

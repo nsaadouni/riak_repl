@@ -280,7 +280,7 @@ should_rebalance(#state{endpoints = Endpoints, remote=Remote, sink_nodes = OldSi
     {equal, equal} ->
       false;
     _ ->
-      case riak_core_cluster_mgr:get_ipaddrs_of_cluster_multifix(Remote, split) of
+      case riak_core_cluster_mgr:get_ipaddrs_of_cluster(Remote, split) of
         {ok, []} ->
           false;
         {ok, {Primary, Secondary}} ->
@@ -331,7 +331,7 @@ remove_connections([Key | Rest], E) ->
 
 get_source_and_sink_nodes(Remote) ->
   SourceNodes = riak_repl2_rtsource_conn_data_mgr:read(active_nodes),
-  SinkNodes = riak_core_cluster_mgr:get_unsuhffled_remote_ip_addrs_of_cluster(Remote),
+  SinkNodes = riak_core_cluster_mgr:get_unsuhffled_ipaddrs_of_cluster(Remote),
   {SourceNodes, SinkNodes}.
 
 compare_nodes(Old, New) ->

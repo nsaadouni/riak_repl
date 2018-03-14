@@ -89,14 +89,12 @@
          get_known_clusters/0,
          get_connections/0,
          get_ipaddrs_of_cluster/1,
-         get_ipaddrs_of_cluster_multifix/1,
-         get_ipaddrs_of_cluster_multifix/2,
+         get_ipaddrs_of_cluster/2,
+         get_unsuhffled_ipaddrs_of_cluster/1,
          set_gc_interval/1,
          stop/0,
          connect_to_clusters/0,
-         shuffle_remote_ipaddrs/1,
-         get_my_remote_ip_list/3,
-         get_unsuhffled_remote_ip_addrs_of_cluster/1
+         get_my_remote_ip_list/3
          ]).
 
 %% gen_server callbacks
@@ -182,16 +180,7 @@ get_my_members(MyAddr) ->
 get_all_members(MyAddr) ->
     gen_server:call(?SERVER, {get_all_members, MyAddr}, infinity).
 
-%% @doc Return a list of the known IP addresses of all nodes in the remote cluster.
 get_ipaddrs_of_cluster(ClusterName) ->
-    case gen_server:call(?SERVER, {get_known_ipaddrs_of_cluster, {name,ClusterName}}, infinity) of
-        {ok, Reply} ->
-            shuffle_remote_ipaddrs(Reply);
-        Reply ->
-            Reply
-    end.
-
-get_ipaddrs_of_cluster_multifix(ClusterName) ->
   case gen_server:call(?SERVER, {get_known_ipaddrs_of_cluster, {name,ClusterName}}, infinity) of
     {ok, Reply} ->
       get_my_remote_ip_list(ClusterName, Reply, all);
@@ -199,7 +188,7 @@ get_ipaddrs_of_cluster_multifix(ClusterName) ->
       Reply
   end.
 
-get_ipaddrs_of_cluster_multifix(ClusterName, Return) ->
+get_ipaddrs_of_cluster(ClusterName, Return) ->
   case gen_server:call(?SERVER, {get_known_ipaddrs_of_cluster, {name,ClusterName}}, infinity) of
     {ok, Reply} ->
       get_my_remote_ip_list(ClusterName, Reply, Return);
@@ -207,7 +196,7 @@ get_ipaddrs_of_cluster_multifix(ClusterName, Return) ->
       Reply
   end.
 
-get_unsuhffled_remote_ip_addrs_of_cluster(ClusterName) ->
+get_unsuhffled_ipaddrs_of_cluster(ClusterName) ->
   case gen_server:call(?SERVER, {get_known_ipaddrs_of_cluster, {name,ClusterName}}, infinity) of
     {ok, Reply} ->
       Reply;
@@ -760,38 +749,6 @@ connect_to_persisted_clusters(State) ->
             ok
     end.
 
-shuffle_with_seed(List, Seed={_,_,_}) ->
-    _ = random:seed(Seed),
-    [E || {E, _} <- lists:keysort(2, [{Elm, random:uniform()} || Elm <- List])];
-shuffle_with_seed(List, Seed) ->
-    <<_:10,S1:50,S2:50,S3:50>> = crypto:hash(sha, term_to_binary(Seed)),
-    shuffle_with_seed(List, {S1,S2,S3}).
-
-
-shuffle_remote_ipaddrs([]) ->
-  {ok, []};
-shuffle_remote_ipaddrs(RemoteUnsorted) ->
-    {ok, MyRing} = riak_core_ring_manager:get_my_ring(),
-    SortedNodes = lists:sort(riak_core_ring:all_members(MyRing)),
-    NodesTagged = lists:zip(lists:seq(1, length(SortedNodes)), SortedNodes),
-    case lists:keyfind(node(), 2, NodesTagged) of
-        {MyPos, _} ->
-            OurClusterName = riak_core_connection:symbolic_clustername(),
-            RemoteAddrs = shuffle_with_seed(lists:sort(RemoteUnsorted), [OurClusterName]),
-
-            %% MyPos is the position if *this* node in the sorted list of
-            %% all nodes in my ring.  Now choose the node at the corresponding
-            %% index in RemoteAddrs as out "buddy"
-            SplitPos = ((MyPos-1) rem length(RemoteAddrs)),
-            case lists:split(SplitPos,RemoteAddrs) of
-                {BeforeBuddy,[Buddy|AfterBuddy]} ->
-                    {ok, [Buddy | shuffle_with_seed(AfterBuddy ++ BeforeBuddy, node())]}
-            end;
-        false ->
-            {ok, shuffle_with_seed(lists:sort(RemoteUnsorted), node())}
-    end.
-
-
 shuffle(List) ->
   <<_:10,S1:50,S2:50,S3:50>> = crypto:strong_rand_bytes(20),
   _ = random:seed({S1,S2,S3}),
@@ -842,7 +799,7 @@ build_primary_dict([{Key, Value}| Rest], Dict) ->
 link_addrs(AllPrimariesDict, SinkNodes, Remote) ->
   ActiveConnsDict = riak_repl2_rtsource_conn_data_mgr:read(realtime_connections, Remote),
   ActiveSources = dict:fetch_keys(ActiveConnsDict),
-  {LinkedActiveNodes, LeftOverSinkNodes, NewPrimaryLinkDict} = link_active_addr({ActiveConnsDict, ActiveSources}, AllPrimariesDict, dict:new(), SinkNodes),
+  {LinkedActiveNodes, LeftOverSinkNodes, NewPrimaryLinkDict} = link_active_addr({ActiveConnsDict, lists:sort(ActiveSources)}, AllPrimariesDict, dict:new(), SinkNodes),
   lager:debug("
       Old Primary Dict: ~p
       Active Sources: ~p
