@@ -799,7 +799,7 @@ build_primary_dict([{Key, Value}| Rest], Dict) ->
 link_addrs(AllPrimariesDict, SinkNodes, Remote) ->
   ActiveConnsDict = riak_repl2_rtsource_conn_data_mgr:read(realtime_connections, Remote),
   ActiveSources = dict:fetch_keys(ActiveConnsDict),
-  {LinkedActiveNodes, LeftOverSinkNodes, NewPrimaryLinkDict} = link_active_addr({ActiveConnsDict, lists:sort(ActiveSources)}, AllPrimariesDict, dict:new(), SinkNodes),
+  {LinkedActiveNodes, LeftOverSinkNodes, NewPrimaryLinkDict} = link_active_addr({ActiveConnsDict, ActiveSources}, AllPrimariesDict, dict:new(), SinkNodes),
   lager:debug("
       Old Primary Dict: ~p
       Active Sources: ~p
@@ -901,9 +901,6 @@ link_active_node_connections(ActiveSourceNode, CS=[{IPPort, Primary}|Rest], AllP
           %% Index has not been linked to a SINK IP-PORT; and the SINK IP-PORT has not been linked yet; Idxs /= []
           NewAllPrimariesDict = dict:store(ActiveSourceNode, Idxs, AllPrimariesDict),
           link_active_node_connections(ActiveSourceNode, Rest, NewAllPrimariesDict, NewLinkedActiveDict, NewSinkNodes);
-        {false, false, []} ->
-          %% Index has not been linked to a SINK IP-PORT; and the SINK IP-PORT has already been linked to another index; Idxs = []
-          {LinkedActiveDict, SinkNodes, AllPrimariesDict};
         {false, false, _} ->
           %% Index has not been linked to a SINK IP-PORT; and the SINK IP-PORT has already been linked to another index; Idxs /= []
           link_active_node_connections(ActiveSourceNode, Rest, AllPrimariesDict, LinkedActiveDict, SinkNodes)

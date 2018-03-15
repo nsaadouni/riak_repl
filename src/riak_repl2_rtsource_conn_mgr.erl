@@ -166,10 +166,8 @@ handle_call(_Request, _From, State) ->
 %%%=====================================================================================================================
 
 %% Connection manager failed to make connection
-handle_cast({connect_failed, _HelperPid, Reason},
-    State = #state{remote = Remote}) ->
-  lager:warning("Realtime replication connection to site ~p failed - ~p\n",
-    [Remote, Reason]),
+handle_cast({connect_failed, _HelperPid, Reason}, State = #state{remote = Remote}) ->
+  lager:warning("Realtime replication connection to site ~p failed - ~p\n", [Remote, Reason]),
   {stop, normal, State};
 
 handle_cast({kill_rtsource_conn, Pid}, State) ->
@@ -201,7 +199,6 @@ handle_info(_Info, State) ->
 
 terminate(_Reason, _State=#state{remote = Remote, endpoints = E}) ->
   lager:debug("rtrsource_conn_mgr terminating"),
-  %% consider unregistering from rtq!
   riak_core_connection_mgr:disconnect({rt_repl, Remote}),
   [catch riak_repl2_rtsource_conn:stop(Pid) || {_,{Pid,_}} <- E],
   ok.
