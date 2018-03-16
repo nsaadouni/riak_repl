@@ -90,7 +90,7 @@
          get_connections/0,
          get_ipaddrs_of_cluster/1,
          get_ipaddrs_of_cluster/2,
-         get_unsuhffled_ipaddrs_of_cluster/1,
+         get_unshuffled_ipaddrs_of_cluster/1,
          set_gc_interval/1,
          stop/0,
          connect_to_clusters/0,
@@ -196,7 +196,7 @@ get_ipaddrs_of_cluster(ClusterName, Return) ->
       Reply
   end.
 
-get_unsuhffled_ipaddrs_of_cluster(ClusterName) ->
+get_unshuffled_ipaddrs_of_cluster(ClusterName) ->
   case gen_server:call(?SERVER, {get_known_ipaddrs_of_cluster, {name,ClusterName}}, infinity) of
     {ok, Reply} ->
       Reply;

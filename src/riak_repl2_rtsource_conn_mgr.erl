@@ -138,9 +138,7 @@ handle_call({connected, Socket, Transport, IPPort, Proto, _Props, Primary}, _Fro
           {reply, ok, NewState#state{endpoints = NewEndpoints}};
 
         Error ->
-          lager:debug("rtsouce_conn failed to recieve connection"),
-          % need to ask the connection manager to re-try this address and create new port
-          % core_connection_mgr:connect(use_only_addr)
+          lager:debug("rtsouce_conn failed to recieve connection ~p", [IPPort]),
           {reply, Error, State}
       end;
     ER ->
@@ -328,7 +326,7 @@ remove_connections([Key | Rest], E) ->
 
 get_source_and_sink_nodes(Remote) ->
   SourceNodes = riak_repl2_rtsource_conn_data_mgr:read(active_nodes),
-  SinkNodes = riak_core_cluster_mgr:get_unsuhffled_ipaddrs_of_cluster(Remote),
+  SinkNodes = riak_core_cluster_mgr:get_unshuffled_ipaddrs_of_cluster(Remote),
   {SourceNodes, SinkNodes}.
 
 compare_nodes(Old, New) ->

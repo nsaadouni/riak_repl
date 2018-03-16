@@ -90,7 +90,6 @@ connections_test_() ->
                riak_core_ring_events:start_link(),
                riak_core_ring_manager:start_link(test),
                {ok, _} = riak_core_service_mgr:start_link(?REMOTE_CLUSTER_ADDR),
-%%               {ok, _} = riak_core_service_mgr:start_link({"127.0.0.1", 5001}),
                {ok, _} = riak_core_connection_mgr:start_link(),
                Apps
        end,
