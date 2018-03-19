@@ -406,6 +406,7 @@ initial_config() ->
        {sites, []},
        {realtime_cascades, always},
        {version, ?REPL_VERSION},
+       {filteredbuckets, []},
        {bucket_filtering_enabled, false}]
       ).
 
@@ -530,7 +531,7 @@ get_filtered_bucket_config(Ring) ->
     get_list(filteredbuckets, Ring).
 
 %% Get the list of buckets to replicate to the cluster 'ClusterName' from the ring config
--spec get_filtered_bucket_config_for_bucket(ring(), string()) -> [binary()] | [].
+-spec get_filtered_bucket_config_for_bucket(ring(), binary()) -> [list()] | [].
 get_filtered_bucket_config_for_bucket(Ring, BucketName) ->
     case get_filtered_bucket_config(Ring) of
         [] ->
@@ -679,6 +680,51 @@ bucket_filtering_can_disable_test() ->
     {new_ring, Ring2} = set_bucket_filtering_state(Ring, false),
     ?assertEqual(false, get_bucket_filtering_state(Ring2)),
     Ring2.
+
+set_clusterIpAddrs_test() ->
+    % set_clusterIpAddrs(Ring, {ClusterName, Addrs})
+    Ring = ensure_config_test(),
+    {new_ring, Ring2} = set_clusterIpAddrs(Ring, {"test_cluster", ["127.0.0.1:60036"]}),
+    ?assertEqual(get_clusterIpAddrs(Ring2, "test_cluster"), ["127.0.0.1:60036"]),
+    Ring2.
+
+% Check we can add a filtered bucket for a given cluster
+bucket_filtering_can_add_bucket_test() ->
+    Ring = bucket_filtering_enable_test(),
+
+    {new_ring, Ring2} = set_clusterIpAddrs(Ring, {"test_cluster", ["127.0.0.1:60036"]}),
+    ?assertEqual(get_clusterIpAddrs(Ring2, "test_cluster"), ["127.0.0.1:60036"]),
+
+    {new_ring, Ring3} = add_filtered_bucket(Ring2, {"test_cluster", <<"bkt1">>}),
+    Config = get_filtered_bucket_config_for_bucket(Ring3, <<"bkt1">>),
+
+    ?assertEqual(["test_cluster"], Config),
+    Ring3.
+
+bucket_filtering_can_remove_bucket_test() ->
+    Ring = bucket_filtering_can_add_bucket_test(),
+    {new_ring, Ring2} = remove_filtered_bucket(Ring, <<"bkt1">>),
+    Config = get_filtered_bucket_config(Ring2),
+    ?assertEqual(false, lists:keymember(<<"bkt1">>, 1, Config)).
+
+bucket_filtering_remove_cluster_test() ->
+    % Gives us a Ring with filtered bucket data: {<<"bkt1">>, ["test_cluster"]}
+    Ring = bucket_filtering_can_add_bucket_test(),
+
+    {new_ring, Ring2} = set_clusterIpAddrs(Ring, {"test_cluster2", ["127.0.0.1:50036"]}),
+    ?assertEqual(["127.0.0.1:50036"], get_clusterIpAddrs(Ring2, "test_cluster2")),
+    ?assertEqual(["127.0.0.1:60036"], get_clusterIpAddrs(Ring2, "test_cluster")),
+
+%%    io:format("cluster config: ~p~n", [get_clusters(Ring2)]),
+%%    io:format("filtered config for bkt1: ~p", [get_filtered_bucket_config_for_bucket(Ring2, <<"bkt1">>)]),
+
+    {new_ring, Ring3} = add_filtered_bucket(Ring2, {"test_cluster2", <<"bkt1">>}),
+
+    {new_ring, Ring4} = remove_cluster_from_bucket_config(Ring3, {"test_cluster2", <<"bkt1">>}),
+    ?assertEqual(["test_cluster"], get_filtered_bucket_config_for_bucket(Ring4, <<"bkt1">>)),
+
+    {new_ring, Ring5} = remove_cluster_from_bucket_config(Ring4, {"test_cluster", <<"bkt1">>}),
+    ?assertEqual([], get_filtered_bucket_config_for_bucket(Ring5, <<"bkt1">>)).
 
 add_get_site_test() ->
     Ring0 = ensure_config_test(),
