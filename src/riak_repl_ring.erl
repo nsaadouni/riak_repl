@@ -701,6 +701,12 @@ bucket_filtering_can_add_bucket_test() ->
     ?assertEqual(["test_cluster"], Config),
     Ring3.
 
+reset_filtered_buckets_test() ->
+    Ring = bucket_filtering_can_add_bucket_test(),
+    {new_ring, Ring2} = reset_filtered_buckets(Ring, []),
+    ?assertEqual(get_filtered_bucket_config(Ring2), []),
+    ok.
+
 bucket_filtering_can_remove_bucket_test() ->
     Ring = bucket_filtering_can_add_bucket_test(),
     {new_ring, Ring2} = remove_filtered_bucket(Ring, <<"bkt1">>),

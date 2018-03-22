@@ -1087,7 +1087,7 @@ remove_bucket_from_filtering([BucketName]) ->
 
 print_bucket_filtering_config([]) ->
     Ring = get_ring(),
-    IsEnabled = atom_to_list(riak_repl_ring:get_bucket_filtering_state(Ring)),
+    IsEnabled = enable_flag_to_list(riak_repl_ring:get_bucket_filtering_state(Ring)),
     BucketConfig = riak_repl_ring:get_filtered_bucket_config(Ring),
 
     case BucketConfig of
@@ -1106,3 +1106,6 @@ print_bucket_filtering_config([]) ->
              end || {Bucket, ClusterNames} <- BucketConfig]
     end,
     ok.
+
+enable_flag_to_list(B) when is_boolean(B) -> atom_to_list(B);
+enable_flag_to_list(_) -> "false".
