@@ -538,7 +538,7 @@ filter_consumers(true, AllConsumers, {BucketName, _}, Buckets) ->
             % If we can't find config, then we send everywhere
             AllConsumers;
         {BucketName, Clusters} ->
-            [Consumer || Consumer <- AllConsumers, lists:member(Consumer, Clusters) orelse Consumer == "qm"]
+            [Consumer || Consumer <- AllConsumers, allowed_to_route(Consumer, Clusters) ]
     end;
 filter_consumers(_, AllConsumers, _, _) -> AllConsumers.
 
@@ -584,7 +584,6 @@ push(NumItems, Bin, Meta, State = #state{qtab = QTab,
     end, DeliverResults),
     State2 = if
         AllSkipped andalso length(Cs2) > 0 ->
-            lager:info("all were skipped, and length of consumers > 0"),
             State;
         true ->
             ets:insert(QTab, QEntry2),
@@ -597,9 +596,10 @@ push(NumItems, Bin, Meta, State = #state{shutting_down = true}) ->
     State.
 
 pull(Name, DeliverFun, State = #state{qtab = QTab, qseq = QSeq, cs = Cs, filtered_buckets_enabled = FEnabled, filtered_buckets = FilterBuckets}) ->
+    CsNames = [C#c.name || C <- Cs],
     UpdCs = case lists:keytake(Name, #c.name, Cs) of
                 {value, C, Cs2} ->
-                    [maybe_pull(QTab, QSeq, C, DeliverFun, FEnabled, FilterBuckets) | Cs2];
+                    [maybe_pull(QTab, QSeq, C, CsNames, DeliverFun, FEnabled, FilterBuckets) | Cs2];
                 false ->
                     lager:error("Consumer ~p pulled from RTQ, but was not registered", [Name]),
                     deliver_error(DeliverFun, not_registered)
@@ -611,28 +611,30 @@ pull(Name, DeliverFun, State = #state{qtab = QTab, qseq = QSeq, cs = Cs, filtere
 allowed_to_route(RemoteName, RemoteNames) ->
     lists:member(RemoteName, RemoteNames) orelse RemoteName == "qm".
 
-maybe_pull(QTab, QSeq, C = #c{cseq = CSeq, name = CName}, DeliverFun, FilteringEnabled, FilteredBuckets) ->
+maybe_pull(QTab, QSeq, C = #c{cseq = CSeq, name = CName}, CsNames, DeliverFun, FilteringEnabled, FilteredBuckets) ->
     CSeq2 = CSeq + 1,
     case CSeq2 =< QSeq of
         true -> % something ready
             case ets:lookup(QTab, CSeq2) of
                 [] -> % entry removed, due to previously being unroutable
                     C2 = C#c{skips = C#c.skips + 1, cseq = CSeq2},
-                    maybe_pull(QTab, QSeq, C2, DeliverFun, FilteringEnabled, FilteredBuckets);
+                    maybe_pull(QTab, QSeq, C2, CsNames, DeliverFun, FilteringEnabled, FilteredBuckets);
                 [QEntry] ->
                     % BucketConfig can be {_BucketName, AllowedRemotes} or undefined - we need to handle when
                     % old items come into the queue
                     {_, _, _, _, BucketConfig} = QEntry,
+                    FilteredCsNames = filter_consumers(FilteringEnabled, CsNames, BucketConfig, FilteredBuckets),
+                    QEntry2 = set_local_forwards_meta(FilteredCsNames, QEntry),
 
                     case BucketConfig of
                         {_, Config} when Config /= [] ->
-                            case allowed_to_route(CName, Config) of
+                            case allowed_to_route(CName, BucketConfig) of
                                 true ->
                                     % if the item can't be delivered due to cascading rt,
                                     % just keep trying.
-                                    case maybe_deliver_item(C#c{deliver = DeliverFun}, QEntry, FilteringEnabled) of
+                                    case maybe_deliver_item(C#c{deliver = DeliverFun}, QEntry2, FilteringEnabled) of
                                         {skipped, C2} ->
-                                            maybe_pull(QTab, QSeq, C2, DeliverFun, FilteringEnabled, FilteredBuckets);
+                                            maybe_pull(QTab, QSeq, C2, CsNames, DeliverFun, FilteringEnabled, FilteredBuckets);
                                         {_WorkedOrNoFun, C2} ->
                                             C2
                                     end;
@@ -642,9 +644,9 @@ maybe_pull(QTab, QSeq, C = #c{cseq = CSeq, name = CName}, DeliverFun, FilteringE
                         _ ->
                             % if the item can't be delivered due to cascading rt,
                             % just keep trying.
-                            case maybe_deliver_item(C#c{deliver = DeliverFun}, QEntry, FilteringEnabled) of
+                            case maybe_deliver_item(C#c{deliver = DeliverFun}, QEntry2, FilteringEnabled) of
                                 {skipped, C2} ->
-                                    maybe_pull(QTab, QSeq, C2, DeliverFun, FilteringEnabled, FilteredBuckets);
+                                    maybe_pull(QTab, QSeq, C2, CsNames, DeliverFun, FilteringEnabled, FilteredBuckets);
                                 {_WorkedOrNoFun, C2} ->
                                     C2
                             end

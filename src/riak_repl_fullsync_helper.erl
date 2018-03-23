@@ -122,7 +122,7 @@ handle_call({make_keylist, Partition, Filename, FilterEnabled, FilterConfig}, Fr
                         false ->
                             %% use old accumulator without the total
                             riak_core_util:make_fold_req(fun ?MODULE:keylist_fold/3,
-                                                         {Self, 0, FilterEnabled, FilterConfig},
+                                                         {Self, 0},
                                                          false,
                                                          [{iterator_refresh,
                                                                  true}])
@@ -135,7 +135,7 @@ handle_call({make_keylist, Partition, Filename, FilterEnabled, FilterConfig}, Fr
                         {ok, VNodePid} ->
                             MonRef = erlang:monitor(process, VNodePid),
                             receive
-                                {FoldRef, {Self, _, _, _}} ->
+                                {FoldRef, {Self, _}} ->
                                     %% total is 0, sorry
                                     riak_core_gen_server:cast(Self,
                                                               {kl_finish, 0});
@@ -431,36 +431,22 @@ keylist_fold({B,Key}=K, V, {MPid, Count, Total, FilterEnabled, FilteredBucketsLi
             {MPid, Count, Total, FilterEnabled, FilteredBucketsList}
     end;
 %% legacy support for the 2-tuple accumulator in 1.2.0 and earlier
-keylist_fold({B,Key}=K, V, {MPid, Count, FilterEnabled, FilteredBucketsList}) ->
+keylist_fold({B,Key}=K, V, {MPid, Count}) ->
     try
-        case should_we_filter(FilterEnabled, B, FilteredBucketsList) of
-            true ->
-                % If we have to filter out this bucket then move to the next key
-                % We have to check the count here as we could be going through a filtered bucket at the time - we should
-                % still ack back every 100 items to ensure the fold is doing work
-                case Count of
-                    100 ->
-                        ok = riak_core_gen_server:call(MPid, keylist_ack, infinity),
-                        {MPid, 0, FilterEnabled, FilteredBucketsList};
-                    _ ->
-                        {MPid, Count+1, FilterEnabled, FilteredBucketsList}
-                end;
-            false ->
-                H = hash_object(B, Key, V),
-                Bin = term_to_binary({pack_key(K), H}),
-                %% write key/value hash to file
-                riak_core_gen_server:cast(MPid, {keylist, Bin}),
-                case Count of
-                    100 ->
-                        %% send keylist_ack to "self" every 100 key/value hashes
-                        ok = riak_core_gen_server:call(MPid, keylist_ack, infinity),
-                        {MPid, 0, FilterEnabled, FilteredBucketsList};
-                    _ ->
-                        {MPid, Count+1, FilterEnabled, FilteredBucketsList}
-                end
+        H = hash_object(B, Key, V),
+        Bin = term_to_binary({pack_key(K), H}),
+        %% write key/value hash to file
+        riak_core_gen_server:cast(MPid, {keylist, Bin}),
+        case Count of
+            100 ->
+                %% send keylist_ack to "self" every 100 key/value hashes
+                ok = riak_core_gen_server:call(MPid, keylist_ack, infinity),
+                {MPid, 0};
+            _ ->
+                {MPid, Count+1}
         end
     catch _:_ ->
-            {MPid, Count, FilterEnabled, FilteredBucketsList}
+            {MPid, Count}
     end.
 
 should_we_filter(Enabled, B, BucketsList) ->
