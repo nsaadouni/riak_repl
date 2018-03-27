@@ -279,6 +279,126 @@ connection_switching_in_rebalancing_test_() ->
 
                 clean(A,B, {true, ConnMgrPid})
               end
+            },
+
+            {"Test 7 ",
+              fun() ->
+
+                [{rtsource_conn_mgr, ConnMgrPid}] = ets:lookup(pid_table, rtsource_conn_mgr),
+
+                %% Table Setup
+                B = ets:new(before_, [named_table, public]),
+                A = ets:new(after_, [named_table, public]),
+
+
+                %% Alter Connections and Rebalance
+                change_variables(?SOURCE_8, ?SINK_3, ?ACTIVE_CONNS),
+                erlang:send(ConnMgrPid, rebalance_now),
+                timer:sleep(1000),
+
+                %% Testing the transitions of connections for our node
+                F = fun({X,_},{Y,_}) -> X =< Y end,
+                Before = lists:sort(F, ets:tab2list(B)),
+                After = lists:sort(F, ets:tab2list(A)),
+
+                %% length should be 0 (as we do not re-establish any connection)
+                ?assertEqual(0, length(Before)),
+                ?assertEqual(0, length(After)),
+                ?assertEqual([], Before),
+                ?assertEqual([], After),
+                clean(A,B, {true, ConnMgrPid})
+              end
+            },
+
+            {"Test 8 ",
+              fun() ->
+
+                [{rtsource_conn_mgr, ConnMgrPid}] = ets:lookup(pid_table, rtsource_conn_mgr),
+
+                %% Table Setup
+                B = ets:new(before_, [named_table, public]),
+                A = ets:new(after_, [named_table, public]),
+
+
+                %% Alter Connections and Rebalance
+                change_variables(?SOURCE_8, ?SINK_5, ?ACTIVE_CONNS),
+                erlang:send(ConnMgrPid, rebalance_now),
+                timer:sleep(1000),
+
+                %% Testing the transitions of connections for our node
+                F = fun({X,_},{Y,_}) -> X =< Y end,
+                Before = lists:sort(F, ets:tab2list(B)),
+                After = lists:sort(F, ets:tab2list(A)),
+
+                %% length should be 0 (as we do not re-establish any connection)
+                ?assertEqual(0, length(Before)),
+                ?assertEqual(0, length(After)),
+                ?assertEqual([], Before),
+                ?assertEqual([], After),
+                clean(A,B, {true, ConnMgrPid})
+              end
+            },
+
+            {"Test 9 ",
+              fun() ->
+
+                [{rtsource_conn_mgr, ConnMgrPid}] = ets:lookup(pid_table, rtsource_conn_mgr),
+
+                %% Table Setup
+                B = ets:new(before_, [named_table, public]),
+                A = ets:new(after_, [named_table, public]),
+
+
+                %% Alter Connections and Rebalance
+                change_variables(?SOURCE_8, ?SINK_8, ?ACTIVE_CONNS),
+                erlang:send(ConnMgrPid, rebalance_now),
+                timer:sleep(1000),
+
+                %% Testing the transitions of connections for our node
+                F = fun({X,_},{Y,_}) -> X =< Y end,
+                Before = lists:sort(F, ets:tab2list(B)),
+                After = lists:sort(F, ets:tab2list(A)),
+
+                %% length should be 0 (as we do not re-establish any connection)
+                ?assertEqual(0, length(Before)),
+                ?assertEqual(0, length(After)),
+                ?assertEqual([], Before),
+                ?assertEqual([], After),
+                clean(A,B, {true, ConnMgrPid})
+              end
+            },
+
+            {"Test 10 (edge case) ",
+              fun() ->
+
+                [{rtsource_conn_mgr, ConnMgrPid}] = ets:lookup(pid_table, rtsource_conn_mgr),
+
+                %% Table Setup
+                B = ets:new(before_, [named_table, public]),
+                A = ets:new(after_, [named_table, public]),
+
+
+                %% Alter Connections and Rebalance
+                change_variables(?SOURCE_5, ?SINK_3_EDGE_CASE, ?ACTIVE_CONNS),
+                erlang:send(ConnMgrPid, rebalance_now),
+                timer:sleep(1000),
+
+                %% Testing the transitions of connections for our node
+                F = fun({X,_},{Y,_}) -> X =< Y end,
+                Before = lists:sort(F, ets:tab2list(B)),
+                After = lists:sort(F, ets:tab2list(A)),
+
+                %% Length shoould be 1
+                ?assertEqual(1, length(Before)),
+                ?assertEqual(1, length(After)),
+
+                %% 1) Before -> 5001
+                ?assertEqual([5001], get_port_list(lists:nth(1,Before))),
+                %% 1) After -> 5001, 5004
+                ?assertEqual([5004], get_port_list(lists:nth(1,After))),
+
+                clean(A,B, {true, ConnMgrPid})
+              end
             }
 
           ]
