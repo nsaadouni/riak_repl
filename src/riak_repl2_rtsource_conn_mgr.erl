@@ -22,11 +22,12 @@
   stop/1,
   get_all_status/1,
   get_all_status/2,
-  get_source_and_sink_nodes/1
+  get_source_and_sink_nodes/1,
+  get_endpoints/1
 ]).
 
 -define(SERVER, ?MODULE).
--define(KILL_TIME, 10*1000).
+-define(KILL_TIME, 1*1000).
 
 -define(CLIENT_SPEC, {{realtime,[{3,0}, {2,0}, {1,5}]},
   {?TCP_OPTIONS, ?SERVER, self()}}).
@@ -77,6 +78,9 @@ get_all_status(Pid) ->
 get_all_status(Pid, Timeout) ->
   gen_server:call(Pid, all_status, Timeout).
 
+get_endpoints(Pid) ->
+  gen_server:call(Pid, get_endpoints).
+
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -124,7 +128,7 @@ handle_call({connected, Socket, Transport, IPPort, Proto, _Props, Primary}, _Fro
                        undefined ->
                         State;
                       RC ->
-                        E2 = remove_connections(RC, E),
+                        E2 = remove_connections([RC], E),
                         State#state{endpoints = E2, remove_endpoint = undefined}
                      end,
 
@@ -157,6 +161,9 @@ handle_call({connection_closed, Addr, Primary}, _From, State=#state{endpoints = 
 handle_call(stop, _From, State) ->
   lager:debug("stop rtsource_conn_mgr"),
   {stop, normal, ok, State};
+
+handle_call(get_endpoints, _From, State=#state{endpoints = E}) ->
+  {reply, E, State};
 
 handle_call(_Request, _From, State) ->
   {reply, ok, State}.
