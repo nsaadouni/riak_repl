@@ -388,7 +388,7 @@ connection_switching_in_rebalancing_test_() ->
                 Before = lists:sort(F, ets:tab2list(B)),
                 After = lists:sort(F, ets:tab2list(A)),
 
-                %% Length shoould be 1
+                %% Length should be 1
                 ?assertEqual(1, length(Before)),
                 ?assertEqual(1, length(After)),
 

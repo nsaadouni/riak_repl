@@ -275,33 +275,33 @@ waiting_for_cluster_members({all_cluster_members, NewMembers}, State) ->
     #state{address=Addr,
            name=Name,
            previous_name=PreviousName,
-           members=OldMembers,
+           members=_OldMembers,
            remote=Remote} = State,
 
     %% this is 1.1+ code. Members is list of {node,{IP,Port}}
 
-    Members =
-        lists:foldl(fun(Elm={_Node,{_Ip,Port}}, Acc) when is_integer(Port) ->
-                            [Elm|Acc];
-                       ({Node,_}, Acc) ->
-                            case lists:keyfind(Node, 1, OldMembers) of
-                                Elm={Node,{_IP,Port}} when is_integer(Port) ->
-                                    [Elm|Acc];
-                                _ ->
-                                    Acc
-                            end
-                    end,
-                    [],
-                    NewMembers ),
+%%    Members =
+%%        lists:foldl(fun(Elm={_Node,{_Ip,Port}}, Acc) when is_integer(Port) ->
+%%                            [Elm|Acc];
+%%                       ({Node,_}, Acc) ->
+%%                            case lists:keyfind(Node, 1, OldMembers) of
+%%                                Elm={Node,{_IP,Port}} when is_integer(Port) ->
+%%                                    [Elm|Acc];
+%%                                _ ->
+%%                                    Acc
+%%                            end
+%%                    end,
+%%                    [],
+%%                    NewMembers ),
 
     ClusterUpdatedMsg = {cluster_updated,
                          PreviousName,
                          Name,
-                         [Member || {_Node,Member} <- Members],
+                         [Member || {_Node,Member} <- NewMembers],
                          Addr,
                          Remote},
     gen_server:cast(?CLUSTER_MANAGER_SERVER, ClusterUpdatedMsg),
-    {next_state, connected, State#state{members=Members}};
+    {next_state, connected, State#state{members=NewMembers}};
 waiting_for_cluster_members(_, _State) ->
     {next_state, waiting_for_cluster_members, _State}.
 
