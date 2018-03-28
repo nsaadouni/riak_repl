@@ -54,7 +54,6 @@
 
 -define(SERVER, ?CLUSTER_MANAGER_SERVER).
 -define(MAX_CONS, 20).
--define(CLUSTER_POLLING_INTERVAL, 10 * 1000).
 -define(GC_INTERVAL, infinity).
 -define(PROXY_CALL_TIMEOUT, 30 * 1000).
 
@@ -73,7 +72,8 @@
                 all_member_fun = fun(_Addr) -> [] end,             % return members of local cluster
                 restore_targets_fun = fun() -> [] end,         % returns persisted cluster targets
                 save_members_fun = fun(_C,_M) -> ok end,       % persists remote cluster members
-                clusters = orddict:new() :: orddict:orddict()  % resolved clusters by name
+                clusters = orddict:new() :: orddict:orddict(),  % resolved clusters by name
+                polling_interval
                }).
 
 -export([start_link/0,
@@ -232,10 +232,12 @@ init(Defaults) ->
             ok
     end,
     %% schedule a timer to poll remote clusters occasionaly
-    erlang:send_after(?CLUSTER_POLLING_INTERVAL, self(), poll_clusters_timer),
+    ClusterPollingInterval = app_helper:get_env(riak_repl, realtime_sink_cluster_polling_interval, 10),
+    lager:debug("cluster polling interval: ~p", [ClusterPollingInterval*1000]),
+    erlang:send_after(ClusterPollingInterval*1000, self(), poll_clusters_timer),
     MeNode = node(),
     State = register_defaults(Defaults, #state{
-                is_leader = false}),
+                is_leader = false, polling_interval = ClusterPollingInterval*1000}),
 
     %% Schedule a delayed connection to know clusters
     schedule_cluster_connections(),
@@ -401,13 +403,13 @@ handle_cast(_Unhandled, _State) ->
     {error, unhandled}. %% this will crash the server
 
 %% it is time to poll all clusters and get updated member lists
-handle_info(poll_clusters_timer, State) when State#state.is_leader == true ->
+handle_info(poll_clusters_timer, State=#state{polling_interval = PI}) when State#state.is_leader == true ->
     Connections = riak_core_cluster_conn_sup:connections(),
     _ = [Pid ! {self(), poll_cluster} || {_Remote, Pid} <- Connections],
-    erlang:send_after(?CLUSTER_POLLING_INTERVAL, self(), poll_clusters_timer),
+    erlang:send_after(PI, self(), poll_clusters_timer),
     {noreply, State};
-handle_info(poll_clusters_timer, State) ->
-    erlang:send_after(?CLUSTER_POLLING_INTERVAL, self(), poll_clusters_timer),
+handle_info(poll_clusters_timer, State=#state{polling_interval = PI}) ->
+    erlang:send_after(PI, self(), poll_clusters_timer),
     {noreply, State};
 
 %% Remove old clusters that no longer have any IP addresses associated with them.

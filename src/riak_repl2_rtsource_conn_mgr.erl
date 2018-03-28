@@ -27,7 +27,6 @@
 ]).
 
 -define(SERVER, ?MODULE).
--define(KILL_TIME, 1*1000).
 
 -define(CLIENT_SPEC, {{realtime,[{3,0}, {2,0}, {1,5}]},
   {?TCP_OPTIONS, ?SERVER, self()}}).
@@ -42,7 +41,9 @@
   connection_ref, % reference handed out by connection manager
   rtsource_conn_sup, % The module name of the supervisor to start the child when we get a connection passed to us
   rb_timeout_tref, % Rebalance timeout timer reference
-  rebalance_delay,
+  rebalance_delay_fun,
+  max_delay,
+  kill_time,
   source_nodes,
   sink_nodes,
   remove_endpoint,
@@ -96,16 +97,20 @@ init([Remote]) ->
       S = riak_repl2_rtsource_conn_2_sup:make_module_name(Remote),
       E = orddict:new(),
 
-      MaxDelaySecs = app_helper:get_env(riak_repl, realtime_connection_rebalance_max_delay_secs, 60),
-      M = round(MaxDelaySecs * crypto:rand_uniform(0, 1000)),
-
+      MaxDelaySecs = app_helper:get_env(riak_repl, realtime_connection_rebalance_max_delay_secs, 120),
+      lager:debug("max delay for connection rebalancing: ~p", [MaxDelaySecs]),
+      M = fun(X) -> round(X * crypto:rand_uniform(0, 1000)) end,
       {SourceNodes, SinkNodes} = get_source_and_sink_nodes(Remote),
+
+      KillTimeSecs = app_helper:get_env(riak_repl, realtime_connection_removal_delay, 60),
+      KillTime = KillTimeSecs * 1000,
+      lager:debug("realtime connection removal delay: ~p", [KillTime]),
 
       lager:debug("conn_mgr node source: ~p", [SourceNodes]),
       lager:debug("conn_mgr node sink: ~p", [SinkNodes]),
 
-      {ok, #state{remote = Remote, connection_ref = Ref, rtsource_conn_sup = S, endpoints = E, rebalance_delay = M,
-        source_nodes = SourceNodes, sink_nodes = SinkNodes}};
+      {ok, #state{remote = Remote, connection_ref = Ref, rtsource_conn_sup = S, endpoints = E, rebalance_delay_fun = M,
+        max_delay=MaxDelaySecs, source_nodes = SourceNodes, sink_nodes = SinkNodes, kill_time = KillTime}};
     {error, Reason}->
       lager:warning("Error connecting to remote"),
       {stop, Reason}
@@ -113,7 +118,7 @@ init([Remote]) ->
 
 %%%=====================================================================================================================
 handle_call({connected, Socket, Transport, IPPort, Proto, _Props, Primary}, _From,
-    State = #state{rtsource_conn_sup = S, remote = Remote, endpoints = E}) ->
+    State = #state{rtsource_conn_sup = S, remote = Remote, endpoints = E, kill_time = K}) ->
 
   lager:debug("rtsource_conn_mgr connection recieved ~p", [{IPPort, Primary}]),
 
@@ -128,7 +133,7 @@ handle_call({connected, Socket, Transport, IPPort, Proto, _Props, Primary}, _Fro
                        undefined ->
                         State;
                       RC ->
-                        E2 = remove_connections([RC], E),
+                        E2 = remove_connections([RC], E, K),
                         State#state{endpoints = E2, remove_endpoint = undefined}
                      end,
 
@@ -259,10 +264,11 @@ maybe_rebalance(State, now) ->
           rebalance_connect(NewState2#state{sink_nodes = NewSink, source_nodes = NewSource}, ConnectToNodes)
       end
   end;
-maybe_rebalance(State, delayed) ->
+maybe_rebalance(State=#state{rebalance_delay_fun = Fun, max_delay = M}, delayed) ->
   case State#state.rb_timeout_tref of
     undefined ->
-      RbTimeoutTref = erlang:send_after(State#state.rebalance_delay, self(), rebalance_now),
+      RbTimeoutTref = erlang:send_after(Fun(M), self(), rebalance_now),
+      lager:debug("qwerty: ~p", [Fun(M)]),
       State#state{rb_timeout_tref = RbTimeoutTref};
     _ ->
       %% Already sent a "rebalance_now"
@@ -311,25 +317,25 @@ check_remove_endpoint(State=#state{remove_endpoint = RE}, ConnectToNodes) ->
   end.
 
 
-check_and_drop_connections(State=#state{endpoints = E}, DropNodes=[X|Xs], ConnectedSinkNodes) ->
+check_and_drop_connections(State=#state{endpoints = E, kill_time = K}, DropNodes=[X|Xs], ConnectedSinkNodes) ->
   case ConnectedSinkNodes -- DropNodes of
     [] ->
-      NewEndpoints = remove_connections(Xs, E),
+      NewEndpoints = remove_connections(Xs, E, K),
       {true, State#state{endpoints = NewEndpoints, remove_endpoint = X}};
     _ ->
-      NewEndpoints = remove_connections(DropNodes, E),
+      NewEndpoints = remove_connections(DropNodes, E, K),
       {false, State#state{endpoints = NewEndpoints, remove_endpoint = undefined}}
   end.
 
-remove_connections([], E) ->
+remove_connections([], E, _Killtime) ->
   E;
-remove_connections([Key | Rest], E) ->
+remove_connections([Key | Rest], E, KillTime) ->
   RtSourcePid = orddict:fetch(Key, E),
   HelperPid = riak_repl2_rtsource_conn:get_helper_pid(RtSourcePid),
   riak_repl2_rtsource_helper:stop_pulling(HelperPid),
   lager:debug("rtsource_conn called to gracefully kill itself ~p", [Key]),
-  erlang:send_after(?KILL_TIME, self(), {kill_rtsource_conn, RtSourcePid}),
-  remove_connections(Rest, orddict:erase(Key, E)).
+  erlang:send_after(KillTime, self(), {kill_rtsource_conn, RtSourcePid}),
+  remove_connections(Rest, orddict:erase(Key, E), KillTime).
 
 get_source_and_sink_nodes(Remote) ->
   SourceNodes = riak_repl2_rtsource_conn_data_mgr:read(active_nodes),

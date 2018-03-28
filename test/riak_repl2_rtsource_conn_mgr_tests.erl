@@ -48,6 +48,9 @@ connection_switching_in_rebalancing_test_() ->
           % stop_pulling
           riak_repl2_rtsource_helper(),
 
+          application:set_env(riak_repl, realtime_connection_rebalance_max_delay_secs, 1),
+          application:set_env(riak_repl, realtime_connection_removal_delay, 1),
+
           Apps
         end,
 
@@ -517,11 +520,6 @@ gen_tcp_controlling_process() ->
 % ----------------------------------------- %
 %         Dynamic Meck Expects              %
 % ----------------------------------------- %
-
-%%meck:expect(riak_core_connection_mgr, connect,
-%%fun({rt_repl, _Remote}, ClientSpec, {use_only, Addrs}) ->
-%%end),
-
 dynamic_connection_mgr_connect(SinkNodes) ->
   meck:expect(riak_core_connection_mgr, connect,
     fun({rt_repl, _Remote}, ClientSpec, Type) ->

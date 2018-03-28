@@ -23,14 +23,14 @@
 
 -define(SERVER, ?MODULE).
 -define(PROXY_CALL_TIMEOUT, 30 * 1000).
--define(NODE_WATCHER_POLLING_INTERVAL, 10*1000).
 
 -record(state, {
 
   leader_node,
   is_leader,
   connections,
-  active_nodes
+  active_nodes,
+  polling_interval
 
 }).
 
@@ -79,8 +79,11 @@ init([]) ->
   AN = [],
   lager:debug("conn_data_mgr started"),
   riak_core_ring_manager:ring_trans(fun riak_repl_ring:overwrite_realtime_connection_data/2, C),
-  erlang:send_after(?NODE_WATCHER_POLLING_INTERVAL, self(), poll_node_watcher),
-  {ok, #state{is_leader = IsLeader, leader_node = Leader, connections = C, active_nodes = AN}}.
+  PollingIntervalSecs = app_helper:get_env(riak_repl, realtime_node_watcher_polling_interval, 10),
+  PollingInterval = PollingIntervalSecs * 1000,
+  lager:debug("node watcher polling interval: ~p", [PollingInterval]),
+  erlang:send_after(PollingInterval, self(), poll_node_watcher),
+  {ok, #state{is_leader = IsLeader, leader_node = Leader, connections = C, active_nodes = AN, polling_interval = PollingInterval}}.
 
 
 %% -------------------------------------------------- Read ---------------------------------------------------------- %%
@@ -225,7 +228,7 @@ handle_info(restore_leader_data, State) ->
   ActiveNodes = riak_repl_ring:get_active_nodes(),
   {noreply, State#state{connections = RemoteRealtimeConnections, active_nodes = ActiveNodes}};
 
-handle_info(poll_node_watcher, State=#state{active_nodes = OldActiveNodes, connections = C}) when State#state.is_leader == true ->
+handle_info(poll_node_watcher, State=#state{active_nodes = OldActiveNodes, connections = C, polling_interval = PI}) when State#state.is_leader == true ->
   NewActiveNodes = riak_core_node_watcher:nodes(riak_kv),
   DownNodes = OldActiveNodes -- NewActiveNodes,
   UpNodes = NewActiveNodes -- OldActiveNodes,
@@ -243,10 +246,10 @@ handle_info(poll_node_watcher, State=#state{active_nodes = OldActiveNodes, conne
                     riak_core_ring_manager:ring_trans(fun riak_repl_ring:overwrite_active_nodes_and_realtime_connection_data/2, {NewC, NewActiveNodes}),
                     NewC
                 end,
-  erlang:send_after(?NODE_WATCHER_POLLING_INTERVAL, self(), poll_node_watcher),
+  erlang:send_after(PI, self(), poll_node_watcher),
   {noreply, State#state{active_nodes = NewActiveNodes, connections = Connections}};
-handle_info(poll_node_watcher, State) ->
-  erlang:send_after(?NODE_WATCHER_POLLING_INTERVAL, self(), poll_node_watcher),
+handle_info(poll_node_watcher, State=#state{polling_interval = PI}) ->
+  erlang:send_after(PI, self(), poll_node_watcher),
   {noreply, State};
 
 handle_info(_Info, State) ->

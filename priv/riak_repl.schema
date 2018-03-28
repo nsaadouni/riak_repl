@@ -143,3 +143,31 @@
     {commented, "1m"}
 ]}.
 
+
+%% @doc Each time the repl ring is updated, the rtsource_conn_mgr a delayed rebalance is triggered
+%% This dictates the maximum amount of time rtsource_conn_mgr is delayed before the reblance occurs
+{mapping, "mdc.realtime_connection_rebalance_max_delay_secs", "riak_repl.realtime_connection_rebalance_max_delay_secs", [
+    {datatype, {duration, s}},
+    {default, "60s"}
+]}.
+
+
+%% @doc when a connection for replication from source to sink clusters is removed as part of a rebalance
+%% we stop pulling from the queue and wait for a period of time to allow acknowledgements to make it back
+%% to the source before we remove the connection and the rtsource_conn gen_server
+{mapping, "mdc.realtime_connection_removal_delay", "riak_repl.realtime_connection_removal_delay", [
+    {datatype, {duration, s}},
+    {default, "60s"}
+]}.
+
+%% @doc Polling interval to check the nodes that are still up source side for realtime replication
+{mapping, "mdc.realtime_node_watcher_polling_interval", "riak_repl.realtime_node_watcher_polling_interval", [
+    {datatype, {duration, s}},
+    {default, "10s"}
+]}.
+
+%% @doc cluster polling interval to retrieve sink ip addresses for nodes that are up
+{mapping, "mdc.realtime_sink_cluster_polling_interval", "riak_repl.realtime_sink_cluster_polling_interval", [
+    {datatype, {duration, s}},
+    {default, "10s"}
+]}.
