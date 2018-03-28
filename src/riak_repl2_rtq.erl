@@ -628,7 +628,7 @@ maybe_pull(QTab, QSeq, C = #c{cseq = CSeq, name = CName}, CsNames, DeliverFun, F
 
                     case BucketConfig of
                         {_, Config} when Config /= [] ->
-                            case allowed_to_route(CName, BucketConfig) of
+                            case allowed_to_route(CName, Config) of
                                 true ->
                                     % if the item can't be delivered due to cascading rt,
                                     % just keep trying.
