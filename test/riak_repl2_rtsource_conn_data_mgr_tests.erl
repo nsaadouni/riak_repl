@@ -7,39 +7,32 @@
 -define(SOURCE_5, [node_e, node_d, node_c, node_b, node()]).
 -define(SOURCE_8, [node_h, node_g, node_f, node_e, node_d, node_c, node_b, node()]).
 
--define(ACTIVE_CONNS, dict:from_list
-([
-  {node(),[{{"127.0.0.1",5001},true}]},
-  {node_b,[{{"127.0.0.1",5002},true}]},
-  {node_c,[{{"127.0.0.1",5003},true}]},
-  {node_d,[{{"127.0.0.1",5004},true}]},
-  {node_e,[{{"127.0.0.1",5005},true}]}
-])).
-
-connection_switching_in_rebalancing_test_() ->
+data_manager_test_() ->
   {spawn,
     [
       {setup,
         fun() ->
           Apps = riak_repl_test_util:maybe_start_lager(),
-          _MockRing = ets:new(mock_ring, [named_table, public]),
+          _MockRing = ets:new(mock_ring_test, [named_table, public]),
           %% ring_trans
           riak_core_ring_manager_start(),
           %% nodes
           riak_core_node_watcher_start(),
           %% get_active_nodes, get_realtime_connection_data
           riak_repl_ring_start(),
+          application:set_env(riak_repl, realtime_node_watcher_polling_interval, 1),
           {ok, _Pid} = riak_repl2_rtsource_conn_data_mgr:start_link(),
           riak_repl2_rtsource_conn_data_mgr:set_leader(node(), pid),
-
-          % set environemntal variable (node watcher polling time)
-
           Apps
         end,
         fun(StartedApps) ->
-          catch(meck:unload(riak_core_ring_manager)),
+          process_flag(trap_exit, true),
+          catch(exit(whereis(riak_repl2_rtsource_conn_data_mgr), kill)),
           catch(meck:unload(riak_core_node_watcher)),
+          catch(meck:unload(riak_core_ring_manager)),
           catch(meck:unload(riak_repl_ring)),
+          ets:delete(mock_ring_test),
+          timer:sleep(200),
           process_flag(trap_exit, false),
           riak_repl_test_util:stop_apps(StartedApps),
           ok
@@ -47,13 +40,203 @@ connection_switching_in_rebalancing_test_() ->
 
         fun(_) ->
           [
-%%            {"initialization",
-%%              fun() ->
-%%                timer:sleep(1500),
-%%                ct:pal("mock ring: ~p", [ets:tab2list(mock_ring)]),
-%%                ct:pal("active nodes ~p", [riak_repl2_rtsource_conn_data_mgr:read(active_nodes)])
-%%              end
-%%            }
+            {"Initialization",
+              fun() ->
+                timer:sleep(1500),
+
+                [{realtime_connections, RTC}] = ets:lookup(mock_ring_test, realtime_connections),
+                [{active_nodes, AN}] = ets:lookup(mock_ring_test, active_nodes),
+
+                ?assertMatch(RTC, dict:new()),
+                ?assertMatch(AN, ?SOURCE_5)
+              end
+            },
+
+            {"Test 1 - Write 1",
+              fun() ->
+                riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, "remote", node_a, {ip1, port1}, true),
+                riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, "remote", node_b, {ip2, port2}, true),
+                riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, "remote", node_c, {ip3, port3}, true),
+                riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, "remote", node_d, {ip4, port4}, true),
+                riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, "remote", node_e, {ip5, port5}, true),
+                riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, "remote", node_f, {ip6, port6}, true),
+                timer:sleep(100),
+
+                NodeDict = dict:from_list([
+                  {node_a, [{{ip1,port1},true}]},
+                  {node_b, [{{ip2,port2},true}]},
+                  {node_c, [{{ip3,port3},true}]},
+                  {node_d, [{{ip4,port4},true}]},
+                  {node_e, [{{ip5,port5},true}]},
+                  {node_f, [{{ip6,port6},true}]}
+                ]),
+                ExpectedRealtime = dict:from_list([
+                  {"remote", NodeDict}
+                ]),
+
+                [{realtime_connections, RTC}] = ets:lookup(mock_ring_test, realtime_connections),
+                ?assertMatch(ExpectedRealtime, RTC)
+              end
+            },
+
+            {"Test 2 - Write 2",
+              fun() ->
+                riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, "remote", node_a, [{{ip1,port2},false}, {{ip10, port10},true}]),
+                timer:sleep(100),
+                NodeDict = dict:from_list([
+                  {node_a, [{{ip1,port2},false}, {{ip10, port10},true}]},
+                  {node_b, [{{ip2,port2},true}]},
+                  {node_c, [{{ip3,port3},true}]},
+                  {node_d, [{{ip4,port4},true}]},
+                  {node_e, [{{ip5,port5},true}]},
+                  {node_f, [{{ip6,port6},true}]}
+                ]),
+                ExpectedRealtime = dict:from_list([
+                  {"remote", NodeDict}
+                ]),
+                [{realtime_connections, RTC}] = ets:lookup(mock_ring_test, realtime_connections),
+                ?assertMatch(ExpectedRealtime, RTC)
+              end
+            },
+
+            {"Test 3 - Write 3",
+              fun() ->
+                riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, "remote2", node_2, [{{ip1, port1},true}]),
+                timer:sleep(200),
+                NodeDict = dict:from_list([
+                  {node_a, [{{ip1,port2},false}, {{ip10, port10},true}]},
+                  {node_b, [{{ip2,port2},true}]},
+                  {node_c, [{{ip3,port3},true}]},
+                  {node_d, [{{ip4,port4},true}]},
+                  {node_e, [{{ip5,port5},true}]},
+                  {node_f, [{{ip6,port6},true}]}
+                ]),
+                NodeDict2 = dict:from_list([
+                  {node_2, [{{ip1, port1}, true}]}
+                ]),
+                ExpectedRealtime = dict:from_list([
+                  {"remote", NodeDict},
+                  {"remote2", NodeDict2}
+                ]),
+                [{realtime_connections, RTC}] = ets:lookup(mock_ring_test, realtime_connections),
+                ?assertMatch(ExpectedRealtime, RTC)
+              end
+            },
+
+            {"Test 4 - Delete 1",
+              fun() ->
+                riak_repl2_rtsource_conn_data_mgr:delete(realtime_connections, "remote", node_a, {ip1, port2}, false),
+                timer:sleep(100),
+                NodeDict = dict:from_list([
+                  {node_a, [{{ip10, port10},true}]},
+                  {node_b, [{{ip2,port2},true}]},
+                  {node_c, [{{ip3,port3},true}]},
+                  {node_d, [{{ip4,port4},true}]},
+                  {node_e, [{{ip5,port5},true}]},
+                  {node_f, [{{ip6,port6},true}]}
+                ]),
+                NodeDict2 = dict:from_list([
+                  {node_2, [{{ip1, port1}, true}]}
+                ]),
+                ExpectedRealtime = dict:from_list([
+                  {"remote", NodeDict},
+                  {"remote2", NodeDict2}
+                ]),
+                [{realtime_connections, RTC}] = ets:lookup(mock_ring_test, realtime_connections),
+                ?assertMatch(ExpectedRealtime, RTC)
+              end
+            },
+
+            {"Test 5 - Delete 2",
+              fun() ->
+                riak_repl2_rtsource_conn_data_mgr:delete(realtime_connections, "remote", node_e),
+                timer:sleep(100),
+                NodeDict = dict:from_list([
+                  {node_a, [{{ip10, port10},true}]},
+                  {node_b, [{{ip2,port2},true}]},
+                  {node_c, [{{ip3,port3},true}]},
+                  {node_d, [{{ip4,port4},true}]},
+                  {node_f, [{{ip6,port6},true}]}
+                ]),
+                NodeDict2 = dict:from_list([
+                  {node_2, [{{ip1, port1}, true}]}
+                ]),
+                ExpectedRealtime = dict:from_list([
+                  {"remote", NodeDict},
+                  {"remote2", NodeDict2}
+                ]),
+                [{realtime_connections, RTC}] = ets:lookup(mock_ring_test, realtime_connections),
+                ?assertMatch(ExpectedRealtime, RTC)
+              end
+            },
+
+            {"Test 6 - Read 1",
+              fun() ->
+                Remote = riak_repl2_rtsource_conn_data_mgr:read(realtime_connections, "remote"),
+                Remote2 = riak_repl2_rtsource_conn_data_mgr:read(realtime_connections, "remote2"),
+                NodeDict = dict:from_list([
+                  {node_a, [{{ip10, port10},true}]},
+                  {node_b, [{{ip2,port2},true}]},
+                  {node_c, [{{ip3,port3},true}]},
+                  {node_d, [{{ip4,port4},true}]},
+                  {node_f, [{{ip6,port6},true}]}
+                ]),
+                NodeDict2 = dict:from_list([
+                  {node_2, [{{ip1, port1}, true}]}
+                ]),
+                ?assertMatch(Remote, NodeDict),
+                ?assertMatch(Remote2, NodeDict2)
+
+              end
+            },
+
+            {"Test 7 - Delete 3",
+              fun() ->
+                riak_repl2_rtsource_conn_data_mgr:delete(realtime_connections, "remote2"),
+                timer:sleep(100),
+                NodeDict = dict:from_list([
+                  {node_a, [{{ip10, port10},true}]},
+                  {node_b, [{{ip2,port2},true}]},
+                  {node_c, [{{ip3,port3},true}]},
+                  {node_d, [{{ip4,port4},true}]},
+                  {node_f, [{{ip6,port6},true}]}
+                ]),
+                ExpectedRealtime = dict:from_list([
+                  {"remote", NodeDict}
+                ]),
+                [{realtime_connections, RTC}] = ets:lookup(mock_ring_test, realtime_connections),
+                ?assertMatch(ExpectedRealtime, RTC)
+              end
+            },
+
+            {"Test 8 - Read 2",
+              fun() ->
+                NodeA = riak_repl2_rtsource_conn_data_mgr:read(realtime_connections, "remote", node_a),
+                ?assertMatch(NodeA, [{{ip10, port10},true}])
+              end
+            },
+
+            {"Test 9 - Read 1 (Polling)",
+              fun() ->
+                dynamic_node_watcher(?SOURCE_3),
+                timer:sleep(1200),
+                ActiveNodes = riak_repl2_rtsource_conn_data_mgr:read(active_nodes),
+                [{active_nodes, AN}] = ets:lookup(mock_ring_test, active_nodes),
+                ?assertMatch(ActiveNodes, ?SOURCE_3),
+                ?assertMatch(AN, ?SOURCE_3)
+              end
+            },
+
+            {"Test 10 - Read 2 (Polling)",
+              fun() ->
+                dynamic_node_watcher(?SOURCE_8),
+                timer:sleep(1200),
+                ActiveNodes = riak_repl2_rtsource_conn_data_mgr:read(active_nodes),
+                [{active_nodes, AN}] = ets:lookup(mock_ring_test, active_nodes),
+                ?assertMatch(ActiveNodes, ?SOURCE_8),
+                ?assertMatch(AN, ?SOURCE_8)
+              end
+            }
 
 
 
@@ -67,10 +250,7 @@ connection_switching_in_rebalancing_test_() ->
 %%------------------------
 %% Start up functions
 %%------------------------
-%% list all the possibilities here and then push them to an ets table!
-%% ets table = mock_ring
 riak_core_ring_manager_start() ->
-
   Fun1 = fun riak_repl_ring:overwrite_realtime_connection_data/2,
   Fun2 = fun riak_repl_ring:overwrite_active_nodes/2,
   Fun3 = fun riak_repl_ring:overwrite_active_nodes_and_realtime_connection_data/2,
@@ -80,14 +260,14 @@ riak_core_ring_manager_start() ->
     fun(X,Y) ->
       case {X, Y} of
         {Fun1, NewConnections} ->
-          ets:insert(mock_ring, {realtime_connections, NewConnections}),
+          ets:insert(mock_ring_test, {realtime_connections, NewConnections}),
           ok;
         {Fun2, NewActiveNodes} ->
-          ets:insert(mock_ring, {active_nodes,NewActiveNodes}),
+          ets:insert(mock_ring_test, {active_nodes,NewActiveNodes}),
           ok;
         {Fun3, {NewConnections, NewActiveNodes}} ->
-          ets:insert(mock_ring, {realtime_connections, NewConnections}),
-          ets:insert(mock_ring, {active_nodes,NewActiveNodes}),
+          ets:insert(mock_ring_test, {realtime_connections, NewConnections}),
+          ets:insert(mock_ring_test, {active_nodes,NewActiveNodes}),
           ok
       end
     end
@@ -103,13 +283,13 @@ riak_repl_ring_start() ->
   meck:new(riak_repl_ring, [passthrough]),
   meck:expect(riak_repl_ring, get_active_nodes,
     fun() ->
-      {active_nodes, ActiveNodes} = ets:lookup(mock_ring, active_nodes),
+      [{active_nodes, ActiveNodes}] = ets:lookup(mock_ring_test, active_nodes),
       ActiveNodes
     end
   ),
   meck:expect(riak_repl_ring, get_realtime_connection_data,
     fun() ->
-      {realtime_connections, RealtimeConnections} = ets:lookup(mock_ring, realtime_connections),
+      [{realtime_connections, RealtimeConnections}] = ets:lookup(mock_ring_test, realtime_connections),
       RealtimeConnections
     end
   ).

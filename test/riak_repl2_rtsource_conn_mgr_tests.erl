@@ -55,6 +55,8 @@ connection_switching_in_rebalancing_test_() ->
         end,
 
         fun(StartedApps) ->
+          process_flag(trap_exit, true),
+          catch(exit(whereis(riak_repl2_rtsource_remote_conn_sup_ClusterName), kill)),
           catch(meck:unload(riak_core_connection)),
           catch(meck:unload(riak_core_connection_mgr)),
           catch(meck:unload(riak_repl2_rtq)),
