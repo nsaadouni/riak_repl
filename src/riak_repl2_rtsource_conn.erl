@@ -266,7 +266,7 @@ handle_info({Closed, _S},
     %% go to sleep for 1s so a sink that opens the connection ok but then
     %% dies will not make the server restart too fst.
 
-%%  remove this connection from the manager
+    %% remove this connection from the manager
     riak_repl2_rtsource_conn_mgr:connection_closed(State#state.conn_mgr_pid, A, P),
     timer:sleep(1000),
     {stop, normal, State};
@@ -283,7 +283,9 @@ handle_info(send_heartbeat, State) ->
 handle_info({heartbeat_timeout, HBSent}, State = #state{hb_sent_q = HBSentQ,
                                                         hb_timeout_tref = HBTRef,
                                                         hb_timeout = HBTimeout,
-                                                        remote = Remote}) ->
+                                                        remote = Remote,
+                                                        address = A,
+                                                        primary = P}) ->
     TimeSinceTimeout = timer:now_diff(now(), HBSent) div 1000,
 
     %% hb_timeout_tref is the authority of whether we should
@@ -299,6 +301,7 @@ handle_info({heartbeat_timeout, HBSent}, State = #state{hb_sent_q = HBSentQ,
                           "after ~p seconds\n",
                           [peername(State), Remote, HBTimeout]),
             lager:debug("hb_sent_q_len after heartbeat_timeout: ~p", [queue:len(HBSentQ)]),
+            riak_repl2_rtsource_conn_mgr:connection_closed(State#state.conn_mgr_pid, A, P),
             {stop, normal, State}
     end;
 
@@ -306,8 +309,8 @@ handle_info(Msg, State) ->
     lager:warning("Unhandled info:  ~p", [Msg]),
     {noreply, State}.
 
-terminate(_Reason, _State=#state{helper_pid=HelperPid}) ->
-  lager:debug("rtsource_chain_kill killling the helper as well ~p", [_Reason]),
+terminate(Reason, _State=#state{helper_pid=HelperPid}) ->
+  lager:info("rtsource conn terminated due to ~p", [Reason]),
   catch riak_repl2_rtsource_helper:stop(HelperPid),
   ok.
 

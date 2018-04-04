@@ -164,7 +164,6 @@ handle_call({connection_closed, Addr, Primary}, _From, State=#state{endpoints = 
   {reply, ok, State#state{endpoints = NewEndpoints}};
 
 handle_call(stop, _From, State) ->
-  lager:debug("stop rtsource_conn_mgr"),
   {stop, normal, ok, State};
 
 handle_call(get_endpoints, _From, State=#state{endpoints = E}) ->
@@ -180,12 +179,6 @@ handle_cast({connect_failed, _HelperPid, Reason}, State = #state{remote = Remote
   lager:warning("Realtime replication connection to site ~p failed - ~p\n", [Remote, Reason]),
   {stop, normal, State};
 
-handle_cast({kill_rtsource_conn, Pid}, State) ->
-  lager:debug("rtsource_chain_kill rtsource_conn killed"),
-  catch riak_repl2_rtsource_conn:stop(Pid),
-  {noreply, State};
-
-
 handle_cast(rebalance_delayed, State) ->
   {noreply, maybe_rebalance(State, delayed)};
 
@@ -198,7 +191,7 @@ handle_info(rebalance_now, State) ->
   {noreply, maybe_rebalance(State#state{rb_timeout_tref = undefined}, now)};
 
 handle_info({kill_rtsource_conn, RtSourceConnPid}, State) ->
-  riak_repl2_rtsource_conn:stop(RtSourceConnPid),
+  catch riak_repl2_rtsource_conn:stop(RtSourceConnPid),
   {noreply, State};
 
 
@@ -208,7 +201,7 @@ handle_info(_Info, State) ->
 %%%=====================================================================================================================
 
 terminate(_Reason, _State=#state{remote = Remote, endpoints = E}) ->
-  lager:debug("rtrsource_conn_mgr terminating"),
+  lager:info("rtrsource conn mgr terminating"),
   riak_core_connection_mgr:disconnect({rt_repl, Remote}),
   [catch riak_repl2_rtsource_conn:stop(Pid) || {_,{Pid,_}} <- E],
   ok.
@@ -234,26 +227,26 @@ maybe_rebalance(State, now) ->
   {NewSource, NewSink} = get_source_and_sink_nodes(State#state.remote),
   case should_rebalance(State, NewSource, NewSink) of
     false ->
-      lager:debug("rebalancing triggered but there is no change in source or sink node status"),
+      lager:info("rebalancing triggered but there is no change in source or sink node status"),
       State;
 
     {true, {equal, _DropNodes, _ConnectToNodes, _Primary, _Secondary, _ConnectedSinkNodes}} ->
-      lager:debug("rebalancing triggered but avoided via active connection matching"),
+      lager:info("rebalancing triggered but avoided via active connection matching"),
       State;
 
     {true, {nodes_up, _DropNodes, ConnectToNodes, _Primary, _Secondary, _ConnectedSinkNodes}} ->
-      lager:debug("rebalancing triggered and new connections are required"),
+      lager:info("rebalancing triggered and new connections are required"),
       NewState1 = check_remove_endpoint(State, ConnectToNodes),
       rebalance_connect(NewState1#state{sink_nodes = NewSink, source_nodes = NewSource}, ConnectToNodes);
 
     {true, {nodes_down, DropNodes, _ConnectToNodes, _Primary, _Secondary, ConnectedSinkNodes}} ->
-      lager:debug("rebalancing triggered and active connections required to be dropped"),
+      lager:info("rebalancing triggered and active connections required to be dropped"),
       {_RemoveAllConnections, NewState1} = check_and_drop_connections(State, DropNodes, ConnectedSinkNodes),
       riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, NewState1#state.remote, node(), orddict:fetch_keys(NewState1#state.endpoints)),
       NewState1#state{sink_nodes = NewSink, source_nodes = NewSource};
 
     {true, {nodes_up_and_down, DropNodes, ConnectToNodes, Primary, Secondary, ConnectedSinkNodes}} ->
-      lager:debug("rebalancing triggered and some active connections required to be dropped, and also new connections to be made"),
+      lager:info("rebalancing triggered and some active connections required to be dropped, and also new connections to be made"),
       {RemoveAllConnections, NewState1} = check_and_drop_connections(State, DropNodes, ConnectedSinkNodes),
       NewState2 = check_remove_endpoint(NewState1, ConnectToNodes),
       riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, NewState2#state.remote, node(), orddict:fetch_keys(NewState2#state.endpoints)),
@@ -268,7 +261,6 @@ maybe_rebalance(State=#state{rebalance_delay_fun = Fun, max_delay = M}, delayed)
   case State#state.rb_timeout_tref of
     undefined ->
       RbTimeoutTref = erlang:send_after(Fun(M), self(), rebalance_now),
-      lager:debug("qwerty: ~p", [Fun(M)]),
       State#state{rb_timeout_tref = RbTimeoutTref};
     _ ->
       %% Already sent a "rebalance_now"
