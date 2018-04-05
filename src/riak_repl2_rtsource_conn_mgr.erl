@@ -161,7 +161,14 @@ handle_call(all_status, _From, State=#state{endpoints = E}) ->
 handle_call({connection_closed, Addr, Primary}, _From, State=#state{endpoints = E, remote = R}) ->
   NewEndpoints = orddict:erase({Addr,Primary}, E),
   riak_repl2_rtsource_conn_data_mgr:delete(realtime_connections, R, node(), Addr, Primary),
-  {reply, ok, State#state{endpoints = NewEndpoints}};
+  NewState = case NewEndpoints of
+    [] ->
+      RbTimeoutTref = erlang:send_after(0, self(), rebalance_now),
+      State#state{rb_timeout_tref = RbTimeoutTref};
+    _ ->
+      State
+  end,
+  {reply, ok, NewState#state{endpoints = NewEndpoints}};
 
 handle_call(stop, _From, State) ->
   {stop, normal, ok, State};
@@ -227,7 +234,11 @@ maybe_rebalance(State, now) ->
   {NewSource, NewSink} = get_source_and_sink_nodes(State#state.remote),
   case should_rebalance(State, NewSource, NewSink) of
     false ->
-      lager:info("rebalancing triggered but there is no change in source or sink node status"),
+      lager:info("rebalancing triggered but there is no change in source/sink node status and primary active connections"),
+      State;
+
+    rebalance_needed_empty_list_returned ->
+      lager:warning("rebalancing triggered, sink/source node status CHANGED, but get_ip_addrs_of_cluster returned []"),
       State;
 
     {true, {equal, _DropNodes, _ConnectToNodes, _Primary, _Secondary, _ConnectedSinkNodes}} ->
@@ -268,37 +279,62 @@ maybe_rebalance(State=#state{rebalance_delay_fun = Fun, max_delay = M}, delayed)
   end.
 
 
-should_rebalance(#state{endpoints = Endpoints, remote=Remote, sink_nodes = OldSink, source_nodes = OldSource}, NewSource, NewSink) ->
-
+should_rebalance(State=#state{sink_nodes = OldSink, source_nodes = OldSource}, NewSource, NewSink) ->
   {SourceComparison, _SourceNodesDown, _SourceNodesUp} = compare_nodes(OldSource, NewSource),
   {SinkComparison, _SinkNodesDown, _SinkNodesUp} = compare_nodes(OldSink, NewSink),
-
-  lager:debug("zzz source comparison = ~p", [SourceComparison]),
-  lager:debug("zzz sink comparison = ~p", [SinkComparison]),
-
   case {SourceComparison, SinkComparison} of
     {equal, equal} ->
-      false;
+      check_primary_active_connections(State);
     _ ->
-      case riak_core_cluster_mgr:get_ipaddrs_of_cluster(Remote, split) of
-        {ok, []} ->
-          false;
-        {ok, {Primary, Secondary}} ->
-
-          lager:debug("conn_mgr endpoints ~p", [Endpoints]),
-
-          ConnectedSinkNodes = [ {IPPort, P} || {{IPPort, P},_Pid} <- orddict:to_list(Endpoints)],
-          {Action, DropNodes, ConnectToNodes} = compare_nodes(ConnectedSinkNodes, Primary),
-          lager:debug("www
-          New connections: ~p
-          Old connections: ~p
-          Action: ~p
-          Drop Nodes: ~p
-          Connect to Nodes: ~p", [Primary, ConnectedSinkNodes, Action, DropNodes, ConnectToNodes]),
-          {true, {Action, DropNodes, ConnectToNodes, Primary, Secondary, ConnectedSinkNodes}}
-      end
-
+      rebalance(State)
   end.
+
+check_primary_active_connections(State = #state{remote=R, source_nodes = SourceNodes, sink_nodes = SinkNodes}) ->
+  RealtimeConnections = riak_repl2_rtsource_conn_data_mgr:read(realtime_connections, R),
+  Keys = dict:fetch_keys(RealtimeConnections),
+  ActualConnectionCounts = lists:sort(count_primary_connections(RealtimeConnections, Keys, [])),
+  ExpectedConnectionCounts = lists:sort(build_expected_primary_connection_counts(SourceNodes, SinkNodes)),
+  case ActualConnectionCounts == ExpectedConnectionCounts of
+    true ->
+      false;
+    false ->
+      rebalance(State)
+  end.
+
+build_expected_primary_connection_counts(SourceNodes, SinkNodes) ->
+  M = length(SinkNodes), N = length(SourceNodes),
+  Base = M div N,
+  NumberOfNodesWithOneAdditionalConnection = M rem N,
+  NumberOfNodesWithBaseConnections = Base - NumberOfNodesWithOneAdditionalConnection,
+  [Base+1 || lists:seq(1,NumberOfNodesWithOneAdditionalConnection)] ++ [Base || lists:seq(1,NumberOfNodesWithBaseConnections)].
+
+
+count_primary_connections(_RealtimeConnections, [], List) ->
+  List;
+count_primary_connections(RealtimeConnections, [Key|Keys], List) ->
+  NodeConnections = dict:fetch(Key, RealtimeConnections),
+  count_primary_connections(RealtimeConnections, Keys, List ++ [get_primary_count(NodeConnections,0)]).
+
+get_primary_count([], N) ->
+  N;
+get_primary_count([{_,Primary}|Rest], N) ->
+  case Primary of
+    true ->
+      get_primary_count(Rest, N+1);
+    _ ->
+      get_primary_count(Rest, N)
+  end.
+
+rebalance(#state{endpoints = Endpoints, remote=Remote}) ->
+  case riak_core_cluster_mgr:get_ipaddrs_of_cluster(Remote, split) of
+    {ok, []} ->
+      rebalance_needed_empty_list_returned;
+    {ok, {Primary, Secondary}} ->
+      ConnectedSinkNodes = [ {IPPort, P} || {{IPPort, P},_Pid} <- orddict:to_list(Endpoints)],
+      {Action, DropNodes, ConnectToNodes} = compare_nodes(ConnectedSinkNodes, Primary),
+      {true, {Action, DropNodes, ConnectToNodes, Primary, Secondary, ConnectedSinkNodes}}
+  end.
+
 
 check_remove_endpoint(State=#state{remove_endpoint = RE}, ConnectToNodes) ->
   case lists:member(RE, ConnectToNodes) of

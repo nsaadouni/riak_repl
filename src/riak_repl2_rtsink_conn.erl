@@ -580,6 +580,8 @@ start_source(NegotiatedVer) ->
   meck:expect(riak_core_cluster_mgr, get_ipaddrs_of_cluster, fun(_) -> {ok,[]} end ),
   meck:expect(riak_core_cluster_mgr, get_ipaddrs_of_cluster, fun(_, split) -> {ok, {[],[]}} end ),
   meck:expect(riak_core_cluster_mgr, get_ipaddrs_of_cluster, fun(_, _) -> {ok,[]} end ),
+  application:set_env(riak_repl, realtime_connection_removal_delay, 1000),
+  application:set_env(riak_repl, realtime_connection_rebalance_max_delay_secs, 1000),
     {ok, SourcePid} = riak_repl2_rtsource_remote_conn_sup:start_link("sink_cluster"),
     receive
         {sink_started, SinkPid} ->
