@@ -314,7 +314,7 @@ build_expected_primary_connection_counts(SourceNodes, SinkNodes) ->
   Base = M div N,
   NumberOfNodesWithOneAdditionalConnection = M rem N,
   NumberOfNodesWithBaseConnections = N - NumberOfNodesWithOneAdditionalConnection,
-  [Base+1 || lists:seq(1,NumberOfNodesWithOneAdditionalConnection)] ++ [Base || lists:seq(1,NumberOfNodesWithBaseConnections)].
+  [Base+1 || _ <-lists:seq(1,NumberOfNodesWithOneAdditionalConnection)] ++ [Base || _ <- lists:seq(1,NumberOfNodesWithBaseConnections)].
 
 
 count_primary_connections(_RealtimeConnections, [], List) ->
