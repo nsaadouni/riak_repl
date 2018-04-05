@@ -305,7 +305,7 @@ build_expected_primary_connection_counts(SourceNodes, SinkNodes) ->
   M = length(SinkNodes), N = length(SourceNodes),
   Base = M div N,
   NumberOfNodesWithOneAdditionalConnection = M rem N,
-  NumberOfNodesWithBaseConnections = Base - NumberOfNodesWithOneAdditionalConnection,
+  NumberOfNodesWithBaseConnections = N - NumberOfNodesWithOneAdditionalConnection,
   [Base+1 || lists:seq(1,NumberOfNodesWithOneAdditionalConnection)] ++ [Base || lists:seq(1,NumberOfNodesWithBaseConnections)].
 
 
