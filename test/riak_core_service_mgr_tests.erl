@@ -29,7 +29,7 @@
 
 %% internal functions
 -export([testService/5,
-         connected/6, connect_failed/3
+         connected/7, connect_failed/3
         ]).
 
 %% my name and remote same because I need to talk to myself for testing
@@ -147,7 +147,7 @@ testService(_Socket, _Transport, {ok, {Proto, MyVer, RemoteVer}}, Args, _Props) 
     {ok, self()}.
 
 %% Client side protocol callbacks
-connected(_Socket, _Transport, {_IP, _Port}, {Proto, MyVer, RemoteVer}, Args, _Props) ->
+connected(_Socket, _Transport, {_IP, _Port}, {Proto, MyVer, RemoteVer}, Args, _Props, _Priamry) ->
     ?TRACE(?debugMsg("testClient started")),
     {_TestType, [ExpectedMyVer, ExpectedRemoteVer]} = Args,
     ?assertEqual(Proto, testproto),
