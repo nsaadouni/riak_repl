@@ -238,26 +238,34 @@ maybe_rebalance(State, now) ->
       State;
 
     rebalance_needed_empty_list_returned ->
-      lager:warning("rebalancing triggered, sink/source node status CHANGED, but get_ip_addrs_of_cluster returned []"),
+      lager:warning("rebalancing triggered but get_ip_addrs_of_cluster returned []"),
       State;
 
-    {true, {equal, _DropNodes, _ConnectToNodes, _Primary, _Secondary, _ConnectedSinkNodes}} ->
-      lager:info("rebalancing triggered but avoided via active connection matching"),
+    {true, {equal, DropNodes, ConnectToNodes, _Primary, _Secondary, _ConnectedSinkNodes}} ->
+      lager:info("rebalancing triggered but avoided via active connection matching
+      drop nodes ~p
+      connect nodes ~p", [DropNodes, ConnectToNodes]),
       State;
 
-    {true, {nodes_up, _DropNodes, ConnectToNodes, _Primary, _Secondary, _ConnectedSinkNodes}} ->
-      lager:info("rebalancing triggered and new connections are required"),
+    {true, {nodes_up, DropNodes, ConnectToNodes, _Primary, _Secondary, _ConnectedSinkNodes}} ->
+      lager:info("rebalancing triggered and new connections are required
+      drop nodes ~p
+      connect nodes ~p", [DropNodes, ConnectToNodes]),
       NewState1 = check_remove_endpoint(State, ConnectToNodes),
       rebalance_connect(NewState1#state{sink_nodes = NewSink, source_nodes = NewSource}, ConnectToNodes);
 
-    {true, {nodes_down, DropNodes, _ConnectToNodes, _Primary, _Secondary, ConnectedSinkNodes}} ->
-      lager:info("rebalancing triggered and active connections required to be dropped"),
+    {true, {nodes_down, DropNodes, ConnectToNodes, _Primary, _Secondary, ConnectedSinkNodes}} ->
+      lager:info("rebalancing triggered and active connections required to be dropped
+      drop nodes ~p
+      connect nodes ~p", [DropNodes, ConnectToNodes]),
       {_RemoveAllConnections, NewState1} = check_and_drop_connections(State, DropNodes, ConnectedSinkNodes),
       riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, NewState1#state.remote, node(), orddict:fetch_keys(NewState1#state.endpoints)),
       NewState1#state{sink_nodes = NewSink, source_nodes = NewSource};
 
     {true, {nodes_up_and_down, DropNodes, ConnectToNodes, Primary, Secondary, ConnectedSinkNodes}} ->
-      lager:info("rebalancing triggered and some active connections required to be dropped, and also new connections to be made"),
+      lager:info("rebalancing triggered and some active connections required to be dropped, and also new connections to be made
+      drop nodes ~p
+      connect nodes ~p", [DropNodes, ConnectToNodes]),
       {RemoveAllConnections, NewState1} = check_and_drop_connections(State, DropNodes, ConnectedSinkNodes),
       NewState2 = check_remove_endpoint(NewState1, ConnectToNodes),
       riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, NewState2#state.remote, node(), orddict:fetch_keys(NewState2#state.endpoints)),
