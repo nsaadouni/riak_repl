@@ -326,11 +326,17 @@ build_expected_primary_connection_counts(SourceNodes, SinkNodes) ->
     {_, undefined} ->
       [];
     _ ->
-      M = length(SinkNodes), N = length(SourceNodes),
-      Base = M div N,
-      NumberOfNodesWithOneAdditionalConnection = M rem N,
-      NumberOfNodesWithBaseConnections = N - NumberOfNodesWithOneAdditionalConnection,
-      [Base+1 || _ <-lists:seq(1,NumberOfNodesWithOneAdditionalConnection)] ++ [Base || _ <- lists:seq(1,NumberOfNodesWithBaseConnections)]
+      M = length(SinkNodes),
+      N = length(SourceNodes),
+      case M*N of
+        0 ->
+          [];
+        _ ->
+          Base = M div N,
+          NumberOfNodesWithOneAdditionalConnection = M rem N,
+          NumberOfNodesWithBaseConnections = N - NumberOfNodesWithOneAdditionalConnection,
+          [Base+1 || _ <-lists:seq(1,NumberOfNodesWithOneAdditionalConnection)] ++ [Base || _ <- lists:seq(1,NumberOfNodesWithBaseConnections)]}
+      end
   end.
 
 
