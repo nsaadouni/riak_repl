@@ -315,14 +315,17 @@ check_primary_active_connections(State = #state{remote=R, source_nodes = SourceN
     true ->
       false;
     false ->
-      rebalance(State)
+      rebalance(State);
+    Err ->
+      lager:info("rebalancing error (check_primary_active_connections) ~p", [Err]),
+      false
   end.
 
 build_expected_primary_connection_counts(SourceNodes, SinkNodes) ->
   lager:info("rebalancing
   source nodes ~p
   sink nodes ~p" ,[SourceNodes, SinkNodes]),
-  
+
   M = length(SinkNodes), N = length(SourceNodes),
   Base = M div N,
   NumberOfNodesWithOneAdditionalConnection = M rem N,

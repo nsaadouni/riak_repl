@@ -300,7 +300,7 @@ handle_info({heartbeat_timeout, HBSent}, State = #state{hb_sent_q = HBSentQ,
             lager:warning("Realtime connection ~s to ~p heartbeat timeout "
                           "after ~p seconds\n",
                           [peername(State), Remote, HBTimeout]),
-            lager:debug("hb_sent_q_len after heartbeat_timeout: ~p", [queue:len(HBSentQ)]),
+            lager:info("hb_sent_q_len after heartbeat_timeout: ~p", [queue:len(HBSentQ)]),
             riak_repl2_rtsource_conn_mgr:connection_closed(State#state.conn_mgr_pid, A, P),
             {stop, normal, State}
     end;
