@@ -310,7 +310,7 @@ check_primary_active_connections(State = #state{remote=R, source_nodes = SourceN
   actual connection counts ~p
   expected connection counts ~p
   expression ~p", [RealtimeConnections, Keys, ActualConnectionCounts, ExpectedConnectionCounts (ActualConnectionCounts==ExpectedConnectionCounts)]),
-  
+
   case ActualConnectionCounts == ExpectedConnectionCounts of
     true ->
       false;
@@ -319,6 +319,10 @@ check_primary_active_connections(State = #state{remote=R, source_nodes = SourceN
   end.
 
 build_expected_primary_connection_counts(SourceNodes, SinkNodes) ->
+  lager:info("rebalancing
+  source nodes ~p
+  sink nodes ~p" ,[SourceNodes, SinkNodes]),
+  
   M = length(SinkNodes), N = length(SourceNodes),
   Base = M div N,
   NumberOfNodesWithOneAdditionalConnection = M rem N,
