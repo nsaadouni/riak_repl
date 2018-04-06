@@ -292,6 +292,7 @@ should_rebalance(State=#state{sink_nodes = OldSink, source_nodes = OldSource}, N
   {SinkComparison, _SinkNodesDown, _SinkNodesUp} = compare_nodes(OldSink, NewSink),
   case {SourceComparison, SinkComparison} of
     {equal, equal} ->
+      lager:info("rebalancing - Should rebalance hit equal equal, calling check_primary_active_connections"),
       check_primary_active_connections(State);
     _ ->
       rebalance(State)
@@ -302,6 +303,14 @@ check_primary_active_connections(State = #state{remote=R, source_nodes = SourceN
   Keys = dict:fetch_keys(RealtimeConnections),
   ActualConnectionCounts = lists:sort(count_primary_connections(RealtimeConnections, Keys, [])),
   ExpectedConnectionCounts = lists:sort(build_expected_primary_connection_counts(SourceNodes, SinkNodes)),
+
+  lager:info("rebalancing2 -
+  realtime connections ~p
+  keys ~p
+  actual connection counts ~p
+  expected connection counts ~p
+  expression ~p", [RealtimeConnections, Keys, ActualConnectionCounts, ExpectedConnectionCounts (ActualConnectionCounts==ExpectedConnectionCounts)]),
+  
   case ActualConnectionCounts == ExpectedConnectionCounts of
     true ->
       false;
