@@ -302,14 +302,12 @@ check_primary_active_connections(State = #state{remote=R, source_nodes = SourceN
   RealtimeConnections = riak_repl2_rtsource_conn_data_mgr:read(realtime_connections, R),
   Keys = dict:fetch_keys(RealtimeConnections),
   ActualConnectionCounts = lists:sort(count_primary_connections(RealtimeConnections, Keys, [])),
-  ExpectedConnectionCounts = lists:sort(build_expected_primary_connection_counts(SourceNodes, SinkNodes)),
-  Exp = ActualConnectionCounts == ExpectedConnectionCounts,
   lager:info("rebalancing2.0 -
   realtime connections ~p
   keys ~p
-  actual connection counts ~p
-  expected connection counts ~p
-  expression ~p", [RealtimeConnections, Keys, ActualConnectionCounts, ExpectedConnectionCounts, Exp]),
+  actual connection counts ~p", [RealtimeConnections, Keys, ActualConnectionCounts]),
+  ExpectedConnectionCounts = lists:sort(build_expected_primary_connection_counts(SourceNodes, SinkNodes)),
+  Exp = ActualConnectionCounts == ExpectedConnectionCounts,
 
   case Exp of
     true ->
