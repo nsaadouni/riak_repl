@@ -292,7 +292,7 @@ should_rebalance(State=#state{sink_nodes = OldSink, source_nodes = OldSource}, N
   {SinkComparison, _SinkNodesDown, _SinkNodesUp} = compare_nodes(OldSink, NewSink),
   case {SourceComparison, SinkComparison} of
     {equal, equal} ->
-      lager:info("rebalancing - Should rebalance hit equal equal, calling check_primary_active_connections"),
+      lager:info("rebalancing - should_rebalance hit equal equal, calling check_primary_active_connections"),
       check_primary_active_connections(State);
     _ ->
       rebalance(State)
@@ -304,7 +304,7 @@ check_primary_active_connections(State = #state{remote=R, source_nodes = SourceN
   ActualConnectionCounts = lists:sort(count_primary_connections(RealtimeConnections, Keys, [])),
   ExpectedConnectionCounts = lists:sort(build_expected_primary_connection_counts(SourceNodes, SinkNodes)),
 
-  lager:info("rebalancing2 -
+  lager:info("rebalancing2.0 -
   realtime connections ~p
   keys ~p
   actual connection counts ~p
@@ -315,22 +315,25 @@ check_primary_active_connections(State = #state{remote=R, source_nodes = SourceN
     true ->
       false;
     false ->
-      rebalance(State);
-    Err ->
-      lager:info("rebalancing error (check_primary_active_connections) ~p", [Err]),
-      false
+      rebalance(State)
   end.
 
 build_expected_primary_connection_counts(SourceNodes, SinkNodes) ->
-  lager:info("rebalancing
+  lager:info("rebalancing2.1
   source nodes ~p
   sink nodes ~p" ,[SourceNodes, SinkNodes]),
-
-  M = length(SinkNodes), N = length(SourceNodes),
-  Base = M div N,
-  NumberOfNodesWithOneAdditionalConnection = M rem N,
-  NumberOfNodesWithBaseConnections = N - NumberOfNodesWithOneAdditionalConnection,
-  [Base+1 || _ <-lists:seq(1,NumberOfNodesWithOneAdditionalConnection)] ++ [Base || _ <- lists:seq(1,NumberOfNodesWithBaseConnections)].
+  case {SourceNodes, SinkNodes} of
+    {undefined, _} ->
+      [];
+    {_, undefined} ->
+      [];
+    _ ->
+      M = length(SinkNodes), N = length(SourceNodes),
+      Base = M div N,
+      NumberOfNodesWithOneAdditionalConnection = M rem N,
+      NumberOfNodesWithBaseConnections = N - NumberOfNodesWithOneAdditionalConnection,
+      [Base+1 || _ <-lists:seq(1,NumberOfNodesWithOneAdditionalConnection)] ++ [Base || _ <- lists:seq(1,NumberOfNodesWithBaseConnections)]
+  end.
 
 
 count_primary_connections(_RealtimeConnections, [], List) ->
