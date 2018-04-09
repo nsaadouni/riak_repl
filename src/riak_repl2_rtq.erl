@@ -450,7 +450,7 @@ handle_info(_Msg, State) ->
 
 %% @private
 terminate(Reason, State=#state{cs = Cs}) ->
-  lager:infog("rtq terminating due to: ~p
+  lager:info("rtq terminating due to: ~p
   State: ~p", [Reason, State]),
     %% when started from tests, we may not be registered
     catch(erlang:unregister(?SERVER)),
