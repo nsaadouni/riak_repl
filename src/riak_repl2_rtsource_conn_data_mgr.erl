@@ -124,12 +124,12 @@ handle_call(_Request, _From, State) ->
 
 
 handle_cast({set_leader_node, LeaderNode}, State) ->
-  State2 = State#state{leader_node = LeaderNode},
+  lager:info("setting leader node as: ~p", [LeaderNode]),
   case node() of
     LeaderNode ->
-      {noreply, become_leader(State2, LeaderNode)};
+      {noreply, become_leader(State, LeaderNode)};
     _ ->
-      {noreply, become_proxy(State2, LeaderNode)}
+      {noreply, become_proxy(State, LeaderNode)}
   end;
 
 %% -------------------------------------------------- Delete -------------------------------------------------------- %%
@@ -276,21 +276,18 @@ remove_nodes([Node|Nodes], Remote, ConnectionsDict) ->
   NewNodeDict = dict:erase(Node, OldNodeDict),
   remove_nodes(Nodes, Remote, dict:store(Remote, NewNodeDict, ConnectionsDict)).
 
-%% start being a cluster manager leader
-become_leader(State, _LeaderNode) when State#state.is_leader == false ->
-  erlang:send_after(5000, self(), restore_leader_data),
-  State#state{is_leader = true};
-become_leader(State, _LeaderNode) ->
-  State.
 
-%% stop being a cluster manager leader
-become_proxy(State, _LeaderNode) when State#state.is_leader == true ->
-%%  update the ring?
-%%  erlang:send_after(5000, self(), update_ring_delete_connection_data),
-  State#state{is_leader = false};
-become_proxy(State, _LeaderNode) ->
-%%  erlang:send_after(5000, self(), update_new_leader),
-  State.
+become_leader(State, LeaderNode) when State#state.is_leader == false ->
+  erlang:send_after(5000, self(), restore_leader_data),
+  State#state{is_leader = true, leader_node = LeaderNode};
+become_leader(State, LeaderNode) ->
+  State#state{is_leader = true, leader_node = LeaderNode}.
+
+
+become_proxy(State, LeaderNode) when State#state.is_leader == true ->
+  State#state{is_leader = false, leader_node = LeaderNode};
+become_proxy(State, LeaderNode) ->
+  State#state{is_leader = false, leader_node = LeaderNode}.
 
 
 proxy_cast(_Cast, _State = #state{leader_node=Leader}) when Leader == undefined ->
