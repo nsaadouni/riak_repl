@@ -18,7 +18,10 @@ start_link() ->
 %% @doc supervisor callback.
 init([]) ->
     Processes =
-        [{riak_repl2_rtq, {riak_repl2_rtq, start_link, []},
+        [{riak_repl2_rtsource_conn_data_mgr, {riak_repl2_rtsource_conn_data_mgr, start_link, []},
+        permanent, 50000, worker, [riak_repl2_rtsource_conn_data_mgr]},
+
+        {riak_repl2_rtq, {riak_repl2_rtq, start_link, []},
           transient, 50000, worker, [riak_repl2_rtq]},
 
          {riak_repl2_rtq_overload_counter, {riak_repl2_rtq_overload_counter, start_link, []},
@@ -27,4 +30,4 @@ init([]) ->
          {riak_repl2_rtsource_conn_sup, {riak_repl2_rtsource_conn_sup, start_link, []},
           permanent, infinity, supervisor, [riak_repl2_rtsource_conn_sup]}],
 
-    {ok, {{one_for_one, 9, 10}, Processes}}.
+    {ok, {{rest_one_for_one, 9, 10}, Processes}}.

@@ -470,6 +470,8 @@ setup() ->
     {ok, _RT} = riak_repl2_rt:start_link(),
     riak_repl_test_util:kill_and_wait(riak_repl2_rtq),
     {ok, _} = riak_repl2_rtq:start_link(),
+    application:set_env(riak_repl, realtime_connection_removal_delay, 1000),
+    application:set_env(riak_repl, realtime_connection_rebalance_max_delay_secs, 1000),
     ok.
 
 cleanup(_Ctx) ->
@@ -574,14 +576,18 @@ start_source(NegotiatedVer) ->
   meck:new(riak_repl2_rtsource_conn_data_mgr, [passthrough]),
   meck:expect(riak_repl2_rtsource_conn_data_mgr, read, fun(active_nodes) -> [node()]
                                                        end),
+  meck:expect(riak_repl2_rtsource_conn_data_mgr, read,
+    fun(realtime_connections, _Remote) ->
+      dict:new()
+    end
+  ),
+
   catch(meck:unload(riak_core_cluster_mgr)),
   meck:new(riak_core_cluster_mgr, [passthrough]),
-  meck:expect(riak_core_cluster_mgr, get_unshuffled_ipaddrs_of_cluster, fun(_Remote) -> {ok,[]} end ),
+  meck:expect(riak_core_cluster_mgr, get_unshuffled_ipaddrs_of_cluster, fun(_Remote) -> [] end ),
   meck:expect(riak_core_cluster_mgr, get_ipaddrs_of_cluster, fun(_) -> {ok,[]} end ),
   meck:expect(riak_core_cluster_mgr, get_ipaddrs_of_cluster, fun(_, split) -> {ok, {[],[]}} end ),
   meck:expect(riak_core_cluster_mgr, get_ipaddrs_of_cluster, fun(_, _) -> {ok,[]} end ),
-  application:set_env(riak_repl, realtime_connection_removal_delay, 1000),
-  application:set_env(riak_repl, realtime_connection_rebalance_max_delay_secs, 1000),
     {ok, SourcePid} = riak_repl2_rtsource_remote_conn_sup:start_link("sink_cluster"),
     receive
         {sink_started, SinkPid} ->

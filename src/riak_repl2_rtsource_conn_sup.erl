@@ -42,17 +42,13 @@ init([]) ->
 
     {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
     Remotes = riak_repl_ring:rt_started(Ring),
-    RemoteChildren = [make_remote(Remote) || Remote <- Remotes],
-    Children = [make_data_mgr() | RemoteChildren],
+    Children = [make_remote(Remote) || Remote <- Remotes],
     {ok, {{one_for_one, 10, 10}, Children}}.
 
 make_remote(Remote) ->
     {Remote, {riak_repl2_rtsource_remote_conn_sup, start_link, [Remote]},
         permanent, ?SHUTDOWN, supervisor, [riak_repl2_rtsource_remote_conn_sup]}.
 
-make_data_mgr() ->
-    {riak_repl2_rtsource_conn_data_mgr, {riak_repl2_rtsource_conn_data_mgr, start_link, []},
-        permanent, ?SHUTDOWN, worker, [riak_repl2_rtsource_conn_data_mgr]}.
 
 first_or_empty(L) ->
     case L of
