@@ -27,4 +27,4 @@ init([]) ->
          {riak_repl2_rtsource_conn_sup, {riak_repl2_rtsource_conn_sup, start_link, []},
           permanent, infinity, supervisor, [riak_repl2_rtsource_conn_sup]}],
 
-    {ok, {{rest_for_one, 9, 10}, Processes}}.
+    {ok, {{one_for_one, 9, 10}, Processes}}.

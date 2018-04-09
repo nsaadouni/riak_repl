@@ -256,7 +256,9 @@ handle_info(_Info, State) ->
   {noreply, State}.
 
 
-terminate(_Reason, _State) ->
+terminate(Reason, State) ->
+lager:info("riak_repl2_rtsource_conn_data_mgr termianting due to: ~p
+            State: ~p", [Reason, State]),
   ok.
 
 code_change(_OldVsn, State, _Extra) ->
