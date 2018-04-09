@@ -409,9 +409,9 @@ keylist_fold({B,Key}=K, V, {MPid, Count, Total, FilterEnabled, FilteredBucketsLi
                     100 ->
                         %% send keylist_ack to "self" every 100 key/value hashes
                         ok = riak_core_gen_server:call(MPid, keylist_ack, infinity),
-                        {MPid, 0, Total, FilterEnabled, FilteredBucketsList};
+                        {MPid, 0, Total+1, FilterEnabled, FilteredBucketsList};
                     _ ->
-                        {MPid, Count+1, Total, FilterEnabled, FilteredBucketsList}
+                        {MPid, Count+1, Total+1, FilterEnabled, FilteredBucketsList}
                 end;
             false ->
                 H = hash_object(B,Key,V),
