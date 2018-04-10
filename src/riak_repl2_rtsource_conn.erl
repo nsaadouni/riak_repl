@@ -253,7 +253,7 @@ handle_info({Proto, _S, TcpBin}, State= #state{cont = Cont})
   when Proto == tcp; Proto == ssl ->
     recv(<<Cont/binary, TcpBin/binary>>, State);
 handle_info({Closed, _S},
-            State = #state{remote = Remote, cont = Cont, address = A, primary = P})
+            State = #state{remote = Remote, cont = Cont})
   when Closed == tcp_closed; Closed == ssl_closed ->
     case size(Cont) of
         0 ->
@@ -280,9 +280,7 @@ handle_info(send_heartbeat, State) ->
 handle_info({heartbeat_timeout, HBSent}, State = #state{hb_sent_q = HBSentQ,
                                                         hb_timeout_tref = HBTRef,
                                                         hb_timeout = HBTimeout,
-                                                        remote = Remote,
-                                                        address = A,
-                                                        primary = P}) ->
+                                                        remote = Remote}) ->
     TimeSinceTimeout = timer:now_diff(now(), HBSent) div 1000,
 
     %% hb_timeout_tref is the authority of whether we should
@@ -298,7 +296,6 @@ handle_info({heartbeat_timeout, HBSent}, State = #state{hb_sent_q = HBSentQ,
                           "after ~p seconds\n",
                           [peername(State), Remote, HBTimeout]),
             lager:info("hb_sent_q_len after heartbeat_timeout: ~p", [queue:len(HBSentQ)]),
-            riak_repl2_rtsource_conn_mgr:connection_closed(State#state.conn_mgr_pid, A, P),
             {stop, normal, State}
     end;
 
