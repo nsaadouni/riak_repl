@@ -265,9 +265,6 @@ handle_info({Closed, _S},
     end,
     %% go to sleep for 1s so a sink that opens the connection ok but then
     %% dies will not make the server restart too fst.
-
-    %% remove this connection from the manager
-    riak_repl2_rtsource_conn_mgr:connection_closed(State#state.conn_mgr_pid, A, P),
     timer:sleep(1000),
     {stop, normal, State};
 handle_info({Error, _S, Reason},
@@ -309,7 +306,10 @@ handle_info(Msg, State) ->
     lager:warning("Unhandled info:  ~p", [Msg]),
     {noreply, State}.
 
-terminate(Reason, _State=#state{helper_pid=HelperPid}) ->
+terminate(Reason, #state{helper_pid=HelperPid, address = A, primary = P, conn_mgr_pid = C}) ->
+  %% remove this connection from the manager
+  riak_repl2_rtsource_conn_mgr:connection_closed(C, A, P),
+
   lager:info("rtsource conn terminated due to ~p", [Reason]),
   catch riak_repl2_rtsource_helper:stop(HelperPid),
   ok.

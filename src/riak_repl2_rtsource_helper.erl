@@ -111,15 +111,15 @@ handle_cast(stop_pulling, State) ->
     {noreply, State#state{stop_pulling = true}};
 
 handle_cast(Msg, _State) ->
-    lager:info("Realtime source helper received unexpected cast - ~p\n", [Msg]).
+    lager:info("Realtime source helper received unexpected cast - ~p", [Msg]).
 
 
 handle_info(Msg, State) ->
-    lager:info("Realtime source helper received unexpected message - ~p\n", [Msg]),
+    lager:info("Realtime source helper received unexpected message - ~p", [Msg]),
     {noreply, State}.
 
-terminate(_Reason, _State) ->
-    lager:info("rtsource conn helper died"),
+terminate(Reason, _State) ->
+    lager:info("rtsource conn helper terminated due to ~p", [Reason]),
     ok.
 
 code_change(_OldVsn, State, _Extra) ->
