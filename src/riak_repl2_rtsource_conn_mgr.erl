@@ -298,15 +298,17 @@ should_rebalance(State=#state{sink_nodes = OldSink, source_nodes = OldSource}, N
       rebalance(State)
   end.
 
+%% check primary connenections for sink as well! [THIS HAS TO BE DONE]
 check_primary_active_connections(State = #state{remote=R, source_nodes = SourceNodes, sink_nodes = SinkNodes}) ->
-  RealtimeConnections = riak_repl2_rtsource_conn_data_mgr:read(realtime_connections, R),
-  Keys = dict:fetch_keys(RealtimeConnections),
-  ActualConnectionCounts = lists:sort(count_primary_connections_for_source_nodes(RealtimeConnections, Keys, [])),
+  RealtimeConnectionsSourceSink = riak_repl2_rtsource_conn_data_mgr:read(realtime_connections, R),
+%%   RealtimeConnectionsSinkSource = invert_dictionary(RealtimeConnectionsSourceSink),
+  Keys = dict:fetch_keys(RealtimeConnectionsSourceSink),
+  ActualConnectionCounts = lists:sort(count_primary_connections(RealtimeConnectionsSourceSink, Keys, [])),
   lager:info("rebalancing2.0 -
   realtime connections ~p
   keys ~p
-  actual connection counts ~p", [RealtimeConnections, Keys, ActualConnectionCounts]),
-  ExpectedConnectionCounts = lists:sort(build_expected_primary_connection_counts_for_source_nodes(SourceNodes, SinkNodes)),
+  actual connection counts ~p", [RealtimeConnectionsSourceSink, Keys, ActualConnectionCounts]),
+  ExpectedConnectionCounts = lists:sort(build_expected_primary_connection_counts(for_source_nodes, SourceNodes, SinkNodes)),
   Exp = ActualConnectionCounts == ExpectedConnectionCounts,
 
   case Exp of
@@ -316,18 +318,23 @@ check_primary_active_connections(State = #state{remote=R, source_nodes = SourceN
       rebalance(State)
   end.
 
-build_expected_primary_connection_counts_for_source_nodes(SourceNodes, SinkNodes) ->
-  lager:info("rebalancing2.1
-  source nodes ~p
-  sink nodes ~p" ,[SourceNodes, SinkNodes]),
+build_expected_primary_connection_counts(For, SourceNodes, SinkNodes) ->
   case {SourceNodes, SinkNodes} of
     {undefined, _} ->
       [];
     {_, undefined} ->
       [];
     _ ->
-      M = length(SourceNodes),
-      N = length(SinkNodes),
+      {M,N} = case For of
+                for_source_nodes ->
+                  M = length(SourceNodes),
+                  N = length(SinkNodes),
+                  {M,N};
+                for_sink_nodes ->
+                  N = length(SourceNodes),
+                  M = length(SinkNodes),
+                  {M,N}
+              end,
       case M*N of
         0 ->
           [];
@@ -345,11 +352,11 @@ build_expected_primary_connection_counts_for_source_nodes(SourceNodes, SinkNodes
   end.
 
 
-count_primary_connections_for_source_nodes(_RealtimeConnections, [], List) ->
+count_primary_connections(_ConnectionDictionary, [], List) ->
   List;
-count_primary_connections_for_source_nodes(RealtimeConnections, [Key|Keys], List) ->
-  NodeConnections = dict:fetch(Key, RealtimeConnections),
-  count_primary_connections_for_source_nodes(RealtimeConnections, Keys, List ++ [get_primary_count(NodeConnections,0)]).
+count_primary_connections(ConnectionDictionary, [Key|Keys], List) ->
+  NodeConnections = dict:fetch(Key, ConnectionDictionary),
+  count_primary_connections(ConnectionDictionary, Keys, List ++ [get_primary_count(NodeConnections,0)]).
 
 get_primary_count([], N) ->
   N;
