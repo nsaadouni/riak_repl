@@ -301,12 +301,12 @@ should_rebalance(State=#state{sink_nodes = OldSink, source_nodes = OldSource}, N
 check_primary_active_connections(State = #state{remote=R, source_nodes = SourceNodes, sink_nodes = SinkNodes}) ->
   RealtimeConnections = riak_repl2_rtsource_conn_data_mgr:read(realtime_connections, R),
   Keys = dict:fetch_keys(RealtimeConnections),
-  ActualConnectionCounts = lists:sort(count_primary_connections(RealtimeConnections, Keys, [])),
+  ActualConnectionCounts = lists:sort(count_primary_connections_for_source_nodes(RealtimeConnections, Keys, [])),
   lager:info("rebalancing2.0 -
   realtime connections ~p
   keys ~p
   actual connection counts ~p", [RealtimeConnections, Keys, ActualConnectionCounts]),
-  ExpectedConnectionCounts = lists:sort(build_expected_primary_connection_counts(SourceNodes, SinkNodes)),
+  ExpectedConnectionCounts = lists:sort(build_expected_primary_connection_counts_for_source_nodes(SourceNodes, SinkNodes)),
   Exp = ActualConnectionCounts == ExpectedConnectionCounts,
 
   case Exp of
@@ -316,7 +316,7 @@ check_primary_active_connections(State = #state{remote=R, source_nodes = SourceN
       rebalance(State)
   end.
 
-build_expected_primary_connection_counts(SourceNodes, SinkNodes) ->
+build_expected_primary_connection_counts_for_source_nodes(SourceNodes, SinkNodes) ->
   lager:info("rebalancing2.1
   source nodes ~p
   sink nodes ~p" ,[SourceNodes, SinkNodes]),
@@ -326,25 +326,30 @@ build_expected_primary_connection_counts(SourceNodes, SinkNodes) ->
     {_, undefined} ->
       [];
     _ ->
-      M = length(SinkNodes),
-      N = length(SourceNodes),
+      M = length(SourceNodes),
+      N = length(SinkNodes),
       case M*N of
         0 ->
           [];
         _ ->
-          Base = M div N,
-          NumberOfNodesWithOneAdditionalConnection = M rem N,
-          NumberOfNodesWithBaseConnections = N - NumberOfNodesWithOneAdditionalConnection,
-          [Base+1 || _ <-lists:seq(1,NumberOfNodesWithOneAdditionalConnection)] ++ [Base || _ <- lists:seq(1,NumberOfNodesWithBaseConnections)]
+          case M >= N of
+            true ->
+              [1 || _ <-  lists:seq(1,M)];
+            false ->
+              Base = N div M,
+              NumberOfNodesWithOneAdditionalConnection = N rem M,
+              NumberOfNodesWithBaseConnections = M - NumberOfNodesWithOneAdditionalConnection,
+              [Base+1 || _ <-lists:seq(1,NumberOfNodesWithOneAdditionalConnection)] ++ [Base || _ <- lists:seq(1,NumberOfNodesWithBaseConnections)]
+          end
       end
   end.
 
 
-count_primary_connections(_RealtimeConnections, [], List) ->
+count_primary_connections_for_source_nodes(_RealtimeConnections, [], List) ->
   List;
-count_primary_connections(RealtimeConnections, [Key|Keys], List) ->
+count_primary_connections_for_source_nodes(RealtimeConnections, [Key|Keys], List) ->
   NodeConnections = dict:fetch(Key, RealtimeConnections),
-  count_primary_connections(RealtimeConnections, Keys, List ++ [get_primary_count(NodeConnections,0)]).
+  count_primary_connections_for_source_nodes(RealtimeConnections, Keys, List ++ [get_primary_count(NodeConnections,0)]).
 
 get_primary_count([], N) ->
   N;
