@@ -46,7 +46,7 @@
          stop/1,
          get_helper_pid/1,
          status/1, status/2,
-         address/1,
+         get_address/1,
          connected/7,
          legacy_status/1, legacy_status/2]).
 
@@ -100,9 +100,6 @@ start_link(Remote, ConnMgrPid) ->
 stop(Pid) ->
     gen_server:call(Pid, stop, ?LONG_TIMEOUT).
 
-address(Pid) ->
-    gen_server:call(Pid, address, ?LONG_TIMEOUT).
-
 status(Pid) ->
     status(Pid, infinity).
 
@@ -134,6 +131,9 @@ connected(Socket, Transport, IPPort, Proto, RtSourcePid, _Props, Primary) ->
 get_helper_pid(RtSourcePid) ->
   gen_server:call(RtSourcePid, get_helper_pid).
 
+get_address(Pid) ->
+  gen_server:call(Pid, address, ?LONG_TIMEOUT).
+
 % ======================================================================================================================
 
 %% gen_server callbacks
@@ -144,8 +144,8 @@ init([Remote, ConnMgrPid]) ->
 
 handle_call(stop, _From, State) ->
     {stop, normal, ok, State};
-handle_call(address, _From, State = #state{ address=A }) ->
-    {reply, {ok, A}, State};
+handle_call(address, _From, State = #state{address=A, primary=P}) ->
+    {reply, {A,P}, State};
 handle_call(status, _From, State =
                 #state{remote = R, address = _A, transport = T, socket = S,
                        helper_pid = H,
