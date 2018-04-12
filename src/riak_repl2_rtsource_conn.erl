@@ -47,6 +47,7 @@
          get_helper_pid/1,
          status/1, status/2,
          get_address/1,
+         get_socketname_primary/1,
          connected/7,
          legacy_status/1, legacy_status/2]).
 
@@ -134,6 +135,9 @@ get_helper_pid(RtSourcePid) ->
 get_address(Pid) ->
   gen_server:call(Pid, address, ?LONG_TIMEOUT).
 
+get_socketname_primary(Pid) ->
+  gen_server:call(Pid, get_socketname_primary).
+
 % ======================================================================================================================
 
 %% gen_server callbacks
@@ -146,6 +150,8 @@ handle_call(stop, _From, State) ->
     {stop, normal, ok, State};
 handle_call(address, _From, State = #state{address=A, primary=P}) ->
     {reply, {A,P}, State};
+handle_call(get_socketname_primary, _From, State=#state{socket = S, primary = P}) ->
+  {reply, {inet:sockname(S), P}, State};
 handle_call(status, _From, State =
                 #state{remote = R, address = _A, transport = T, socket = S,
                        helper_pid = H,

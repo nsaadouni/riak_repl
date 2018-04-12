@@ -19,11 +19,15 @@
 -export([sync_register_service/0,
          start_service/5]).
 
--export([start_link/2,
-         stop/1,
-         set_socket/3,
-         status/1, status/2,
-         legacy_status/1, legacy_status/2]).
+-export
+([
+  start_link/2,
+  stop/1,
+  set_socket/3,
+  status/1, status/2,
+  legacy_status/1, legacy_status/2,
+  get_peername/1
+]).
 
 %% Export for intercept use in testing
 -export([send_heartbeat/2]).
@@ -103,6 +107,9 @@ legacy_status(Pid) ->
 legacy_status(Pid, Timeout) ->
     gen_server:call(Pid, legacy_status, Timeout).
 
+get_peername(Pid) ->
+  gen_server:call(Pid, get_peername).
+
 %% Callbacks
 init([OkProto, Remote]) ->
     %% TODO: remove annoying 'ok' from service mgr proto
@@ -160,6 +167,8 @@ handle_call({set_socket, Socket, Transport}, _From, State) ->
     Transport:setopts(Socket, [{active, once}]), % pick up errors in tcp_error msg
     lager:debug("Starting realtime connection service"),
     {reply, ok, State#state{socket=Socket, transport=Transport, peername = peername(Transport, Socket)}};
+handle_call(get_peername, _From, State=#state{peername = PeerName}) ->
+  {reply, PeerName, State};
 handle_call(stop, _From, State) ->
     {stop, normal, ok, State}.
 

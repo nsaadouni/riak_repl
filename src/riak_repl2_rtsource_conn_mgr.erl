@@ -298,6 +298,7 @@ should_rebalance(State=#state{sink_nodes = OldSink, source_nodes = OldSource}, N
       rebalance(State)
   end.
 
+%% TODO: CHECK SINK CONNECTIONS FROM REALTIME CONNECTIOSN STORED IN DATA MANAGER!
 %% check primary connenections for sink as well! [THIS HAS TO BE DONE]
 check_primary_active_connections(State = #state{remote=R, source_nodes = SourceNodes, sink_nodes = SinkNodes}) ->
   RealtimeConnectionsSourceSink = riak_repl2_rtsource_conn_data_mgr:read(realtime_connections, R),
@@ -327,13 +328,9 @@ build_expected_primary_connection_counts(For, SourceNodes, SinkNodes) ->
     _ ->
       {M,N} = case For of
                 for_source_nodes ->
-                  M = length(SourceNodes),
-                  N = length(SinkNodes),
-                  {M,N};
+                  {length(SourceNodes), length(SinkNodes)};
                 for_sink_nodes ->
-                  N = length(SourceNodes),
-                  M = length(SinkNodes),
-                  {M,N}
+                  {length(SinkNodes), length(SourceNodes)}
               end,
       case M*N of
         0 ->
@@ -346,7 +343,8 @@ build_expected_primary_connection_counts(For, SourceNodes, SinkNodes) ->
               Base = N div M,
               NumberOfNodesWithOneAdditionalConnection = N rem M,
               NumberOfNodesWithBaseConnections = M - NumberOfNodesWithOneAdditionalConnection,
-              [Base+1 || _ <-lists:seq(1,NumberOfNodesWithOneAdditionalConnection)] ++ [Base || _ <- lists:seq(1,NumberOfNodesWithBaseConnections)]
+              [Base+1 || _ <-lists:seq(1,NumberOfNodesWithOneAdditionalConnection)] ++ [Base || _
+                <- lists:seq(1,NumberOfNodesWithBaseConnections)]
           end
       end
   end.
