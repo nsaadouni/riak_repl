@@ -151,7 +151,8 @@ handle_call(stop, _From, State) ->
 handle_call(address, _From, State = #state{address=A, primary=P}) ->
     {reply, {A,P}, State};
 handle_call(get_socketname_primary, _From, State=#state{socket = S, primary = P}) ->
-  {reply, {inet:sockname(S), P}, State};
+  {ok, Peername} = inet:sockname(S),
+  {reply, {Peername, P}, State};
 handle_call(status, _From, State =
                 #state{remote = R, address = _A, transport = T, socket = S,
                        helper_pid = H,
