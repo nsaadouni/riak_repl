@@ -453,10 +453,10 @@ handle_cast({ack, Name, Seq, NewTimestamp}, State) ->
 record_consumer_latency(Name, OldLastSeen, SeqNumber, NewTimestamp) ->
     case OldLastSeen of
         {SeqNumber, OldTimestamp} ->
-            folsom_metrics:notify_existing_metric({latency, Name}, timer:now_diff(NewTimestamp, OldTimestamp), history);
+            folsom_metrics:notify({{latency, Name}, timer:now_diff(NewTimestamp, OldTimestamp)});
         {NewSeqNumber, OldTimestamp} when NewSeqNumber > SeqNumber ->
             % The queue has skipped a number of sequence numbers, but we can still log the difference
-            folsom_metrics:notify_existing_metric({latency, Name}, timer:now_diff(NewTimestamp, OldTimestamp), history);
+            folsom_metrics:notify({{latency, Name}, timer:now_diff(NewTimestamp, OldTimestamp)});
         _ ->
             % If we get here, we have either an undefined last_seen, or we somehow received a lower sequence number
             % from the ack. Either way, we shouldn't report anything.
