@@ -292,32 +292,43 @@ should_rebalance(State=#state{sink_nodes = OldSink, source_nodes = OldSource}, N
   {SinkComparison, _SinkNodesDown, _SinkNodesUp} = compare_nodes(OldSink, NewSink),
   case {SourceComparison, SinkComparison} of
     {equal, equal} ->
-      lager:info("rebalancing - should_rebalance hit equal equal, calling check_primary_active_connections"),
-      check_primary_active_connections(State);
+      lager:info("rebalancing - should_rebalance hit equal equal"),
+      check_active_primary_connections(State);
     _ ->
       rebalance(State)
   end.
 
-%% TODO: CHECK SINK CONNECTIONS FROM REALTIME CONNECTIOSN STORED IN DATA MANAGER!
-%% check primary connenections for sink as well! [THIS HAS TO BE DONE]
-check_primary_active_connections(State = #state{remote=R, source_nodes = SourceNodes, sink_nodes = SinkNodes}) ->
-  RealtimeConnectionsSourceSink = riak_repl2_rtsource_conn_data_mgr:read(realtime_connections, R),
-%%   RealtimeConnectionsSinkSource = invert_dictionary(RealtimeConnectionsSourceSink),
-  Keys = dict:fetch_keys(RealtimeConnectionsSourceSink),
-  ActualConnectionCounts = lists:sort(count_primary_connections(RealtimeConnectionsSourceSink, Keys, [])),
-  lager:info("rebalancing2.0 -
-  realtime connections ~p
-  keys ~p
-  actual connection counts ~p", [RealtimeConnectionsSourceSink, Keys, ActualConnectionCounts]),
-  ExpectedConnectionCounts = lists:sort(build_expected_primary_connection_counts(for_source_nodes, SourceNodes, SinkNodes)),
-  Exp = ActualConnectionCounts == ExpectedConnectionCounts,
-
-  case Exp of
-    true ->
-      false;
-    false ->
+check_active_primary_connections(State) ->
+  case check_active_primary_connections_source(State) of
+    {true, RealtimeConnections} ->
+      lager:info("rebalancing - source active primary connections are correct"),
+      case check_active_primary_connections_sink(RealtimeConnections, State) of
+        true ->
+          lager:info("rebalancing - sink active primary connections are correct"),
+          false;
+        _ ->
+          rebalance(State)
+      end;
+    _ ->
       rebalance(State)
   end.
+
+
+check_active_primary_connections_sink(RealtimeConnections, #state{source_nodes = SourceNodes, sink_nodes = SinkNodes})->
+  InvertedRealtimeConnections = invert_dictionary(RealtimeConnections),
+  Keys = dict:fetch_keys(InvertedRealtimeConnections),
+  ActualConnectionCounts = lists:sort(count_primary_connections(InvertedRealtimeConnections, Keys, [])),
+  ExpectedConnectionCounts = lists:sort(build_expected_primary_connection_counts(for_sink_nodes, SourceNodes, SinkNodes)),
+  ActualConnectionCounts == ExpectedConnectionCounts.
+
+
+check_active_primary_connections_source(#state{remote=R, source_nodes = SourceNodes, sink_nodes = SinkNodes}) ->
+  RealtimeConnections = riak_repl2_rtsource_conn_data_mgr:read(realtime_connections, R),
+  Keys = dict:fetch_keys(RealtimeConnections),
+  ActualConnectionCounts = lists:sort(count_primary_connections(RealtimeConnections, Keys, [])),
+  ExpectedConnectionCounts = lists:sort(build_expected_primary_connection_counts(for_source_nodes, SourceNodes, SinkNodes)),
+  Exp = ActualConnectionCounts == ExpectedConnectionCounts,
+  {Exp, RealtimeConnections}.
 
 build_expected_primary_connection_counts(For, SourceNodes, SinkNodes) ->
   case {SourceNodes, SinkNodes} of
@@ -365,6 +376,31 @@ get_primary_count([{_,Primary}|Rest], N) ->
     _ ->
       get_primary_count(Rest, N)
   end.
+
+
+invert_dictionary(Dictionary) ->
+  Keys = dict:fetch_keys(Dictionary),
+  invert_dictionary_helper(Dictionary, Keys, dict:new()).
+
+invert_dictionary_helper(_Dictionary, [], NewDict) ->
+  NewDict;
+invert_dictionary_helper(Dictionary, [Key|Rest], Dict) ->
+  Values = dict:fetch(Key, Dictionary),
+  NewDict = invert_dictionary_helper_builder(Key, Values, Dict),
+  invert_dictionary_helper(Dictionary, Rest, NewDict).
+
+invert_dictionary_helper_builder(_Source, [], Dict) ->
+  Dict;
+invert_dictionary_helper_builder(Source, [{Sink,Primary}|Rest], Dict) ->
+  NewDict = case Primary of
+              true ->
+                dict:append(Sink, {Source,Primary}, Dict);
+              false ->
+                Dict
+            end,
+  invert_dictionary_helper_builder(Source, Rest, NewDict).
+
+
 
 rebalance(#state{endpoints = Endpoints, remote=Remote}) ->
   case riak_core_cluster_mgr:get_ipaddrs_of_cluster(Remote, split) of
