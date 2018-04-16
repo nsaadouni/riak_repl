@@ -422,24 +422,25 @@ check_remove_endpoint(State=#state{remove_endpoint = RE}, ConnectToNodes) ->
   end.
 
 
-check_and_drop_connections(State=#state{endpoints = E, kill_time = K}, DropNodes=[X|Xs], ConnectedSinkNodes) ->
+check_and_drop_connections(State=#state{endpoints = E, kill_time = K, remote = R}, DropNodes=[X|Xs], ConnectedSinkNodes) ->
   case ConnectedSinkNodes -- DropNodes of
     [] ->
-      NewEndpoints = remove_connections(Xs, E, K),
+      NewEndpoints = remove_connections(Xs, E, {K,R}),
       {true, State#state{endpoints = NewEndpoints, remove_endpoint = X}};
     _ ->
-      NewEndpoints = remove_connections(DropNodes, E, K),
+      NewEndpoints = remove_connections(DropNodes, E, {K,R}),
       {false, State#state{endpoints = NewEndpoints, remove_endpoint = undefined}}
   end.
 
-remove_connections([], E, _Killtime) ->
+remove_connections([], E, _) ->
   E;
-remove_connections([Key | Rest], E, KillTime) ->
+remove_connections([Key={Addr, Primary} | Rest], E, {KillTime, Remote}) ->
   RtSourcePid = orddict:fetch(Key, E),
   HelperPid = riak_repl2_rtsource_conn:get_helper_pid(RtSourcePid),
   riak_repl2_rtsource_helper:stop_pulling(HelperPid),
   lager:debug("rtsource_conn called to gracefully kill itself ~p", [Key]),
   erlang:send_after(KillTime, self(), {kill_rtsource_conn, RtSourcePid}),
+  riak_repl2_rtsource_conn_data_mgr:delete(realtime_connections, Remote, node(), Addr, Primary),
   remove_connections(Rest, orddict:erase(Key, E), KillTime).
 
 get_source_and_sink_nodes(Remote) ->

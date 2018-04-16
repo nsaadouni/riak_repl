@@ -260,7 +260,7 @@ handle_info({Proto, _S, TcpBin}, State= #state{cont = Cont})
   when Proto == tcp; Proto == ssl ->
     recv(<<Cont/binary, TcpBin/binary>>, State);
 handle_info({Closed, _S},
-            State = #state{remote = Remote, cont = Cont})
+            State = #state{remote = Remote, cont = Cont, conn_mgr_pid = C, address = A, primary = P})
   when Closed == tcp_closed; Closed == ssl_closed ->
     case size(Cont) of
         0 ->
@@ -270,16 +270,18 @@ handle_info({Closed, _S},
             lager:warning("Realtime connection ~s to ~p closed with partial receive of ~b bytes\n",
                           [peername(State), Remote, NumBytes])
     end,
-    %% go to sleep for 1s so a sink that opens the connection ok but then
-    %% dies will not make the server restart too fst.
-    timer:sleep(1000),
+    %% remove this connection from the manager
+    riak_repl2_rtsource_conn_mgr:connection_closed(C, A, P),
     {stop, normal, State};
 handle_info({Error, _S, Reason},
-            State = #state{remote = Remote, cont = Cont})
+            State = #state{remote = Remote, cont = Cont, conn_mgr_pid = C, address = A, primary = P})
   when Error == tcp_error; Error == ssl_error ->
     riak_repl_stats:rt_source_errors(),
     lager:warning("Realtime connection ~s to ~p network error ~p - ~b bytes pending\n",
                   [peername(State), Remote, Reason, size(Cont)]),
+
+    %% remove this connection from the manager
+    riak_repl2_rtsource_conn_mgr:connection_closed(C, A, P),
     {stop, normal, State};
 
 handle_info(send_heartbeat, State) ->
@@ -287,7 +289,10 @@ handle_info(send_heartbeat, State) ->
 handle_info({heartbeat_timeout, HBSent}, State = #state{hb_sent_q = HBSentQ,
                                                         hb_timeout_tref = HBTRef,
                                                         hb_timeout = HBTimeout,
-                                                        remote = Remote}) ->
+                                                        remote = Remote,
+                                                        conn_mgr_pid = C,
+                                                        address = A,
+                                                        primary = P}) ->
     TimeSinceTimeout = timer:now_diff(now(), HBSent) div 1000,
 
     %% hb_timeout_tref is the authority of whether we should
@@ -303,6 +308,9 @@ handle_info({heartbeat_timeout, HBSent}, State = #state{hb_sent_q = HBSentQ,
                           "after ~p seconds\n",
                           [peername(State), Remote, HBTimeout]),
             lager:info("hb_sent_q_len after heartbeat_timeout: ~p", [queue:len(HBSentQ)]),
+
+            %% remove this connection from the manager
+            riak_repl2_rtsource_conn_mgr:connection_closed(C, A, P),
             {stop, normal, State}
     end;
 
@@ -310,10 +318,7 @@ handle_info(Msg, State) ->
     lager:warning("Unhandled info:  ~p", [Msg]),
     {noreply, State}.
 
-terminate(Reason, #state{helper_pid=HelperPid, address = A, primary = P, conn_mgr_pid = C}) ->
-  %% remove this connection from the manager
-  riak_repl2_rtsource_conn_mgr:connection_closed(C, A, P),
-
+terminate(Reason, #state{helper_pid=HelperPid}) ->
   lager:info("rtsource conn terminated due to ~p", [Reason]),
   catch riak_repl2_rtsource_helper:stop(HelperPid),
   ok.
