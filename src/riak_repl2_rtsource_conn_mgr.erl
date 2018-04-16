@@ -133,7 +133,7 @@ handle_call({connected, Socket, Transport, IPPort, Proto, _Props, Primary}, _Fro
                        undefined ->
                         State;
                       RC ->
-                        E2 = remove_connections([RC], E, K),
+                        E2 = remove_connections([RC], E, {K,Remote}),
                         State#state{endpoints = E2, remove_endpoint = undefined}
                      end,
 
