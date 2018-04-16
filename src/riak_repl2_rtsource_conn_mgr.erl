@@ -441,7 +441,7 @@ remove_connections([Key={Addr, Primary} | Rest], E, {KillTime, Remote}) ->
   lager:debug("rtsource_conn called to gracefully kill itself ~p", [Key]),
   erlang:send_after(KillTime, self(), {kill_rtsource_conn, RtSourcePid}),
   riak_repl2_rtsource_conn_data_mgr:delete(realtime_connections, Remote, node(), Addr, Primary),
-  remove_connections(Rest, orddict:erase(Key, E), KillTime).
+  remove_connections(Rest, orddict:erase(Key, E), {KillTime, Remote}).
 
 get_source_and_sink_nodes(Remote) ->
   SourceNodes = riak_repl2_rtsource_conn_data_mgr:read(active_nodes),
