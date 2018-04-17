@@ -95,7 +95,7 @@ init([Remote]) ->
       _ = riak_repl2_rtq:register(Remote), % re-register to reset stale deliverfun
       lager:debug("connection ref ~p", [Ref]),
       S = riak_repl2_rtsource_conn_2_sup:make_module_name(Remote),
-      E = orddict:new(),
+      E = dict:new(),
 
       MaxDelaySecs = app_helper:get_env(riak_repl, realtime_connection_rebalance_max_delay_secs, 120),
       lager:debug("max delay for connection rebalancing: ~p", [MaxDelaySecs]),
@@ -138,11 +138,11 @@ handle_call({connected, Socket, Transport, IPPort, Proto, _Props, Primary}, _Fro
                      end,
 
           %% Save {EndPoint, Pid}; Pid will come from the supervisor starting a child
-          NewEndpoints = orddict:store({IPPort, Primary}, RtSourcePid, NewState#state.endpoints),
+          NewEndpoints = dict:store({IPPort, Primary}, RtSourcePid, NewState#state.endpoints),
 
           % save to ring
           lager:debug("rtsource_conn_mgr send connection data to data mgr"),
-          riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, Remote, node(), IPPort, Primary),
+          riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, Remote, node(), dict:fetch_keys(NewEndpoints)),
 
           {reply, ok, NewState#state{endpoints = NewEndpoints}};
 
@@ -155,11 +155,11 @@ handle_call({connected, Socket, Transport, IPPort, Proto, _Props, Primary}, _Fro
   end;
 
 handle_call(all_status, _From, State=#state{endpoints = E}) ->
-  AllKeys = orddict:fetch_keys(E),
+  AllKeys = dict:fetch_keys(E),
   {reply, collect_status_data(AllKeys, [], E), State};
 
 handle_call({connection_closed, Addr, Primary}, _From, State=#state{endpoints = E, remote = R}) ->
-  NewEndpoints = orddict:erase({Addr,Primary}, E),
+  NewEndpoints = dict:erase({Addr,Primary}, E),
   riak_repl2_rtsource_conn_data_mgr:delete(realtime_connections, R, node(), Addr, Primary),
   NewState = case NewEndpoints of
     [] ->
@@ -259,7 +259,7 @@ maybe_rebalance(State, now) ->
       drop nodes ~p
       connect nodes ~p", [DropNodes, ConnectToNodes]),
       {_RemoveAllConnections, NewState1} = check_and_drop_connections(State, DropNodes, ConnectedSinkNodes),
-      riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, NewState1#state.remote, node(), orddict:fetch_keys(NewState1#state.endpoints)),
+      riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, NewState1#state.remote, node(), dict:fetch_keys(NewState1#state.endpoints)),
       NewState1#state{sink_nodes = NewSink, source_nodes = NewSource};
 
     {true, {nodes_up_and_down, DropNodes, ConnectToNodes, Primary, Secondary, ConnectedSinkNodes}} ->
@@ -268,7 +268,7 @@ maybe_rebalance(State, now) ->
       connect nodes ~p", [DropNodes, ConnectToNodes]),
       {RemoveAllConnections, NewState1} = check_and_drop_connections(State, DropNodes, ConnectedSinkNodes),
       NewState2 = check_remove_endpoint(NewState1, ConnectToNodes),
-      riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, NewState2#state.remote, node(), orddict:fetch_keys(NewState2#state.endpoints)),
+      riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, NewState2#state.remote, node(), dict:fetch_keys(NewState2#state.endpoints)),
       case RemoveAllConnections of
         true ->
           rebalance_connect(NewState2#state{sink_nodes = NewSink, source_nodes = NewSource}, Primary++Secondary);
@@ -407,7 +407,7 @@ rebalance(#state{endpoints = Endpoints, remote=Remote}) ->
     {ok, []} ->
       rebalance_needed_empty_list_returned;
     {ok, {Primary, Secondary}} ->
-      ConnectedSinkNodes = [ {IPPort, P} || {{IPPort, P},_Pid} <- orddict:to_list(Endpoints)],
+      ConnectedSinkNodes = [ {IPPort, P} || {{IPPort, P},_Pid} <- dict:to_list(Endpoints)],
       {Action, DropNodes, ConnectToNodes} = compare_nodes(ConnectedSinkNodes, Primary),
       {true, {Action, DropNodes, ConnectToNodes, Primary, Secondary, ConnectedSinkNodes}}
   end.
@@ -435,13 +435,13 @@ check_and_drop_connections(State=#state{endpoints = E, kill_time = K, remote = R
 remove_connections([], E, _) ->
   E;
 remove_connections([Key={Addr, Primary} | Rest], E, {KillTime, Remote}) ->
-  RtSourcePid = orddict:fetch(Key, E),
+  RtSourcePid = dict:fetch(Key, E),
   HelperPid = riak_repl2_rtsource_conn:get_helper_pid(RtSourcePid),
   riak_repl2_rtsource_helper:stop_pulling(HelperPid),
   lager:debug("rtsource_conn called to gracefully kill itself ~p", [Key]),
   erlang:send_after(KillTime, self(), {kill_rtsource_conn, RtSourcePid}),
   riak_repl2_rtsource_conn_data_mgr:delete(realtime_connections, Remote, node(), Addr, Primary),
-  remove_connections(Rest, orddict:erase(Key, E), {KillTime, Remote}).
+  remove_connections(Rest, dict:erase(Key, E), {KillTime, Remote}).
 
 get_source_and_sink_nodes(Remote) ->
   SourceNodes = riak_repl2_rtsource_conn_data_mgr:read(active_nodes),
@@ -498,6 +498,6 @@ rebalance_connect(State=#state{remote=Remote}, BetterAddrs) ->
 collect_status_data([], Data, _E) ->
   Data;
 collect_status_data([Key | Rest], Data, E) ->
-  Pid = orddict:fetch(Key, E),
+  Pid = dict:fetch(Key, E),
   NewData = [riak_repl2_rtsource_conn:status(Pid) | Data],
   collect_status_data(Rest, NewData, E).
