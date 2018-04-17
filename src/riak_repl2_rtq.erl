@@ -48,7 +48,7 @@
 -define(SERVER, ?MODULE).
 -define(DEFAULT_OVERLOAD, 2000).
 -define(DEFAULT_RECOVER, 1000).
--define(DEFAULT_RTQ_LATENCY_WINDOW, 1000).
+-define(DEFAULT_RTQ_LATENCY_SLIDING_WINDOW, 300).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -362,15 +362,11 @@ handle_call({register, Name}, _From, State = #state{qtab = QTab, qseq = QSeq, cs
         false ->
             %% New registration, start from the beginning
             CSeq = MinSeq,
-            RTQLatencyWindow = app_helper:get_env(riak_repl, rtq_latency_window, ?DEFAULT_RTQ_LATENCY_WINDOW),
-            case folsom_metrics:metric_exists({latency, Name}) of
-                true ->
-                    skip;
-                false ->
-                    folsom_metrics:new_histogram({latency, Name}, uniform, RTQLatencyWindow)
-            end,
             UpdCs = [#c{name = Name, aseq = CSeq, cseq = CSeq} | Cs]
     end,
+    RTQSlidingWindow = app_helper:get_env(riak_repl, rtq_latency_window, ?DEFAULT_RTQ_LATENCY_SLIDING_WINDOW),
+    catch folsom_metrics:delete_metric({latency, Name}),
+    folsom_metrics:new_histogram({latency, Name}, slide, RTQSlidingWindow),
     {reply, {ok, CSeq}, State#state{cs = UpdCs}};
 handle_call({unregister, Name}, _From, State) ->
     case unregister_q(Name, State) of
