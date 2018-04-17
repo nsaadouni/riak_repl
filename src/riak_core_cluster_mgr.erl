@@ -762,31 +762,40 @@ get_my_remote_ip_list(_Remote, [], _Return) ->
 get_my_remote_ip_list(Remote, RemoteUnsorted, Return) ->
   SinkNodes = lists:sort(RemoteUnsorted),
   SinkNodesLink = lists:seq(1, length(SinkNodes)),
-  SourceSortedNodes = lists:reverse(riak_repl2_rtsource_conn_data_mgr:read(active_nodes)),
-  NumberOfSinkNodes = length(SinkNodes),
-  NumberOfSourceNodes = length(SourceSortedNodes),
-  SourceNodesTagged = case NumberOfSinkNodes < NumberOfSourceNodes of
-                        true ->
-                          fix_indecies(NumberOfSinkNodes, lists:reverse(lists:zip(lists:seq(0, length(SourceSortedNodes)-1), SourceSortedNodes)), []);
-                        false ->
-                          lists:zip(lists:seq(1, length(SourceSortedNodes)), SourceSortedNodes)
-                      end,
-  SinkNodesLinkTagged = lists:zip(lists:seq(0, length(SinkNodesLink)-1), SinkNodesLink),
-  case lists:keyfind(node(), 2, SourceNodesTagged) of
-    false ->
-      % This node is not part of the cluster
-      % Therefore should not connect to the othe cluster as part of repl for this
-      lager:debug("we are reaching the state that we are not in the cluster! ~p", [SourceSortedNodes]),
+  case riak_repl2_rtsource_conn_data_mgr:read(active_nodes) of
+    no_leader ->
       {ok, []};
-    _ ->
-      AllPrimariesList = [ {So, Si}  || {SinkIndex, Si} <- SinkNodesLinkTagged, {SourceIndex, So} <- SourceNodesTagged, SinkIndex rem NumberOfSourceNodes == SourceIndex-1],
-      AllPrimariesDict = build_primary_dict(AllPrimariesList, dict:new()),
-      FinalLinkedNodes = link_addrs(AllPrimariesDict, SinkNodes, Remote),
-      MyIdx = dict:fetch(node(), AllPrimariesDict),
-      NotMyIdx = lists:seq(1,length(SinkNodes)) -- MyIdx,
-      Primary = [{X,true} || X <- [dict:fetch(Idx, FinalLinkedNodes) || Idx <- MyIdx]],
-      Secondary = [{X,false} || X <- [dict:fetch(Idx, FinalLinkedNodes) || Idx <- NotMyIdx]],
-      filter_output(Primary, shuffle(Secondary), Return)
+    SourceNodes ->
+      SourceSortedNodes = lists:reverse(SourceNodes),
+      NumberOfSinkNodes = length(SinkNodes),
+      NumberOfSourceNodes = length(SourceSortedNodes),
+      SourceNodesTagged = case NumberOfSinkNodes < NumberOfSourceNodes of
+                            true ->
+                              fix_indecies(NumberOfSinkNodes, lists:reverse(lists:zip(lists:seq(0, length(SourceSortedNodes)-1), SourceSortedNodes)), []);
+                            false ->
+                              lists:zip(lists:seq(1, length(SourceSortedNodes)), SourceSortedNodes)
+                          end,
+      SinkNodesLinkTagged = lists:zip(lists:seq(0, length(SinkNodesLink)-1), SinkNodesLink),
+      case lists:keyfind(node(), 2, SourceNodesTagged) of
+        false ->
+          % This node is not part of the cluster
+          % Therefore should not connect to the othe cluster as part of repl for this
+          lager:debug("we are reaching the state that we are not in the cluster! ~p", [SourceSortedNodes]),
+          {ok, []};
+        _ ->
+          AllPrimariesList = [ {So, Si}  || {SinkIndex, Si} <- SinkNodesLinkTagged, {SourceIndex, So} <- SourceNodesTagged, SinkIndex rem NumberOfSourceNodes == SourceIndex-1],
+          AllPrimariesDict = build_primary_dict(AllPrimariesList, dict:new()),
+          case link_addrs(AllPrimariesDict, SinkNodes, Remote) of
+            no_leader ->
+              {ok, []};
+            FinalLinkedNodes ->
+              MyIdx = dict:fetch(node(), AllPrimariesDict),
+              NotMyIdx = lists:seq(1,length(SinkNodes)) -- MyIdx,
+              Primary = [{X,true} || X <- [dict:fetch(Idx, FinalLinkedNodes) || Idx <- MyIdx]],
+              Secondary = [{X,false} || X <- [dict:fetch(Idx, FinalLinkedNodes) || Idx <- NotMyIdx]],
+              filter_output(Primary, shuffle(Secondary), Return)
+          end
+      end
   end.
 
 
@@ -799,20 +808,24 @@ build_primary_dict([{Key, Value}| Rest], Dict) ->
 
 
 link_addrs(AllPrimariesDict, SinkNodes, Remote) ->
-  ActiveConnsDict = riak_repl2_rtsource_conn_data_mgr:read(realtime_connections, Remote),
-  ActiveSources = dict:fetch_keys(ActiveConnsDict),
-  {LinkedActiveNodes, LeftOverSinkNodes, NewPrimaryLinkDict} = link_active_addr({ActiveConnsDict, ActiveSources}, AllPrimariesDict, dict:new(), SinkNodes),
-  lager:debug("
+  case riak_repl2_rtsource_conn_data_mgr:read(realtime_connections, Remote) of
+    no_leader ->
+      no_leader;
+    ActiveConnsDict ->
+      ActiveSources = dict:fetch_keys(ActiveConnsDict),
+      {LinkedActiveNodes, LeftOverSinkNodes, NewPrimaryLinkDict} = link_active_addr({ActiveConnsDict, ActiveSources}, AllPrimariesDict, dict:new(), SinkNodes),
+      lager:debug("
       Old Primary Dict: ~p
       Active Sources: ~p
       Source Nodes That Are Not Active: ~p
       Left Over Sink Nodes: ~p
       Linked Sink Nodes: ~p", [AllPrimariesDict, ActiveSources, NewPrimaryLinkDict, LeftOverSinkNodes, LinkedActiveNodes]),
 
-  Unlinked = lists:usort(unlinked_indexes(dict:to_list(NewPrimaryLinkDict), [])),
-  FinalLinkedNodesDict = link_unactive_addr(Unlinked, LeftOverSinkNodes, LinkedActiveNodes),
-  lager:debug("All linked Nodes Dict: ~p", [FinalLinkedNodesDict]),
-  FinalLinkedNodesDict.
+      Unlinked = lists:usort(unlinked_indexes(dict:to_list(NewPrimaryLinkDict), [])),
+      FinalLinkedNodesDict = link_unactive_addr(Unlinked, LeftOverSinkNodes, LinkedActiveNodes),
+      lager:debug("All linked Nodes Dict: ~p", [FinalLinkedNodesDict]),
+      FinalLinkedNodesDict
+  end.
 
 
 unlinked_indexes([], ListOfIndexes) ->

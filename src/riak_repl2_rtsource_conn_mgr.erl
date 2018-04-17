@@ -100,7 +100,12 @@ init([Remote]) ->
       MaxDelaySecs = app_helper:get_env(riak_repl, realtime_connection_rebalance_max_delay_secs, 120),
       lager:debug("max delay for connection rebalancing: ~p", [MaxDelaySecs]),
       M = fun(X) -> round(X * crypto:rand_uniform(0, 1000)) end,
-      {SourceNodes, SinkNodes} = get_source_and_sink_nodes(Remote),
+      {SourceNodes, SinkNodes} = case get_source_and_sink_nodes(Remote) of
+                                   no_leader ->
+                                     {[], []};
+                                   {X,Y} ->
+                                     {X,Y}
+                                 end,
 
       KillTimeSecs = app_helper:get_env(riak_repl, realtime_connection_removal_delay, 60),
       KillTime = KillTimeSecs * 1000,
@@ -231,49 +236,61 @@ start_rtsource_conn(Remote, S) ->
 
 
 maybe_rebalance(State, now) ->
-  {NewSource, NewSink} = get_source_and_sink_nodes(State#state.remote),
-  case should_rebalance(State, NewSource, NewSink) of
-    false ->
-      lager:info("rebalancing triggered but there is no change in source/sink node status and primary active connections"),
-      State;
-
-    rebalance_needed_empty_list_returned ->
-      lager:warning("rebalancing triggered but get_ip_addrs_of_cluster returned []"),
-      State;
-
-    {true, {equal, DropNodes, ConnectToNodes, _Primary, _Secondary, _ConnectedSinkNodes}} ->
-      lager:info("rebalancing triggered but avoided via active connection matching
-      drop nodes ~p
-      connect nodes ~p", [DropNodes, ConnectToNodes]),
-      State;
-
-    {true, {nodes_up, DropNodes, ConnectToNodes, _Primary, _Secondary, _ConnectedSinkNodes}} ->
-      lager:info("rebalancing triggered and new connections are required
-      drop nodes ~p
-      connect nodes ~p", [DropNodes, ConnectToNodes]),
-      NewState1 = check_remove_endpoint(State, ConnectToNodes),
-      rebalance_connect(NewState1#state{sink_nodes = NewSink, source_nodes = NewSource}, ConnectToNodes);
-
-    {true, {nodes_down, DropNodes, ConnectToNodes, _Primary, _Secondary, ConnectedSinkNodes}} ->
-      lager:info("rebalancing triggered and active connections required to be dropped
-      drop nodes ~p
-      connect nodes ~p", [DropNodes, ConnectToNodes]),
-      {_RemoveAllConnections, NewState1} = check_and_drop_connections(State, DropNodes, ConnectedSinkNodes),
-      riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, NewState1#state.remote, node(), dict:fetch_keys(NewState1#state.endpoints)),
-      NewState1#state{sink_nodes = NewSink, source_nodes = NewSource};
-
-    {true, {nodes_up_and_down, DropNodes, ConnectToNodes, Primary, Secondary, ConnectedSinkNodes}} ->
-      lager:info("rebalancing triggered and some active connections required to be dropped, and also new connections to be made
-      drop nodes ~p
-      connect nodes ~p", [DropNodes, ConnectToNodes]),
-      {RemoveAllConnections, NewState1} = check_and_drop_connections(State, DropNodes, ConnectedSinkNodes),
-      NewState2 = check_remove_endpoint(NewState1, ConnectToNodes),
-      riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, NewState2#state.remote, node(), dict:fetch_keys(NewState2#state.endpoints)),
-      case RemoveAllConnections of
-        true ->
-          rebalance_connect(NewState2#state{sink_nodes = NewSink, source_nodes = NewSource}, Primary++Secondary);
+  case get_source_and_sink_nodes(State#state.remote) of
+    no_leader ->
+      lager:info("rebalancing triggered, but an error occured with regard to the leader in the data mgr, will rebalance in 5 seconds"),
+      RbTimeoutTref = erlang:send_after(5000, self(), rebalance_now),
+      State#state{rb_timeout_tref = RbTimeoutTref};
+    {NewSource, NewSink} ->
+      case should_rebalance(State, NewSource, NewSink) of
         false ->
-          rebalance_connect(NewState2#state{sink_nodes = NewSink, source_nodes = NewSource}, ConnectToNodes)
+          lager:info("rebalancing triggered but there is no change in source/sink node status and primary active connections"),
+          State;
+
+        no_leader ->
+          lager:info("rebalancing triggered, but an error occured with regard to the leader in the data mgr, will rebalance in 5 seconds"),
+          RbTimeoutTref = erlang:send_after(5000, self(), rebalance_now),
+          State#state{rb_timeout_tref = RbTimeoutTref};
+
+        rebalance_needed_empty_list_returned ->
+          lager:info("rebalancing triggered but get_ip_addrs_of_cluster returned [], will rebalance in 5 seconds"),
+          RbTimeoutTref = erlang:send_after(5000, self(), rebalance_now),
+          State#state{rb_timeout_tref = RbTimeoutTref};
+
+        {true, {equal, DropNodes, ConnectToNodes, _Primary, _Secondary, _ConnectedSinkNodes}} ->
+          lager:info("rebalancing triggered but avoided via active connection matching
+      drop nodes ~p
+      connect nodes ~p", [DropNodes, ConnectToNodes]),
+          State;
+
+        {true, {nodes_up, DropNodes, ConnectToNodes, _Primary, _Secondary, _ConnectedSinkNodes}} ->
+          lager:info("rebalancing triggered and new connections are required
+      drop nodes ~p
+      connect nodes ~p", [DropNodes, ConnectToNodes]),
+          NewState1 = check_remove_endpoint(State, ConnectToNodes),
+          rebalance_connect(NewState1#state{sink_nodes = NewSink, source_nodes = NewSource}, ConnectToNodes);
+
+        {true, {nodes_down, DropNodes, ConnectToNodes, _Primary, _Secondary, ConnectedSinkNodes}} ->
+          lager:info("rebalancing triggered and active connections required to be dropped
+      drop nodes ~p
+      connect nodes ~p", [DropNodes, ConnectToNodes]),
+          {_RemoveAllConnections, NewState1} = check_and_drop_connections(State, DropNodes, ConnectedSinkNodes),
+          riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, NewState1#state.remote, node(), dict:fetch_keys(NewState1#state.endpoints)),
+          NewState1#state{sink_nodes = NewSink, source_nodes = NewSource};
+
+        {true, {nodes_up_and_down, DropNodes, ConnectToNodes, Primary, Secondary, ConnectedSinkNodes}} ->
+          lager:info("rebalancing triggered and some active connections required to be dropped, and also new connections to be made
+      drop nodes ~p
+      connect nodes ~p", [DropNodes, ConnectToNodes]),
+          {RemoveAllConnections, NewState1} = check_and_drop_connections(State, DropNodes, ConnectedSinkNodes),
+          NewState2 = check_remove_endpoint(NewState1, ConnectToNodes),
+          riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, NewState2#state.remote, node(), dict:fetch_keys(NewState2#state.endpoints)),
+          case RemoveAllConnections of
+            true ->
+              rebalance_connect(NewState2#state{sink_nodes = NewSink, source_nodes = NewSource}, Primary++Secondary);
+            false ->
+              rebalance_connect(NewState2#state{sink_nodes = NewSink, source_nodes = NewSource}, ConnectToNodes)
+          end
       end
   end;
 maybe_rebalance(State=#state{rebalance_delay_fun = Fun, max_delay = M}, delayed) ->
@@ -309,6 +326,8 @@ check_active_primary_connections(State) ->
         _ ->
           rebalance(State)
       end;
+    no_leader ->
+      no_leader;
     _ ->
       rebalance(State)
   end.
@@ -324,11 +343,16 @@ check_active_primary_connections_sink(RealtimeConnections, #state{source_nodes =
 
 check_active_primary_connections_source(#state{remote=R, source_nodes = SourceNodes, sink_nodes = SinkNodes}) ->
   RealtimeConnections = riak_repl2_rtsource_conn_data_mgr:read(realtime_connections, R),
-  Keys = dict:fetch_keys(RealtimeConnections),
-  ActualConnectionCounts = lists:sort(count_primary_connections(RealtimeConnections, Keys, [])),
-  ExpectedConnectionCounts = lists:sort(build_expected_primary_connection_counts(for_source_nodes, SourceNodes, SinkNodes)),
-  Exp = ActualConnectionCounts == ExpectedConnectionCounts,
-  {Exp, RealtimeConnections}.
+  case RealtimeConnections of
+    no_leader ->
+      no_leader;
+    RTC ->
+      Keys = dict:fetch_keys(RTC),
+      ActualConnectionCounts = lists:sort(count_primary_connections(RTC, Keys, [])),
+      ExpectedConnectionCounts = lists:sort(build_expected_primary_connection_counts(for_source_nodes, SourceNodes, SinkNodes)),
+      Exp = ActualConnectionCounts == ExpectedConnectionCounts,
+      {Exp, RTC}
+  end.
 
 build_expected_primary_connection_counts(For, SourceNodes, SinkNodes) ->
   case {SourceNodes, SinkNodes} of
@@ -444,9 +468,14 @@ remove_connections([Key={Addr, Primary} | Rest], E, {KillTime, Remote}) ->
   remove_connections(Rest, dict:erase(Key, E), {KillTime, Remote}).
 
 get_source_and_sink_nodes(Remote) ->
-  SourceNodes = riak_repl2_rtsource_conn_data_mgr:read(active_nodes),
-  SinkNodes = riak_core_cluster_mgr:get_unshuffled_ipaddrs_of_cluster(Remote),
-  {SourceNodes, SinkNodes}.
+  Source = riak_repl2_rtsource_conn_data_mgr:read(active_nodes),
+  case Source of
+    no_leader ->
+      no_leader;
+    SourceNodes ->
+      SinkNodes = riak_core_cluster_mgr:get_unshuffled_ipaddrs_of_cluster(Remote),
+      {SourceNodes, SinkNodes}
+  end.
 
 compare_nodes(Old, New) ->
   case Old == New of

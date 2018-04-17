@@ -30,7 +30,8 @@
   is_leader,
   connections,
   active_nodes,
-  polling_interval
+  polling_interval,
+  restoration
 
 }).
 
@@ -83,7 +84,7 @@ init([]) ->
   PollingInterval = PollingIntervalSecs * 1000,
   lager:debug("node watcher polling interval: ~p", [PollingInterval]),
   erlang:send_after(PollingInterval, self(), poll_node_watcher),
-  {ok, #state{is_leader = IsLeader, leader_node = Leader, connections = C, active_nodes = AN, polling_interval = PollingInterval}}.
+  {ok, #state{is_leader = IsLeader, leader_node = Leader, connections = C, active_nodes = AN, polling_interval = PollingInterval, restoration = false}}.
 
 
 %% -------------------------------------------------- Read ---------------------------------------------------------- %%
@@ -94,7 +95,7 @@ handle_call(Msg={read_realtime_connections, Remote}, _From, State=#state{connect
       NodeDict = get_value(Remote, C, dictionary),
       {reply, NodeDict, State};
     false ->
-      NoLeaderResult = dict:new(),
+      NoLeaderResult = no_leader,
       proxy_call(Msg, NoLeaderResult, State)
   end;
 
@@ -105,7 +106,7 @@ handle_call(Msg={read_realtime_connections, Remote, Node}, _From, State=#state{c
       ConnsList = get_value(Node, NodeDict, list),
       {reply, ConnsList, State};
     false ->
-      NoLeaderResult = dict:new(),
+      NoLeaderResult = no_leader,
       proxy_call(Msg, NoLeaderResult, State)
   end;
 
@@ -114,10 +115,18 @@ handle_call(Msg=read_active_nodes, _From, State=#state{active_nodes = AN, is_lea
     true ->
       {reply, AN, State};
     false ->
-      NoLeaderResult = [],
+      NoLeaderResult = no_leader,
       proxy_call(Msg, NoLeaderResult, State)
   end;
 
+handle_call({proxy_cast_handle, CastMsg}, _From, State=#state{restoration = R}) ->
+  case R of
+    true ->
+      {reply, restoration_in_process, State};
+    false ->
+      gen_server:cast(?SERVER, CastMsg),
+      {reply, ok, State}
+  end;
 
 handle_call(_Request, _From, State) ->
   {reply, ok, State}.
@@ -226,7 +235,7 @@ handle_cast(_Request, State) ->
 handle_info(restore_leader_data, State) ->
   RemoteRealtimeConnections = riak_repl_ring:get_realtime_connection_data(),
   ActiveNodes = riak_repl_ring:get_active_nodes(),
-  {noreply, State#state{connections = RemoteRealtimeConnections, active_nodes = ActiveNodes}};
+  {noreply, State#state{connections = RemoteRealtimeConnections, active_nodes = ActiveNodes, restoration = false}};
 
 handle_info(poll_node_watcher, State=#state{active_nodes = OldActiveNodes, connections = C, polling_interval = PI}) when State#state.is_leader == true ->
   NewActiveNodes = riak_core_node_watcher:nodes(riak_kv),
@@ -252,6 +261,9 @@ handle_info(poll_node_watcher, State=#state{polling_interval = PI}) ->
   erlang:send_after(PI, self(), poll_node_watcher),
   {noreply, State};
 
+handle_info({cast_again, CastMsg}, State) ->
+  gen_server:cast(?SERVER, CastMsg),
+  {noreply, State};
 handle_info(_Info, State) ->
   {noreply, State}.
 
@@ -280,8 +292,8 @@ remove_nodes([Node|Nodes], Remote, ConnectionsDict) ->
 
 
 become_leader(State, LeaderNode) when State#state.is_leader == false ->
-  erlang:send_after(5000, self(), restore_leader_data),
-  State#state{is_leader = true, leader_node = LeaderNode};
+  erlang:send_after(3000, self(), restore_leader_data),
+  State#state{is_leader = true, leader_node = LeaderNode, restoration = true};
 become_leader(State, LeaderNode) ->
   State#state{is_leader = true, leader_node = LeaderNode}.
 
@@ -292,10 +304,19 @@ become_proxy(State, LeaderNode) ->
   State#state{is_leader = false, leader_node = LeaderNode}.
 
 
-proxy_cast(_Cast, _State = #state{leader_node=Leader}) when Leader == undefined ->
+proxy_cast(CastMsg, _State = #state{leader_node=Leader}) when Leader == undefined ->
+  erlang:send_after(5000, self(), {cast_again, CastMsg}),
   ok;
-proxy_cast(Cast, _State = #state{leader_node=Leader}) ->
-  gen_server:cast({?SERVER, Leader}, Cast).
+proxy_cast(CastMsg, _State = #state{leader_node=Leader}) ->
+  try gen_server:call({?SERVER, Leader}, {proxy_cast_handle, CastMsg}, ?PROXY_CALL_TIMEOUT) of
+    restoration_in_process ->
+      erlang:send_after(5000, self(), {cast_again, CastMsg});
+    ok -> ok
+  catch
+    exit:_Error ->
+      erlang:send_after(5000, self(), {cast_again, CastMsg})
+  end,
+  ok.
 
 proxy_call(_Call, NoLeaderResult, State = #state{leader_node=Leader}) when Leader == undefined ->
   lager:debug("data_mgr no leader call: ~p", [_Call]),
