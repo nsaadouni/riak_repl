@@ -241,13 +241,13 @@ maybe_rebalance(State, now) ->
       lager:info("rebalancing triggered, but an error occured with regard to the leader in the data mgr, will rebalance in 5 seconds"),
       RbTimeoutTref = erlang:send_after(5000, self(), rebalance_now),
       %% update data manager
-      riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, State#state.remote, node(), dict:fetch_keys(State#state.endpoints)),
+%%      riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, State#state.remote, node(), dict:fetch_keys(State#state.endpoints)),
       State#state{rb_timeout_tref = RbTimeoutTref};
     {NewSource, NewSink} ->
       case should_rebalance(State, NewSource, NewSink) of
         false ->
           %% update data manager
-          riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, State#state.remote, node(), dict:fetch_keys(State#state.endpoints)),
+%%          riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, State#state.remote, node(), dict:fetch_keys(State#state.endpoints)),
           lager:info("rebalancing triggered but there is no change in source/sink node status and primary active connections"),
           State;
 
@@ -255,13 +255,13 @@ maybe_rebalance(State, now) ->
           lager:info("rebalancing triggered, but an error occured with regard to the leader in the data mgr, will rebalance in 5 seconds"),
           RbTimeoutTref = erlang:send_after(5000, self(), rebalance_now),
           %% update data manager
-          riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, State#state.remote, node(), dict:fetch_keys(State#state.endpoints)),
+%%          riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, State#state.remote, node(), dict:fetch_keys(State#state.endpoints)),
           State#state{rb_timeout_tref = RbTimeoutTref};
 
         rebalance_needed_empty_list_returned ->
           lager:info("rebalancing triggered but get_ip_addrs_of_cluster returned [], will rebalance in 5 seconds"),
           %% update data manager
-          riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, State#state.remote, node(), dict:fetch_keys(State#state.endpoints)),
+%%          riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, State#state.remote, node(), dict:fetch_keys(State#state.endpoints)),
           State;
 
         {true, {equal, DropNodes, ConnectToNodes, _Primary, _Secondary, _ConnectedSinkNodes}} ->
@@ -269,7 +269,7 @@ maybe_rebalance(State, now) ->
       drop nodes ~p
       connect nodes ~p", [DropNodes, ConnectToNodes]),
           %% update data manager
-          riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, State#state.remote, node(), dict:fetch_keys(State#state.endpoints)),
+%%          riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, State#state.remote, node(), dict:fetch_keys(State#state.endpoints)),
           State;
 
         {true, {nodes_up, DropNodes, ConnectToNodes, _Primary, _Secondary, _ConnectedSinkNodes}} ->
@@ -278,7 +278,7 @@ maybe_rebalance(State, now) ->
       connect nodes ~p", [DropNodes, ConnectToNodes]),
           NewState1 = check_remove_endpoint(State, ConnectToNodes),
           %% update data manager
-          riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, NewState1#state.remote, node(), dict:fetch_keys(NewState1#state.endpoints)),
+%%          riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, NewState1#state.remote, node(), dict:fetch_keys(NewState1#state.endpoints)),
           rebalance_connect(NewState1#state{sink_nodes = NewSink, source_nodes = NewSource}, ConnectToNodes);
 
         {true, {nodes_down, DropNodes, ConnectToNodes, _Primary, _Secondary, ConnectedSinkNodes}} ->

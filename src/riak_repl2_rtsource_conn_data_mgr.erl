@@ -120,12 +120,18 @@ handle_call(Msg=read_active_nodes, _From, State=#state{active_nodes = AN, is_lea
   end;
 
 handle_call({proxy_cast_handle, CastMsg}, _From, State=#state{restoration = R}) ->
-  case R of
-    true ->
-      {reply, restoration_in_process, State};
-    false ->
+  case CastMsg of
+    {restore_realtime_connections,_,_,_} ->
       gen_server:cast(?SERVER, CastMsg),
-      {reply, ok, State}
+      {reply, ok, State};
+    Msg ->
+      case R of
+        true ->
+          {reply, restoration_in_process, State};
+        false ->
+          gen_server:cast(?SERVER, Msg),
+          {reply, ok, State}
+      end
   end;
 
 handle_call(_Request, _From, State) ->
@@ -167,7 +173,7 @@ handle_cast(Msg={delete_realtime_connections, Remote, Node}, State=#state{connec
       OldNodeDict = get_value(Remote, C, dictionary),
       NewNodeDict = dict:erase(Node, OldNodeDict),
       NewConnections = dict:store(Remote, NewNodeDict, C),
-      lager:debug("delted realtime connection data ~p ~p", [Remote, Node]),
+      lager:debug("deleted realtime connection data ~p ~p", [Remote, Node]),
 
       % push to ring
       riak_core_ring_manager:ring_trans(fun riak_repl_ring:overwrite_realtime_connection_data/2, NewConnections),
@@ -211,7 +217,16 @@ handle_cast(Msg = {write_realtime_connections, Remote, Node, IPPort, Primary}, S
       {noreply, State}
   end;
 
-handle_cast(Msg = {write_realtime_connections, Remote, Node, ConnectionList}, State=#state{connections = C}) ->
+handle_cast(Msg = {write_realtime_connections, _Remote, _Node, _ConnectionList}, State) ->
+  write_realtime_connections(Msg,State);
+
+handle_cast(Msg = {restore_realtime_connections, _Remote, _Node, _ConnectionList}, State) ->
+  write_realtime_connections(Msg,State);
+
+handle_cast(_Request, State) ->
+  {noreply, State}.
+
+write_realtime_connections(Msg={_,Remote,Node,ConnectionList}, State = #state{connections=C}) ->
   case State#state.is_leader of
     true ->
       OldRemoteDict = get_value(Remote, C, dictionary),
@@ -225,17 +240,16 @@ handle_cast(Msg = {write_realtime_connections, Remote, Node, ConnectionList}, St
     false ->
       proxy_cast(Msg, State),
       {noreply, State}
-  end;
-
-
-handle_cast(_Request, State) ->
-  {noreply, State}.
+  end.
 
 
 handle_info(restore_leader_data, State) ->
   RemoteRealtimeConnections = riak_repl_ring:get_realtime_connection_data(),
   ActiveNodes = riak_repl_ring:get_active_nodes(),
-  {noreply, State#state{connections = RemoteRealtimeConnections, active_nodes = ActiveNodes, restoration = false}};
+  {noreply, State#state{connections = RemoteRealtimeConnections, active_nodes = ActiveNodes}};
+
+handle_info(reset_restoration_flag, State) ->
+  {noreply, State#state{restoration = false}};
 
 handle_info(poll_node_watcher, State=#state{active_nodes = OldActiveNodes, connections = C, polling_interval = PI}) when State#state.is_leader == true ->
   NewActiveNodes = riak_core_node_watcher:nodes(riak_kv),
@@ -292,16 +306,25 @@ remove_nodes([Node|Nodes], Remote, ConnectionsDict) ->
 
 
 become_leader(State, LeaderNode) when State#state.is_leader == false ->
-  erlang:send_after(3000, self(), restore_leader_data),
-  State#state{is_leader = true, leader_node = LeaderNode, restoration = true};
+  send_leader_data(),
+  erlang:send_after(5000, self(), reset_restoration_flag),
+  State#state{is_leader = true, leader_node = LeaderNode, restoration = true};%% active_nodes = ActiveNodes};
 become_leader(State, LeaderNode) ->
   State#state{is_leader = true, leader_node = LeaderNode}.
 
 
 become_proxy(State, LeaderNode) when State#state.is_leader == true ->
-  State#state{is_leader = false, leader_node = LeaderNode};
+  send_leader_data(),
+  State#state{is_leader = false, leader_node = LeaderNode, connections = dict:new(), restoration = false};
 become_proxy(State, LeaderNode) ->
+  send_leader_data(),
   State#state{is_leader = false, leader_node = LeaderNode}.
+
+send_leader_data() ->
+  ConnMgrsPids = riak_repl2_rtsource_conn_sup:enabled(),
+  AllEndpoints =  [{Remote,ConnsList} || {Remote, ConnsList} <- lists:map(fun({R,Pid}) -> {R, dict:fetch_keys(riak_repl2_rtsource_conn_mgr:get_endpoints(Pid))} end, ConnMgrsPids)],
+  [gen_server:cast(?SERVER, {restore_realtime_connections, Remote, node(), ConnectionList}) || {Remote, ConnectionList} <- AllEndpoints].
+
 
 
 proxy_cast(CastMsg, _State = #state{leader_node=Leader}) when Leader == undefined ->
