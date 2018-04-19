@@ -74,8 +74,24 @@ delete(realtime_connections, Remote, Node, IPPort, Primary) ->
 %%%===================================================================
 
 init([]) ->
-  Leader = undefined,
-  IsLeader = false,
+  %% try catch leader_node
+  {Leader, IsLeader} =
+    try riak_repl2_leader:leader_node() of
+      LeaderNode ->
+        case LeaderNode == node() of
+          true ->
+            {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+            AllNodes = riak_core_ring:all_members(Ring),
+            riak_repl2_leader:set_candidates(AllNodes, []),
+            {node(), true};
+          false ->
+            {LeaderNode, false}
+        end
+    catch
+      _Type:_Error ->
+        {undefined, false}
+    end,
+
   C = dict:new(),
   AN = [],
   lager:debug("conn_data_mgr started"),
