@@ -97,6 +97,9 @@ init([Remote]) ->
       S = riak_repl2_rtsource_conn_2_sup:make_module_name(Remote),
       E = dict:new(),
 
+      %% check for child processes in rtsource_conn_2_sup and terminate them all
+      [supervisor:terminate_child(S,Pid) || {_,Pid,_,_} <- supervisor:which_children(S)],
+
       MaxDelaySecs = app_helper:get_env(riak_repl, realtime_connection_rebalance_max_delay_secs, 120),
       lager:debug("max delay for connection rebalancing: ~p", [MaxDelaySecs]),
       M = fun(X) -> round(X * crypto:rand_uniform(0, 1000)) end,
