@@ -44,7 +44,7 @@ init([Remote]) ->
   ConnSup = {riak_repl2_rtsource_conn_2_sup:make_module_name(Remote), {riak_repl2_rtsource_conn_2_sup, start_link, [Remote]},
     permanent, ?SHUTDOWN, supervisor, [riak_repl2_rtsource_conn_2_sup]},
 
-  {ok, {{one_for_one, 10, 10}, [ConnSup, ConnMgr]}}.
+  {ok, {{rest_for_one, 10, 10}, [ConnSup, ConnMgr]}}.
 
 %%%===================================================================
 %%% Internal functions
