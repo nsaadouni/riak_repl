@@ -149,7 +149,7 @@ init([Remote, ConnMgrPid]) ->
   {ok, #state{remote = Remote, conn_mgr_pid = ConnMgrPid}}.
 
 handle_call({stop, do_not_remove_conns}, _From, State) ->
-    {stop, normal, ok, State};
+    {stop, do_not_remove_conns, ok, State};
 handle_call({stop, remove_conns}, _From, State) ->
   {stop, remove_conns, ok, State};
 handle_call(address, _From, State = #state{address=A, primary=P}) ->
@@ -313,11 +313,11 @@ handle_info(Msg, State) ->
 
 terminate(Reason, #state{helper_pid=HelperPid, conn_mgr_pid = C, address = A, primary = P}) ->
   case Reason of
-    remove_conns ->
-      %% remove this connection from the manager
-      riak_repl2_rtsource_conn_mgr:connection_closed(C, A, P);
+    do_not_remove_conns ->
+      ok;
     _ ->
-      ok
+      %% remove this connection from the manager
+      riak_repl2_rtsource_conn_mgr:connection_closed(C, A, P)
   end,
   lager:info("rtsource conn terminated due to ~p", [Reason]),
   catch riak_repl2_rtsource_helper:stop(HelperPid),
