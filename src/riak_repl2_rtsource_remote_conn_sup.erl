@@ -38,12 +38,11 @@ get_conn_mgr_status(Pid) ->
 %%%===================================================================
 
 init([Remote]) ->
+  ConnMgr = {Remote, {riak_repl2_rtsource_conn_mgr, start_link, [[Remote]]},
+    permanent, ?SHUTDOWN, worker, [riak_repl2_rtsource_conn_mgr]},
 
   ConnSup = {riak_repl2_rtsource_conn_2_sup:make_module_name(Remote), {riak_repl2_rtsource_conn_2_sup, start_link, [Remote]},
     permanent, ?SHUTDOWN, supervisor, [riak_repl2_rtsource_conn_2_sup]},
-
-  ConnMgr = {Remote, {riak_repl2_rtsource_conn_mgr, start_link, [[Remote]]},
-    permanent, ?SHUTDOWN, worker, [riak_repl2_rtsource_conn_mgr]},
 
   {ok, {{one_for_all, 10, 10}, [ConnSup, ConnMgr]}}.
 

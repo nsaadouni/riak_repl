@@ -80,9 +80,19 @@ init([]) ->
       LeaderNode ->
         case LeaderNode == node() of
           true ->
-            {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-            AllNodes = riak_core_ring:all_members(Ring),
-            riak_repl2_leader:set_candidates(AllNodes, []),
+            %% request connection data from proxy nodes as this could be a restart and we have lost all data
+            AllNodes = riak_core_node_watcher:nodes(riak_kv),
+            ReNotify =
+              fun(Node) ->
+                try rpc:cast(Node, riak_repl2_leader, re_notify, []) of
+                  ok ->
+                    ok
+                catch
+                  _Type:_Error ->
+                    ok
+                end
+              end,
+            [ ReNotify(Node) || Node <- AllNodes -- [node()]],
             {node(), true};
           false ->
             {LeaderNode, false}
