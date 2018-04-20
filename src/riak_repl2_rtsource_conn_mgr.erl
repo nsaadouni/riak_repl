@@ -89,6 +89,9 @@ get_endpoints(Pid) ->
 
 
 init([Remote]) ->
+
+  riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, Remote, node(), []),
+
   lager:debug("connecting to remote ~p", [Remote]),
   case riak_core_connection_mgr:connect({rt_repl, Remote}, ?CLIENT_SPEC, multi_connection) of
     {ok, Ref} ->
@@ -203,7 +206,7 @@ handle_info(rebalance_now, State) ->
   {noreply, maybe_rebalance(State#state{rb_timeout_tref = undefined}, now)};
 
 handle_info({kill_rtsource_conn, RtSourceConnPid}, State) ->
-  catch riak_repl2_rtsource_conn:stop(RtSourceConnPid),
+  catch riak_repl2_rtsource_conn:stop(RtSourceConnPid, remove_conns),
   {noreply, State};
 
 
@@ -215,7 +218,7 @@ handle_info(_Info, State) ->
 terminate(_Reason, _State=#state{remote = Remote, endpoints = E}) ->
   lager:info("rtrsource conn mgr terminating"),
   riak_core_connection_mgr:disconnect({rt_repl, Remote}),
-  [catch riak_repl2_rtsource_conn:stop(Pid) || {_,{Pid,_}} <- E],
+  [catch riak_repl2_rtsource_conn:stop(Pid, do_not_remove_conns) || {_,{Pid,_}} <- E],
   ok.
 
 %%%=====================================================================================================================

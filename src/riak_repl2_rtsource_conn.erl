@@ -43,7 +43,7 @@
 
 %% API
 -export([start_link/2,
-         stop/1,
+         stop/2,
          get_helper_pid/1,
          status/1, status/2,
          get_address/1,
@@ -98,8 +98,10 @@
 start_link(Remote, ConnMgrPid) ->
     gen_server:start_link(?MODULE, [Remote, ConnMgrPid], []).
 
-stop(Pid) ->
-    gen_server:call(Pid, stop, ?LONG_TIMEOUT).
+stop(Pid, do_not_remove_conns) ->
+    gen_server:call(Pid, {stop, do_not_remove_conns}, ?LONG_TIMEOUT);
+stop(Pid, remove_conns) ->
+  gen_server:call(Pid, {stop, remove_conns}, ?LONG_TIMEOUT).
 
 status(Pid) ->
     status(Pid, infinity).
@@ -146,8 +148,10 @@ get_socketname_primary(Pid) ->
 init([Remote, ConnMgrPid]) ->
   {ok, #state{remote = Remote, conn_mgr_pid = ConnMgrPid}}.
 
-handle_call(stop, _From, State) ->
+handle_call({stop, do_not_remove_conns}, _From, State) ->
     {stop, normal, ok, State};
+handle_call({stop, remove_conns}, _From, State) ->
+  {stop, remove_conns, ok, State};
 handle_call(address, _From, State = #state{address=A, primary=P}) ->
     {reply, {A,P}, State};
 handle_call(get_socketname_primary, _From, State=#state{socket = S, primary = P}) ->
@@ -260,7 +264,7 @@ handle_info({Proto, _S, TcpBin}, State= #state{cont = Cont})
   when Proto == tcp; Proto == ssl ->
     recv(<<Cont/binary, TcpBin/binary>>, State);
 handle_info({Closed, _S},
-            State = #state{remote = Remote, cont = Cont, conn_mgr_pid = C, address = A, primary = P})
+            State = #state{remote = Remote, cont = Cont})
   when Closed == tcp_closed; Closed == ssl_closed ->
     case size(Cont) of
         0 ->
@@ -270,29 +274,21 @@ handle_info({Closed, _S},
             lager:warning("Realtime connection ~s to ~p closed with partial receive of ~b bytes\n",
                           [peername(State), Remote, NumBytes])
     end,
-    %% remove this connection from the manager
-    riak_repl2_rtsource_conn_mgr:connection_closed(C, A, P),
-    {stop, normal, State};
+    {stop, remove_conns, State};
 handle_info({Error, _S, Reason},
-            State = #state{remote = Remote, cont = Cont, conn_mgr_pid = C, address = A, primary = P})
+            State = #state{remote = Remote, cont = Cont})
   when Error == tcp_error; Error == ssl_error ->
     riak_repl_stats:rt_source_errors(),
     lager:warning("Realtime connection ~s to ~p network error ~p - ~b bytes pending\n",
                   [peername(State), Remote, Reason, size(Cont)]),
-
-    %% remove this connection from the manager
-    riak_repl2_rtsource_conn_mgr:connection_closed(C, A, P),
-    {stop, normal, State};
+    {stop, remove_conns, State};
 
 handle_info(send_heartbeat, State) ->
     {noreply, send_heartbeat(State)};
 handle_info({heartbeat_timeout, HBSent}, State = #state{hb_sent_q = HBSentQ,
                                                         hb_timeout_tref = HBTRef,
                                                         hb_timeout = HBTimeout,
-                                                        remote = Remote,
-                                                        conn_mgr_pid = C,
-                                                        address = A,
-                                                        primary = P}) ->
+                                                        remote = Remote}) ->
     TimeSinceTimeout = timer:now_diff(now(), HBSent) div 1000,
 
     %% hb_timeout_tref is the authority of whether we should
@@ -308,17 +304,21 @@ handle_info({heartbeat_timeout, HBSent}, State = #state{hb_sent_q = HBSentQ,
                           "after ~p seconds\n",
                           [peername(State), Remote, HBTimeout]),
             lager:info("hb_sent_q_len after heartbeat_timeout: ~p", [queue:len(HBSentQ)]),
-
-            %% remove this connection from the manager
-            riak_repl2_rtsource_conn_mgr:connection_closed(C, A, P),
-            {stop, normal, State}
+            {stop, remove_conns, State}
     end;
 
 handle_info(Msg, State) ->
     lager:warning("Unhandled info:  ~p", [Msg]),
     {noreply, State}.
 
-terminate(Reason, #state{helper_pid=HelperPid}) ->
+terminate(Reason, #state{helper_pid=HelperPid, conn_mgr_pid = C, address = A, primary = P}) ->
+  case Reason of
+    remove_conns ->
+      %% remove this connection from the manager
+      riak_repl2_rtsource_conn_mgr:connection_closed(C, A, P);
+    _ ->
+      ok
+  end,
   lager:info("rtsource conn terminated due to ~p", [Reason]),
   catch riak_repl2_rtsource_helper:stop(HelperPid),
   ok.

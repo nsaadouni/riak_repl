@@ -80,20 +80,28 @@ init([]) ->
       LeaderNode ->
         case LeaderNode == node() of
           true ->
-            %% request connection data from proxy nodes as this could be a restart and we have lost all data
-            AllNodes = riak_core_node_watcher:nodes(riak_kv),
-            ReNotify =
-              fun(Node) ->
-                try rpc:cast(Node, riak_repl2_leader, re_notify, []) of
-                  true ->
-                    ok
-                catch
-                  _Type:_Error ->
-                    ok
-                end
-              end,
-            [ ReNotify(Node) || Node <- AllNodes -- [node()]],
-            {node(), true};
+
+            EmptyDict = dict:new(),
+            case riak_repl_ring:get_realtime_connection_data() of
+              EmptyDict ->
+                {LeaderNode, true};
+              _ ->
+                %% request connection data from proxy nodes as this could be a restart and we have lost all data
+                AllNodes = riak_core_node_watcher:nodes(riak_kv),
+                ReNotify =
+                  fun(Node) ->
+                    try rpc:cast(Node, riak_repl2_leader, re_notify, []) of
+                      true ->
+                        ok
+                    catch
+                      _Type:_Error ->
+                        ok
+                    end
+                  end,
+                [ ReNotify(Node) || Node <- AllNodes -- [node()]],
+                riak_repl2_leader:re_notify(),
+                {node(), true}
+            end;
           false ->
             {LeaderNode, false}
         end
