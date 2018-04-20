@@ -85,7 +85,7 @@ init([]) ->
             ReNotify =
               fun(Node) ->
                 try rpc:cast(Node, riak_repl2_leader, re_notify, []) of
-                  ok ->
+                  true ->
                     ok
                 catch
                   _Type:_Error ->
