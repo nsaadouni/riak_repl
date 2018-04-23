@@ -217,7 +217,7 @@ handle_cast(_Request, State) ->
 
 %%%=====================================================================================================================
 
-handle_info({'EXIT', Pid, Reason}, State = #state{endpoints = E}) ->
+handle_info({'EXIT', Pid, Reason}, State = #state{endpoints = E, remote = Remote}) ->
   case Reason of
     normal ->
       lager:info("riak_repl2_rtsource_conn terminated due to reason nomral");
@@ -233,6 +233,8 @@ handle_info({'EXIT', Pid, Reason}, State = #state{endpoints = E}) ->
               {Key, Pid} ->
                 NewEndpoints = dict:erase(Key, E),
                 State2 = State#state{endpoints = NewEndpoints},
+                {IPPort, Primary} = Key,
+                riak_repl2_rtsource_conn_data_mgr:delete(realtime_connections, Remote, node(), IPPort, Primary),
                 case dict:fetch_keys(NewEndpoints) of
                   [] ->
                     RbTimeoutTref = erlang:send_after(0, self(), rebalance_now),
