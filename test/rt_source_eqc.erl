@@ -543,7 +543,7 @@ connect(RemoteName, MasterQueue) ->
     %% ?debugFmt("connect: ~p", [RemoteName]),
     stateful:set(remote, RemoteName),
     %% ?debugMsg("Starting rtsource link"),
-    {ok, SourcePid} = riak_repl2_rtsource_remote_conn_sup:start_link(RemoteName),
+    {ok, SourcePid} = riak_repl2_rtsource_conn_mgr:start_link(RemoteName),
     %% ?debugFmt("rtsource pid: ~p", [SourcePid]),
     %% ?debugMsg("Waiting for sink_started"),
     _ = wait_for_rtsource_helper(SourcePid),
@@ -562,7 +562,7 @@ connect(RemoteName, MasterQueue) ->
     end.
 
 wait_for_rtsource_helper(SourcePid) ->
-    Status = riak_repl2_rtsource_remote_conn_sup:get_conn_mgr_status(SourcePid),
+    Status = riak_repl2_rtsource_conn_mgr:get_all_status(SourcePid),
     wait_for_rtsource_helper(SourcePid, 20, 1000, Status).
 
 wait_for_rtsource_helper(_SourcePid, 0, _Wait, _Status) ->
@@ -572,11 +572,12 @@ wait_for_rtsource_helper(SourcePid, RetriesLeft, Wait, Status) ->
     case lists:keyfind(helper_pid, 1, FirstStatus) of
         false ->
             timer:sleep(Wait),
-            NewStatus = riak_repl2_rtsource_remote_conn_sup:get_conn_mgr_status(SourcePid),
+            NewStatus = riak_repl2_rtsource_conn_mgr:get_all_status(SourcePid),
             wait_for_rtsource_helper(SourcePid, RetriesLeft-1, Wait, NewStatus);
         _ ->
             ok
     end.
+
 
 first_or_empty(L) ->
     case L of

@@ -42,8 +42,8 @@
 -endif.
 
 %% API
--export([start_link/2,
-         stop/2,
+-export([start_link/1,
+         stop/1,
          get_helper_pid/1,
          status/1, status/2,
          get_address/1,
@@ -79,7 +79,6 @@
 -record(state, {remote,    % remote name
                 address,   % {IP, Port}
                 primary,
-                conn_mgr_pid,
                 transport, % transport module
                 socket,    % socket to use with transport
                 peername,  % cached when socket becomes active
@@ -95,13 +94,11 @@
                 cont = <<>>}). % continuation from previous TCP buffer
 
 %% API - start trying to send realtime repl to remote site
-start_link(Remote, ConnMgrPid) ->
-    gen_server:start_link(?MODULE, [Remote, ConnMgrPid], []).
+start_link(Remote) ->
+    gen_server:start_link(?MODULE, [Remote], []).
 
-stop(Pid, do_not_remove_conns) ->
-    gen_server:call(Pid, {stop, do_not_remove_conns}, ?LONG_TIMEOUT);
-stop(Pid, remove_conns) ->
-  gen_server:call(Pid, {stop, remove_conns}, ?LONG_TIMEOUT).
+stop(Pid) ->
+    gen_server:call(Pid, stop, ?LONG_TIMEOUT).
 
 status(Pid) ->
     status(Pid, infinity).
@@ -145,13 +142,11 @@ get_socketname_primary(Pid) ->
 %% gen_server callbacks
 
 %% Initialize
-init([Remote, ConnMgrPid]) ->
-  {ok, #state{remote = Remote, conn_mgr_pid = ConnMgrPid}}.
+init([Remote]) ->
+  {ok, #state{remote = Remote}}.
 
-handle_call({stop, do_not_remove_conns}, _From, State) ->
-    {stop, do_not_remove_conns, ok, State};
-handle_call({stop, remove_conns}, _From, State) ->
-  {stop, remove_conns, ok, State};
+handle_call(stop, _From, State) ->
+  {stop, normal, ok, State};
 handle_call(address, _From, State = #state{address=A, primary=P}) ->
     {reply, {A,P}, State};
 handle_call(get_socketname_primary, _From, State=#state{socket = S, primary = P}) ->
@@ -274,14 +269,14 @@ handle_info({Closed, _S},
             lager:warning("Realtime connection ~s to ~p closed with partial receive of ~b bytes\n",
                           [peername(State), Remote, NumBytes])
     end,
-    {stop, remove_conns, State};
+    {stop, {rtsource_conn, Closed}, State};
 handle_info({Error, _S, Reason},
             State = #state{remote = Remote, cont = Cont})
   when Error == tcp_error; Error == ssl_error ->
     riak_repl_stats:rt_source_errors(),
     lager:warning("Realtime connection ~s to ~p network error ~p - ~b bytes pending\n",
                   [peername(State), Remote, Reason, size(Cont)]),
-    {stop, remove_conns, State};
+    {stop, {rtsource_conn, {Error, Reason}}, State};
 
 handle_info(send_heartbeat, State) ->
     {noreply, send_heartbeat(State)};
@@ -304,23 +299,15 @@ handle_info({heartbeat_timeout, HBSent}, State = #state{hb_sent_q = HBSentQ,
                           "after ~p seconds\n",
                           [peername(State), Remote, HBTimeout]),
             lager:info("hb_sent_q_len after heartbeat_timeout: ~p", [queue:len(HBSentQ)]),
-            {stop, remove_conns, State}
+            {stop, {rtsource_conn, heartbeat_timeout}, State}
     end;
 
 handle_info(Msg, State) ->
     lager:warning("Unhandled info:  ~p", [Msg]),
     {noreply, State}.
 
-terminate(Reason, #state{helper_pid=HelperPid, conn_mgr_pid = C, address = A, primary = P}) ->
-  case Reason of
-    do_not_remove_conns ->
-      ok;
-    _ ->
-      %% remove this connection from the manager
-      riak_repl2_rtsource_conn_mgr:connection_closed(C, A, P)
-  end,
+terminate(Reason, _State) ->
   lager:info("rtsource conn terminated due to ~p", [Reason]),
-  catch riak_repl2_rtsource_helper:stop(HelperPid),
   ok.
 
 code_change(_OldVsn, State, _Extra) ->
@@ -528,7 +515,7 @@ connect(RemoteName) ->
     %% rtsource_conn now takes in the remote name and the conn_mgr pid
     %% As this test does not require the conn_mgr we pass self() as the conn_mgr pid in order to start
     %% rtsource_conn without failure.
-    {ok, SourcePid} = riak_repl2_rtsource_conn:start_link(RemoteName, self()),
+    {ok, SourcePid} = riak_repl2_rtsource_conn:start_link(RemoteName),
 
     {status, Status} = riak_repl2_rtsource_conn:legacy_status(SourcePid),
     RTQStats = proplists:get_value(realtime_queue_stats, Status),

@@ -6,8 +6,7 @@
     start_link/0,
     enable/1,
     disable/1,
-    enabled/0,
-    first_or_empty/1
+    enabled/0
 ]).
 
 -export([init/1]).
@@ -30,8 +29,8 @@ disable(Remote) ->
     riak_repl2_rtsource_conn_data_mgr:delete(realtime_connections, Remote).
 
 enabled() ->
-    [ {Remote, ConnMgrPid} || {Remote, ConnMgrPid, _, [riak_repl2_rtsource_conn_mgr]}  <-
-        first_or_empty([ supervisor:which_children(P) || {_, P, _, [riak_repl2_rtsource_remote_conn_sup]} <- supervisor:which_children(?MODULE), is_pid(P)]), is_pid(ConnMgrPid)].
+    [ {Remote, ConnMgrPid} || {Remote, ConnMgrPid, _, [riak_repl2_rtsource_conn_mgr]}
+        <- supervisor:which_children(?MODULE), is_pid(ConnMgrPid)].
 
 %% @private
 init([]) ->
@@ -46,15 +45,5 @@ init([]) ->
     {ok, {{one_for_one, 10, 10}, Children}}.
 
 make_remote(Remote) ->
-    {Remote, {riak_repl2_rtsource_remote_conn_sup, start_link, [Remote]},
-        permanent, ?SHUTDOWN, supervisor, [riak_repl2_rtsource_remote_conn_sup]}.
-
-
-first_or_empty(L) ->
-    case L of
-        [] ->
-            [];
-        X ->
-            lists:nth(1,X)
-    end.
-
+    {Remote, {riak_repl2_rtsource_conn_mgr, start_link, [[Remote]]},
+        permanent, ?SHUTDOWN, worker, [riak_repl2_rtsource_conn_mgr]}.
