@@ -129,7 +129,7 @@ handle_call({connected, Socket, Transport, IPPort, Proto, _Props, Primary}, _Fro
   lager:debug("rtsource_conn_mgr connection recieved ~p", [{IPPort, Primary}]),
 
   lager:info("Adding a connection and starting rtsource_conn ~p", [Remote]),
-  case riak_repl2_rtsource_conn:start_link(Remote) of
+  case riak_repl2_rtsource_conn:start_link([Remote]) of
     {ok, RtSourcePid} ->
       lager:debug("we have added the connection"),
       case riak_repl2_rtsource_conn:connected(Socket, Transport, IPPort, Proto, RtSourcePid, _Props, Primary) of
