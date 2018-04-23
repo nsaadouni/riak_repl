@@ -229,17 +229,20 @@ handle_info({'EXIT', Pid, Reason}, State = #state{endpoints = E}) ->
       lager:warning("riak_repl2_rtsource_conn terminated due to reason ~p", [OtherError])
   end,
 
-  Key = lists:keyfind(Pid, 2, dict:to_list(E)),
-  NewEndpoints = dict:erase(Key, E),
-  State2 = State#state{endpoints = NewEndpoints},
-  NewState =
-    case dict:fetch_keys(NewEndpoints) of
-        [] ->
-          RbTimeoutTref = erlang:send_after(0, self(), rebalance_now),
-          State2#state{rb_timeout_tref = RbTimeoutTref};
-        _ ->
-          State2
-    end,
+  NewState = case lists:keyfind(Pid, 2, dict:to_list(E)) of
+              {Key, Pid} ->
+                NewEndpoints = dict:erase(Key, E),
+                State2 = State#state{endpoints = NewEndpoints},
+                case dict:fetch_keys(NewEndpoints) of
+                  [] ->
+                    RbTimeoutTref = erlang:send_after(0, self(), rebalance_now),
+                    State2#state{rb_timeout_tref = RbTimeoutTref};
+                  _ ->
+                    State2
+                end;
+              false ->
+                State
+            end,
   {noreply, NewState};
 
 handle_info(rebalance_now, State) ->
