@@ -22,7 +22,8 @@
   get_all_status/1,
   get_all_status/2,
   get_source_and_sink_nodes/1,
-  get_endpoints/1
+  get_endpoints/1,
+  get_rtsource_conn_pids/1
 ]).
 
 -define(SERVER, ?MODULE).
@@ -80,6 +81,9 @@ get_all_status(Pid, Timeout) ->
 get_endpoints(Pid) ->
   gen_server:call(Pid, get_endpoints).
 
+get_rtsource_conn_pids(Pid) ->
+  gen_server:call(Pid, get_rtsource_conn_pids).
+
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -129,7 +133,7 @@ handle_call({connected, Socket, Transport, IPPort, Proto, _Props, Primary}, _Fro
   lager:debug("rtsource_conn_mgr connection recieved ~p", [{IPPort, Primary}]),
 
   lager:info("Adding a connection and starting rtsource_conn ~p", [Remote]),
-  case riak_repl2_rtsource_conn:start_link([Remote]) of
+  case riak_repl2_rtsource_conn:start_link(Remote) of
     {ok, RtSourcePid} ->
       lager:debug("we have added the connection"),
       case riak_repl2_rtsource_conn:connected(Socket, Transport, IPPort, Proto, RtSourcePid, _Props, Primary) of
@@ -164,6 +168,10 @@ handle_call({connected, Socket, Transport, IPPort, Proto, _Props, Primary}, _Fro
 handle_call(all_status, _From, State=#state{endpoints = E}) ->
   AllKeys = dict:fetch_keys(E),
   {reply, collect_status_data(AllKeys, [], E), State};
+
+handle_call(get_rtsource_conn_pids, _From, State = #state{endpoints = E}) ->
+  Result = lists:foldl(fun({_,Pid}, Acc) -> Acc ++ [Pid] end, [], dict:to_list(E)),
+  {reply, Result, State};
 
 %%handle_call({connection_closed, Addr, Primary}, _From, State=#state{endpoints = E, remote = R}) ->
 %%  NewEndpoints = dict:erase({Addr,Primary}, E),
