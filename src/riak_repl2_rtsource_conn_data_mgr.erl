@@ -90,7 +90,7 @@ init([]) ->
                 AllNodes = riak_core_node_watcher:nodes(riak_kv),
                 ReNotify =
                   fun(Node) ->
-                    try rpc:cast(Node, riak_repl2_leader, re_notify, []) of
+                    try gen_server:cast({riak_repl2_leader, Node}, re_notify) of
                       true ->
                         ok
                     catch
