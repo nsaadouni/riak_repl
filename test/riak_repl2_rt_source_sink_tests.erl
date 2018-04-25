@@ -115,6 +115,17 @@ v2_to_v2_comms(_State) ->
      end}]}.
 
 v2_to_v2_comms_setup() ->
+  catch(meck:unload(riak_repl2_rtsource_conn_data_mgr)),
+  meck:new(riak_repl2_rtsource_conn_data_mgr, [passthrough]),
+  meck:expect(riak_repl2_rtsource_conn_data_mgr, read, fun(active_nodes) -> [node()]
+                                                       end),
+  catch(meck:unload(riak_core_cluster_mgr)),
+  meck:new(riak_core_cluster_mgr, [passthrough]),
+  meck:expect(riak_core_cluster_mgr, get_unshuffled_ipaddrs_of_cluster, fun(_Remote) -> {ok,[]} end ),
+  meck:expect(riak_core_cluster_mgr, get_ipaddrs_of_cluster, fun(_) -> {ok,[]} end ),
+  meck:expect(riak_core_cluster_mgr, get_ipaddrs_of_cluster, fun(_, split) -> {ok, {[],[]}} end ),
+  meck:expect(riak_core_cluster_mgr, get_ipaddrs_of_cluster, fun(_, _) -> {ok,[]} end ),
+
     {ok, _ListenPid} = start_sink(?VER2),
     {ok, {Source, Sink}} = start_source(?VER2),
     meck:new(poolboy, [passthrough]),
@@ -173,6 +184,17 @@ v1_to_v1_comms(_State) ->
      end}]}.
 
 v1_to_v1_setup() ->
+  catch(meck:unload(riak_repl2_rtsource_conn_data_mgr)),
+  meck:new(riak_repl2_rtsource_conn_data_mgr, [passthrough]),
+  meck:expect(riak_repl2_rtsource_conn_data_mgr, read, fun(active_nodes) -> [node()]
+                                                       end),
+  catch(meck:unload(riak_core_cluster_mgr)),
+  meck:new(riak_core_cluster_mgr, [passthrough]),
+  meck:expect(riak_core_cluster_mgr, get_unshuffled_ipaddrs_of_cluster, fun(_Remote) -> {ok,[]} end ),
+  meck:expect(riak_core_cluster_mgr, get_ipaddrs_of_cluster, fun(_) -> {ok,[]} end ),
+  meck:expect(riak_core_cluster_mgr, get_ipaddrs_of_cluster, fun(_, split) -> {ok, {[],[]}} end ),
+  meck:expect(riak_core_cluster_mgr, get_ipaddrs_of_cluster, fun(_, _) -> {ok,[]} end ),
+
     {ok, _ListenPid} = start_sink(?VER1),
     {ok, {Source, Sink}} = start_source(?VER1),
     meck:new(poolboy, [passthrough]),
@@ -277,15 +299,15 @@ start_source() ->
 start_source(NegotiatedVer) ->
     catch(meck:unload(riak_core_connection_mgr)),
     meck:new(riak_core_connection_mgr, [passthrough]),
-    meck:expect(riak_core_connection_mgr, connect, fun(_ServiceAndRemote, ClientSpec) ->
+    meck:expect(riak_core_connection_mgr, connect, fun(_ServiceAndRemote, ClientSpec, _Strategy) ->
         spawn_link(fun() ->
             {_Proto, {TcpOpts, Module, Pid}} = ClientSpec,
             {ok, Socket} = gen_tcp:connect("localhost", ?SINK_PORT, [binary | TcpOpts]),
-            ok = Module:connected(Socket, gen_tcp, {"localhost", ?SINK_PORT}, ?PROTOCOL(NegotiatedVer), Pid, [])
+            ok = Module:connected(Socket, gen_tcp, {"localhost", ?SINK_PORT}, ?PROTOCOL(NegotiatedVer), Pid, [], false)
         end),
         {ok, make_ref()}
     end),
-    {ok, SourcePid} = riak_repl2_rtsource_conn:start_link("sink_cluster"),
+    {ok, SourcePid} = riak_repl2_rtsource_remote_conn_sup:start_link("sink_cluster"),
     %unlink(SourcePid),
     receive
         {sink_started, SinkPid} ->

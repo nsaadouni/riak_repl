@@ -107,7 +107,7 @@
 %% connection manager Function Exports
 %% ------------------------------------------------------------------
 
--export([connected/6,connect_failed/3]).
+-export([connected/7,connect_failed/3]).
 
 %% ------------------------------------------------------------------
 %% stat caching mechanism export
@@ -218,7 +218,7 @@ node_clean(Pid, Node) ->
 %% ------------------------------------------------------------------
 
 %% @hidden
-connected(Socket, Transport, Endpoint, Proto, Pid, _Props) ->
+connected(Socket, Transport, Endpoint, Proto, Pid, _Props, _Primary) ->
     Transport:controlling_process(Socket, Pid),
     gen_server:cast(Pid, {connected, Socket, Transport, Endpoint, Proto}).
 

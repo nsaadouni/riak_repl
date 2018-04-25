@@ -102,7 +102,7 @@ ensure_rt(WantEnabled0, WantStarted0) ->
     ToValidate = Started -- ToStop,
     _ = [case lists:keyfind(Remote, 1, Connections) of
              {_, PID} ->
-                 riak_repl2_rtsource_conn:maybe_rebalance_delayed(PID);
+                 riak_repl2_rtsource_conn_mgr:maybe_rebalance_delayed(PID);
              false ->
                  ok
          end || Remote <- ToValidate ],
@@ -135,11 +135,12 @@ ensure_rt(WantEnabled0, WantStarted0) ->
     end.
 
 register_remote_locator() ->
-    Locator = fun(_, {use_only, Addrs}) ->
-                       {ok, Addrs};
-                 (Name, _Policy) ->
-                       riak_core_cluster_mgr:get_ipaddrs_of_cluster(Name)
-              end,
+    Locator =
+      fun(_, {use_only, Addrs}) ->
+        {ok, Addrs};
+        (Name, _Policy) ->
+            riak_core_cluster_mgr:get_ipaddrs_of_cluster(Name)
+      end,
     ok = riak_core_connection_mgr:register_locator(rt_repl, Locator).
 
 %% Register an active realtime sink (supervised under ranch)
@@ -189,7 +190,7 @@ init([]) ->
 handle_call(status, _From, State = #state{sinks = SinkPids}) ->
     Timeout = app_helper:get_env(riak_repl, status_timeout, 5000),
     Sources = [try
-                   riak_repl2_rtsource_conn:status(Pid, Timeout)
+                   riak_repl2_rtsource_conn_mgr:get_all_status(Pid, Timeout)
                catch
                    _:_ ->
                        {Remote, Pid, unavailable}

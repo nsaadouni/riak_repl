@@ -25,8 +25,17 @@
 %% Remote cluster
 -define(REMOTE_CLUSTER_NAME, "betty").
 -define(REMOTE_CLUSTER_ADDR, {"127.0.0.1", 4097}).
--define(REMOTE_MEMBERS, [{"127.0.0.1",5001}, {"127.0.0.1",5002}, {"127.0.0.1",5003}]).
+-define(REMOTE_MEMBERS, [{"127.0.0.1",5001}, {"127.0.0.1",5002}, {"127.0.0.1",5003}, {"127.0.0.1",5004}, {"127.0.0.1",5005}]).
 -define(MULTINODE_REMOTE_ADDR, {"127.0.0.1", 6097}).
+
+
+
+-define(SINK_3, [{"127.0.0.1",5001}, {"127.0.0.1",5002}, {"127.0.0.1",5003}]).
+-define(SINK_5, [{"127.0.0.1",5001}, {"127.0.0.1",5002}, {"127.0.0.1",5003}, {"127.0.0.1",5004}, {"127.0.0.1",5005}]).
+-define(SINK_8, [{"127.0.0.1",5001}, {"127.0.0.1",5002}, {"127.0.0.1",5003}, {"127.0.0.1",5004}, {"127.0.0.1",5005}, {"127.0.0.1",5006}, {"127.0.0.1",5007}, {"127.0.0.1",5008}]).
+-define(SOURCE_3, [node(), node_b, node_c]).
+-define(SOURCE_5, [node(), node_b, node_c, node_d, node_e]).
+-define(SOURCE_8, [node(), node_b, node_c, node_d, node_e, node_f, node_g, node_h]).
 
 single_node_test_() ->
     {setup,
@@ -106,16 +115,699 @@ single_node_test_() ->
             ?assertEqual({ok, [?REMOTE_CLUSTER_NAME]}, Knowners)
         end},
 
-        %% We should get "127.0.0.1",5002 every time 
-        %% since local is always nonode@nohost
-        {"get ipaddres of cluster", fun() ->
-            Original = [{"127.0.0.1",5002}, {"127.0.0.1",5001}, {"127.0.0.1",5003}],
-            ?assertEqual({ok,Original},riak_core_cluster_mgr:get_ipaddrs_of_cluster(?REMOTE_CLUSTER_NAME)),
-            ?assertEqual({ok,Original},riak_core_cluster_mgr:get_ipaddrs_of_cluster(?REMOTE_CLUSTER_NAME)),
-            ?assertEqual({ok,Original},riak_core_cluster_mgr:get_ipaddrs_of_cluster(?REMOTE_CLUSTER_NAME))
-        end}
+        {"S 0, AC 0 (get ipaddres of cluster)",
+            fun() ->
+                make_deps([], 0),
+                Expected = [],
+                ?assertEqual({ok,Expected},riak_core_cluster_mgr:get_ipaddrs_of_cluster(?REMOTE_CLUSTER_NAME, primary))
+            end
+        },
 
+        {"S 3, AC 0 (get ipaddres of cluster)",
+            fun() ->
+                make_deps(?SOURCE_3, dict:new()),
+                Expected = [{{"127.0.0.1",5001},true},{{"127.0.0.1",5004},true}],
+                ?assertEqual({ok,Expected},riak_core_cluster_mgr:get_ipaddrs_of_cluster(?REMOTE_CLUSTER_NAME, primary))
+            end
+        },
+
+        {"S 5, AC 0 (get ipaddres of cluster)",
+            fun() ->
+                make_deps(?SOURCE_5, dict:new()),
+                Expected = [{{"127.0.0.1",5001},true}],
+                ?assertEqual({ok,Expected},riak_core_cluster_mgr:get_ipaddrs_of_cluster(?REMOTE_CLUSTER_NAME, primary))
+            end
+        },
+
+        {"S 3, AC 0 (get ipaddres of cluster)",
+            fun() ->
+                make_deps(?SOURCE_8, dict:new()),
+                Expected = [{{"127.0.0.1",5001},true}],
+                ?assertEqual({ok,Expected},riak_core_cluster_mgr:get_ipaddrs_of_cluster(?REMOTE_CLUSTER_NAME, primary))
+            end
+        },
+
+    %% ------------------------------------------------------------------------------------------------------------------ %%
+        {"i) Source 3, Sink 3, Active Conns 5",
+            fun() ->
+
+                ActiveConns = dict:from_list
+                ([
+                    {node(),[{{"127.0.0.1",5001},true}]},
+                    {node_b,[{{"127.0.0.1",5002},true}]},
+                    {node_c,[{{"127.0.0.1",5003},true}]},
+                    {node_d,[{{"127.0.0.1",5004},true}]},
+                    {node_e,[{{"127.0.0.1",5005},true}]}
+                ]),
+                make_deps(?SOURCE_3, ActiveConns),
+                Expected = [{{"127.0.0.1",5001},true}],
+                ?assertEqual({ok,Expected},riak_core_cluster_mgr:get_my_remote_ip_list("Cluster Name", ?SINK_3, primary))
+            end
+        },
+
+        {"ii) Source 3, Sink 3, Active Conns 5",
+            fun() ->
+
+                ActiveConns = dict:from_list
+                ([
+                    {node(),[{{"127.0.0.1",5005},true}]},
+                    {node_b,[{{"127.0.0.1",5001},true}]},
+                    {node_c,[{{"127.0.0.1",5003},true}]},
+                    {node_d,[{{"127.0.0.1",5004},true}]},
+                    {node_e,[{{"127.0.0.1",5002},true}]}
+                ]),
+                make_deps(?SOURCE_3, ActiveConns),
+                Expected = [{{"127.0.0.1",5002},true}],
+                ?assertEqual({ok,Expected},riak_core_cluster_mgr:get_my_remote_ip_list("Cluster Name", ?SINK_3, primary))
+            end
+        },
+
+        {"iii) Source 3, Sink 3, Active Conns 5",
+            fun() ->
+
+                ActiveConns = dict:from_list
+                ([
+                    {node(),[{{"127.0.0.1",5003},true}]},
+                    {node_b,[{{"127.0.0.1",5001},true}]},
+                    {node_c,[{{"127.0.0.1",5002},true}]},
+                    {node_d,[{{"127.0.0.1",5004},true}]},
+                    {node_e,[{{"127.0.0.1",5002},true}]}
+                ]),
+                make_deps(?SOURCE_3, ActiveConns),
+                Expected = [{{"127.0.0.1",5003},true}],
+                ?assertEqual({ok,Expected},riak_core_cluster_mgr:get_my_remote_ip_list("Cluster Name", ?SINK_3, primary))
+            end
+        },
+    %% ------------------------------------------------------------------------------------------------------------------ %%
+        {"i) Source 3, Sink 5, Active Conns 5",
+            fun() ->
+
+                ActiveConns = dict:from_list
+                ([
+                    {node(),[{{"127.0.0.1",5001},true}]},
+                    {node_b,[{{"127.0.0.1",5002},true}]},
+                    {node_c,[{{"127.0.0.1",5003},true}]},
+                    {node_d,[{{"127.0.0.1",5004},true}]},
+                    {node_e,[{{"127.0.0.1",5005},true}]}
+                ]),
+                make_deps(?SOURCE_3, ActiveConns),
+                Expected = [{{"127.0.0.1",5001},true},{{"127.0.0.1",5004},true}],
+                ?assertEqual({ok,Expected},riak_core_cluster_mgr:get_my_remote_ip_list("Cluster Name", ?SINK_5, primary))
+            end
+        },
+
+        {"ii) Source 3, Sink 5, Active Conns 5",
+            fun() ->
+
+                ActiveConns = dict:from_list
+                ([
+                    {node(),[{{"127.0.0.1",5006},true}]},
+                    {node_b,[{{"127.0.0.1",5002},true}]},
+                    {node_c,[{{"127.0.0.1",5003},true}]},
+                    {node_d,[{{"127.0.0.1",5004},true}]},
+                    {node_e,[{{"127.0.0.1",5005},true}]}
+                ]),
+                make_deps(?SOURCE_3, ActiveConns),
+                Expected = [{{"127.0.0.1",5001},true},{{"127.0.0.1",5004},true}],
+                ?assertEqual({ok,Expected},riak_core_cluster_mgr:get_my_remote_ip_list("Cluster Name", ?SINK_5, primary))
+            end
+        },
+
+        {"iii) Source 3, Sink 5, Active Conns 5",
+            fun() ->
+
+                ActiveConns = dict:from_list
+                ([
+                    {node(),[{{"127.0.0.1",5005},true}]},
+                    {node_b,[{{"127.0.0.1",5001},true}]},
+                    {node_c,[{{"127.0.0.1",5004},true}]},
+                    {node_d,[{{"127.0.0.1",5003},true}]},
+                    {node_e,[{{"127.0.0.1",5002},true}]}
+                ]),
+                make_deps(?SOURCE_3, ActiveConns),
+                Expected = [{{"127.0.0.1",5005},true}, {{"127.0.0.1",5002},true}],
+                ?assertEqual({ok,Expected},riak_core_cluster_mgr:get_my_remote_ip_list("Cluster Name", ?SINK_5, primary))
+            end
+        },
+
+        {"iv Source 3, Sink 5, Active Conns 5",
+            fun() ->
+
+                ActiveConns = dict:from_list
+                ([
+                    {node(),[{{"127.0.0.1",5005},true}]},
+                    {node_b,[{{"127.0.0.1",5001},true}]},
+                    {node_c,[{{"127.0.0.1",5004},true}]},
+                    {node_d,[{{"127.0.0.1",5002},true}]},
+                    {node_e,[{{"127.0.0.1",5003},true}]}
+                ]),
+                make_deps(?SOURCE_3, ActiveConns),
+                Expected = [{{"127.0.0.1",5005},true}, {{"127.0.0.1",5002},true}],
+                ?assertEqual({ok,Expected},riak_core_cluster_mgr:get_my_remote_ip_list("Cluster Name", ?SINK_5, primary))
+            end
+        },
+    %% ------------------------------------------------------------------------------------------------------------------ %%
+        {"i) Source 3, Sink 8, Active Conns 5",
+            fun() ->
+
+                ActiveConns = dict:from_list
+                ([
+                    {node(),[{{"127.0.0.1",5001},true}]},
+                    {node_b,[{{"127.0.0.1",5002},true}]},
+                    {node_c,[{{"127.0.0.1",5003},true}]},
+                    {node_d,[{{"127.0.0.1",5004},true}]},
+                    {node_e,[{{"127.0.0.1",5005},true}]}
+                ]),
+                make_deps(?SOURCE_3, ActiveConns),
+                Expected = [{{"127.0.0.1",5001},true}, {{"127.0.0.1",5004},true},{{"127.0.0.1",5007},true}],
+                ?assertEqual({ok,Expected},riak_core_cluster_mgr:get_my_remote_ip_list("Cluster Name", ?SINK_8, primary))
+            end
+        },
+
+        {"ii) Source 3, Sink 8, Active Conns 5",
+            fun() ->
+
+                ActiveConns = dict:from_list
+                ([
+                    {node(),[{{"127.0.0.1",5009},true}]},
+                    {node_b,[{{"127.0.0.1",5002},true}]},
+                    {node_c,[{{"127.0.0.1",5003},true}]},
+                    {node_d,[{{"127.0.0.1",5004},true}]},
+                    {node_e,[{{"127.0.0.1",5001},true}]}
+                ]),
+                make_deps(?SOURCE_3, ActiveConns),
+                Expected = [{{"127.0.0.1",5001},true}, {{"127.0.0.1",5004},true},{{"127.0.0.1",5007},true}],
+                ?assertEqual({ok,Expected},riak_core_cluster_mgr:get_my_remote_ip_list("Cluster Name", ?SINK_8, primary))
+            end
+        },
+
+        {"iii) Source 3, Sink 8, Active Conns 5",
+            fun() ->
+
+                ActiveConns = dict:from_list
+                ([
+                    {node(),[{{"127.0.0.1",5009},true}]},
+                    {node_b,[{{"127.0.0.1",5004},true}]},
+                    {node_c,[{{"127.0.0.1",5001},true}]},
+                    {node_d,[{{"127.0.0.1",5004},true}]},
+                    {node_e,[{{"127.0.0.1",5001},true}]}
+                ]),
+                make_deps(?SOURCE_3, ActiveConns),
+                Expected = [{{"127.0.0.1",5002},true}, {{"127.0.0.1",5003},true},{{"127.0.0.1",5007},true}],
+                ?assertEqual({ok,Expected},riak_core_cluster_mgr:get_my_remote_ip_list("Cluster Name", ?SINK_8, primary))
+            end
+        },
+    %% ------------------------------------------------------------------------------------------------------------------ %%
+        {"i) Source 5, Sink 3, Active Conns 5",
+            fun() ->
+
+                ActiveConns = dict:from_list
+                ([
+                    {node(),[{{"127.0.0.1",5001},true}]},
+                    {node_b,[{{"127.0.0.1",5002},true}]},
+                    {node_c,[{{"127.0.0.1",5003},true}]},
+                    {node_d,[{{"127.0.0.1",5004},true}]},
+                    {node_e,[{{"127.0.0.1",5005},true}]}
+                ]),
+                make_deps(?SOURCE_5, ActiveConns),
+                Expected = [{{"127.0.0.1",5001},true}],
+                ?assertEqual({ok,Expected},riak_core_cluster_mgr:get_my_remote_ip_list("Cluster Name", ?SINK_3, primary))
+            end
+        },
+
+        {"ii) Source 5, Sink 3, Active Conns 5",
+            fun() ->
+
+                ActiveConns = dict:from_list
+                ([
+                    {node(),[{{"127.0.0.1",5005},true}]},
+                    {node_b,[{{"127.0.0.1",5002},true}]},
+                    {node_c,[{{"127.0.0.1",5003},true}]},
+                    {node_d,[{{"127.0.0.1",5004},true}]},
+                    {node_e,[{{"127.0.0.1",5001},true}]}
+                ]),
+                make_deps(?SOURCE_5, ActiveConns),
+                Expected = [{{"127.0.0.1",5001},true}],
+                ?assertEqual({ok,Expected},riak_core_cluster_mgr:get_my_remote_ip_list("Cluster Name", ?SINK_3, primary))
+            end
+        },
+
+        {"iii) Source 5, Sink 3, Active Conns 5",
+            fun() ->
+
+                ActiveConns = dict:from_list
+                ([
+                    {node(),[{{"127.0.0.1",5005},true}]},
+                    {node_b,[{{"127.0.0.1",5003},true}]},
+                    {node_c,[{{"127.0.0.1",5001},true}]},
+                    {node_d,[{{"127.0.0.1",5002},true}]},
+                    {node_e,[{{"127.0.0.1",5004},true}]}
+                ]),
+                make_deps(?SOURCE_5, ActiveConns),
+                Expected = [{{"127.0.0.1",5002},true}],
+                ?assertEqual({ok,Expected},riak_core_cluster_mgr:get_my_remote_ip_list("Cluster Name", ?SINK_3, primary))
+            end
+        },
+
+        {"iv) Source 5, Sink 3, Active Conns 5",
+            fun() ->
+
+                ActiveConns = dict:from_list
+                ([
+                    {node(),[{{"127.0.0.1",5005},true}]},
+                    {node_b,[{{"127.0.0.1",5002},true}]},
+                    {node_c,[{{"127.0.0.1",5001},true}]},
+                    {node_d,[{{"127.0.0.1",5003},true}]},
+                    {node_e,[{{"127.0.0.1",5004},true}]}
+                ]),
+                make_deps(?SOURCE_5, ActiveConns),
+                Expected = [{{"127.0.0.1",5003},true}],
+                ?assertEqual({ok,Expected},riak_core_cluster_mgr:get_my_remote_ip_list("Cluster Name", ?SINK_3, primary))
+            end
+        },
+    %% ------------------------------------------------------------------------------------------------------------------ %%
+        {"i) Source 5, Sink 5, Active Conns 5",
+            fun() ->
+
+                ActiveConns = dict:from_list
+                ([
+                    {node(),[{{"127.0.0.1",5001},true}]},
+                    {node_b,[{{"127.0.0.1",5002},true}]},
+                    {node_c,[{{"127.0.0.1",5003},true}]},
+                    {node_d,[{{"127.0.0.1",5004},true}]},
+                    {node_e,[{{"127.0.0.1",5005},true}]}
+                ]),
+                make_deps(?SOURCE_5, ActiveConns),
+                Expected = [{{"127.0.0.1",5001},true}],
+                ?assertEqual({ok,Expected},riak_core_cluster_mgr:get_my_remote_ip_list("Cluster Name", ?SINK_5, primary))
+            end
+        },
+
+        {"ii) Source 5, Sink 5, Active Conns 5",
+            fun() ->
+
+                ActiveConns = dict:from_list
+                ([
+                    {node(),[{{"127.0.0.1",5002},true}]},
+                    {node_b,[{{"127.0.0.1",5002},true}]},
+                    {node_c,[{{"127.0.0.1",5002},true}]},
+                    {node_d,[{{"127.0.0.1",5002},true}]},
+                    {node_e,[{{"127.0.0.1",5002},true}]}
+                ]),
+                make_deps(?SOURCE_5, ActiveConns),
+                Expected = [{{"127.0.0.1",5001},true}],
+                ?assertEqual({ok,Expected},riak_core_cluster_mgr:get_my_remote_ip_list("Cluster Name", ?SINK_5, primary))
+            end
+        },
+
+        {"iii) Source 5, Sink 5, Active Conns 5",
+            fun() ->
+
+                ActiveConns = dict:from_list
+                ([
+                    {node(),[{{"127.0.0.1",5006},true}]},
+                    {node_b,[{{"127.0.0.1",5001},true}]},
+                    {node_c,[{{"127.0.0.1",5002},true}]},
+                    {node_d,[{{"127.0.0.1",5003},true}]},
+                    {node_e,[{{"127.0.0.1",5005},true}]}
+                ]),
+                make_deps(?SOURCE_5, ActiveConns),
+                Expected = [{{"127.0.0.1",5004},true}],
+                ?assertEqual({ok,Expected},riak_core_cluster_mgr:get_my_remote_ip_list("Cluster Name", ?SINK_5, primary))
+            end
+        },
+    %% ------------------------------------------------------------------------------------------------------------------ %%
+        {"i) Source 5, Sink 8, Active Conns 5",
+            fun() ->
+
+                ActiveConns = dict:from_list
+                ([
+                    {node(),[{{"127.0.0.1",5001},true}]},
+                    {node_b,[{{"127.0.0.1",5002},true}]},
+                    {node_c,[{{"127.0.0.1",5003},true}]},
+                    {node_d,[{{"127.0.0.1",5004},true}]},
+                    {node_e,[{{"127.0.0.1",5005},true}]}
+                ]),
+                make_deps(?SOURCE_5, ActiveConns),
+                Expected = [{{"127.0.0.1",5001},true},{{"127.0.0.1",5006},true}],
+                ?assertEqual({ok,Expected},riak_core_cluster_mgr:get_my_remote_ip_list("Cluster Name", ?SINK_8, primary))
+            end
+        },
+
+        {"ii) Source 5, Sink 8, Active Conns 5",
+            fun() ->
+
+                ActiveConns = dict:from_list
+                ([
+                    {node(),[{{"127.0.0.1",5005},true}]},
+                    {node_b,[{{"127.0.0.1",5002},true}]},
+                    {node_c,[{{"127.0.0.1",5003},true}]},
+                    {node_d,[{{"127.0.0.1",5004},true}]},
+                    {node_e,[{{"127.0.0.1",5008},true}]}
+                ]),
+                make_deps(?SOURCE_5, ActiveConns),
+                Expected = [{{"127.0.0.1",5005},true},{{"127.0.0.1",5001},true}],
+                ?assertEqual({ok,Expected},riak_core_cluster_mgr:get_my_remote_ip_list("Cluster Name", ?SINK_8, primary))
+            end
+        },
+
+        {"iii) Source 5, Sink 8, Active Conns 5",
+            fun() ->
+
+                ActiveConns = dict:from_list
+                ([
+                    {node(),[{{"127.0.0.1",5006},true}]},
+                    {node_b,[{{"127.0.0.1",5002},true}]},
+                    {node_c,[{{"127.0.0.1",5003},true}]},
+                    {node_d,[{{"127.0.0.1",5004},true}]},
+                    {node_e,[{{"127.0.0.1",5005},true}]}
+                ]),
+                make_deps(?SOURCE_5, ActiveConns),
+                Expected = [{{"127.0.0.1",5006},true},{{"127.0.0.1",5001},true}],
+                ?assertEqual({ok,Expected},riak_core_cluster_mgr:get_my_remote_ip_list("Cluster Name", ?SINK_8, primary))
+            end
+        },
+    %% ------------------------------------------------------------------------------------------------------------------ %%
+        {"i) Source 8, Sink 3, Active Conns 5",
+            fun() ->
+
+                ActiveConns = dict:from_list
+                ([
+                    {node(),[{{"127.0.0.1",5001},true}]},
+                    {node_b,[{{"127.0.0.1",5002},true}]},
+                    {node_c,[{{"127.0.0.1",5003},true}]},
+                    {node_d,[{{"127.0.0.1",5004},true}]},
+                    {node_e,[{{"127.0.0.1",5005},true}]}
+                ]),
+                make_deps(?SOURCE_8, ActiveConns),
+                Expected = [{{"127.0.0.1",5001},true}],
+                ?assertEqual({ok,Expected},riak_core_cluster_mgr:get_my_remote_ip_list("Cluster Name", ?SINK_3, primary))
+            end
+        },
+
+        {"ii) Source 8, Sink 3, Active Conns 5",
+            fun() ->
+
+                ActiveConns = dict:from_list
+                ([
+                    {node(),[{{"127.0.0.1",5008},true},{{"127.0.0.1",5007},true},{{"127.0.0.1",5002},true}]},
+                    {node_b,[{{"127.0.0.1",5005},true},{{"127.0.0.1",5006},true}]}
+                ]),
+                make_deps(?SOURCE_8, ActiveConns),
+                Expected = [{{"127.0.0.1",5002},true}],
+                ?assertEqual({ok,Expected},riak_core_cluster_mgr:get_my_remote_ip_list("Cluster Name", ?SINK_3, primary))
+            end
+        },
+
+        {"iii) Source 8, Sink 3, Active Conns 5",
+            fun() ->
+
+                ActiveConns = dict:from_list
+                ([
+                    {node(),[{{"127.0.0.1",5009},true}]},
+                    {node_b,[{{"127.0.0.1",5006},true}]},
+                    {node_c,[{{"127.0.0.1",5005},true}]},
+                    {node_d,[{{"127.0.0.1",5003},true}]},
+                    {node_e,[{{"127.0.0.1",5004},true}]}
+                ]),
+                make_deps(?SOURCE_8, ActiveConns),
+                Expected = [{{"127.0.0.1",5003},true}],
+                ?assertEqual({ok,Expected},riak_core_cluster_mgr:get_my_remote_ip_list("Cluster Name", ?SINK_3, primary))
+            end
+        },
+    %% ------------------------------------------------------------------------------------------------------------------ %%
+        {"i) Source 8, Sink 5, Active Conns 5",
+            fun() ->
+
+                ActiveConns = dict:from_list
+                ([
+                    {node(),[{{"127.0.0.1",5001},true}]},
+                    {node_b,[{{"127.0.0.1",5002},true}]},
+                    {node_c,[{{"127.0.0.1",5003},true}]},
+                    {node_d,[{{"127.0.0.1",5004},true}]},
+                    {node_e,[{{"127.0.0.1",5005},true}]}
+                ]),
+                make_deps(?SOURCE_8, ActiveConns),
+                Expected = [{{"127.0.0.1",5001},true}],
+                ?assertEqual({ok,Expected},riak_core_cluster_mgr:get_my_remote_ip_list("Cluster Name", ?SINK_5, primary))
+            end
+        },
+
+        {"ii) Source 8, Sink 5, Active Conns 5",
+            fun() ->
+
+                ActiveConns = dict:from_list
+                ([
+                    {node_f,[{{"127.0.0.1",5001},true}]},
+                    {node_b,[{{"127.0.0.1",5002},true}]},
+                    {node_c,[{{"127.0.0.1",5003},true}]},
+                    {node_d,[{{"127.0.0.1",5004},true}]},
+                    {node_e,[{{"127.0.0.1",5005},true}]}
+                ]),
+                make_deps(?SOURCE_8, ActiveConns),
+                Expected = [{{"127.0.0.1",5001},true}],
+                ?assertEqual({ok,Expected},riak_core_cluster_mgr:get_my_remote_ip_list("Cluster Name", ?SINK_5, primary))
+            end
+        },
+
+        {"iii) Source 8, Sink 5, Active Conns 5",
+            fun() ->
+
+                ActiveConns = dict:from_list
+                ([
+                    {node_f,[{{"127.0.0.1",5002},true}]},
+                    {node(),[{{"127.0.0.1",5002},true}]},
+                    {node_c,[{{"127.0.0.1",5004},true}]},
+                    {node_d,[{{"127.0.0.1",5004},true}]},
+                    {node_e,[{{"127.0.0.1",5005},true}]}
+                ]),
+                make_deps(?SOURCE_8, ActiveConns),
+                Expected = [{{"127.0.0.1",5002},true}],
+                ?assertEqual({ok,Expected},riak_core_cluster_mgr:get_my_remote_ip_list("Cluster Name", ?SINK_5, primary))
+            end
+        },
+    %% ------------------------------------------------------------------------------------------------------------------ %%
+        {"i) Source 8, Sink 8, Active Conns 5",
+            fun() ->
+
+                ActiveConns = dict:from_list
+                ([
+                    {node(),[{{"127.0.0.1",5001},true}]},
+                    {node_b,[{{"127.0.0.1",5002},true}]},
+                    {node_c,[{{"127.0.0.1",5003},true}]},
+                    {node_d,[{{"127.0.0.1",5004},true}]},
+                    {node_e,[{{"127.0.0.1",5005},true}]}
+                ]),
+                make_deps(?SOURCE_8, ActiveConns),
+                Expected = [{{"127.0.0.1",5001},true}],
+                ?assertEqual({ok,Expected},riak_core_cluster_mgr:get_my_remote_ip_list("Cluster Name", ?SINK_8, primary))
+            end
+        },
+
+        {"i) Source 8, Sink 8, Active Conns 5",
+            fun() ->
+
+                ActiveConns = dict:from_list
+                ([
+                    {node(),[{{"127.0.0.1",5001},true}]},
+                    {node_b,[{{"127.0.0.1",5001},true}]},
+                    {node_c,[{{"127.0.0.1",5001},true}]},
+                    {node_d,[{{"127.0.0.1",5001},true}]},
+                    {node_e,[{{"127.0.0.1",5001},true}]}
+                ]),
+                make_deps(?SOURCE_8, ActiveConns),
+                Expected = [{{"127.0.0.1",5002},true}],
+                ?assertEqual({ok,Expected},riak_core_cluster_mgr:get_my_remote_ip_list("Cluster Name", ?SINK_8, primary))
+            end
+        },
+    %% ------------------------------------------------------------------------------------------------------------------ %%
+        {"i) Source 3, Sink 5, Active Conns 0",
+            fun() ->
+
+                ActiveConns = dict:new(),
+                make_deps(?SOURCE_3, ActiveConns),
+                Expected = [{{"127.0.0.1",5001},true},{{"127.0.0.1",5004},true}],
+                ?assertEqual({ok,Expected},riak_core_cluster_mgr:get_my_remote_ip_list("Cluster Name", ?SINK_5, primary))
+            end
+        },
+
+        {"i) Source 5, Sink 5, Active Conns 0",
+            fun() ->
+
+                ActiveConns = dict:new(),
+                make_deps(?SOURCE_5, ActiveConns),
+                Expected = [{{"127.0.0.1",5001},true}],
+                ?assertEqual({ok,Expected},riak_core_cluster_mgr:get_my_remote_ip_list("Cluster Name", ?SINK_5, primary))
+            end
+        },
+
+        {"i) Source 8, Sink 5, Active Conns 0",
+            fun() ->
+
+                ActiveConns = dict:new(),
+                make_deps(?SOURCE_8, ActiveConns),
+                Expected = [{{"127.0.0.1",5001},true}],
+                ?assertEqual({ok,Expected},riak_core_cluster_mgr:get_my_remote_ip_list("Cluster Name", ?SINK_5, primary))
+            end
+        },
+    %% ------------------------------------------------------------------------------------------------------------------ %%
+        {"i) [Rotate Sources] Source 3, Sink 5, Active Conns 0",
+            fun() ->
+
+                ActiveConns = dict:new(),
+                SourceNodes = [node(), node_b, node_c],
+                make_deps(SourceNodes, ActiveConns),
+                Expected = [{{"127.0.0.1",5001},true}, {{"127.0.0.1",5004},true}],
+                ?assertEqual({ok,Expected},riak_core_cluster_mgr:get_my_remote_ip_list("Cluster Name", ?SINK_5, primary))
+            end
+        },
+
+        {"ii) [Rotate Sources] Source 3, Sink 5, Active Conns 0",
+            fun() ->
+
+                ActiveConns = dict:new(),
+                SourceNodes = [node(), node_c, node_b],
+                make_deps(SourceNodes, ActiveConns),
+                Expected = [{{"127.0.0.1",5001},true}, {{"127.0.0.1",5004},true}],
+                ?assertEqual({ok,Expected},riak_core_cluster_mgr:get_my_remote_ip_list("Cluster Name", ?SINK_5, primary))
+            end
+        },
+
+        {"iii) [Rotate Sources] Source 3, Sink 5, Active Conns 0",
+            fun() ->
+
+                ActiveConns = dict:new(),
+                SourceNodes = [node_b, node(), node_c],
+                make_deps(SourceNodes, ActiveConns),
+                Expected = [{{"127.0.0.1",5002},true}, {{"127.0.0.1",5005},true}],
+                ?assertEqual({ok,Expected},riak_core_cluster_mgr:get_my_remote_ip_list("Cluster Name", ?SINK_5, primary))
+            end
+        },
+
+        {"iv) [Rotate Sources] Source 3, Sink 5, Active Conns 0",
+            fun() ->
+
+                ActiveConns = dict:new(),
+                SourceNodes = [node_b, node_c, node()],
+                make_deps(SourceNodes, ActiveConns),
+                Expected = [{{"127.0.0.1",5003},true}],
+                ?assertEqual({ok,Expected},riak_core_cluster_mgr:get_my_remote_ip_list("Cluster Name", ?SINK_5, primary))
+            end
+        },
+
+        {"v) [Rotate Sources] Source 3, Sink 5, Active Conns 0",
+            fun() ->
+
+                ActiveConns = dict:new(),
+                SourceNodes = [node_c, node(), node_b],
+                make_deps(SourceNodes, ActiveConns),
+                Expected = [{{"127.0.0.1",5002},true}, {{"127.0.0.1",5005},true}],
+                ?assertEqual({ok,Expected},riak_core_cluster_mgr:get_my_remote_ip_list("Cluster Name", ?SINK_5, primary))
+            end
+        },
+
+        {"vi) [Rotate Sources] Source 3, Sink 5, Active Conns 0",
+            fun() ->
+
+                ActiveConns = dict:new(),
+                SourceNodes = [node_c, node_b, node()],
+                make_deps(SourceNodes, ActiveConns),
+                Expected = [{{"127.0.0.1",5003},true}],
+                ?assertEqual({ok,Expected},riak_core_cluster_mgr:get_my_remote_ip_list("Cluster Name", ?SINK_5, primary))
+            end
+        },
+    %% ------------------------------------------------------------------------------------------------------------------ %%
+
+        {"i) [Secondary Connections] Source 5, Sink 5, Active Conns 5",
+            fun() ->
+
+                ActiveConns = dict:from_list
+                ([
+                    {node(),[{{"127.0.0.1",5001},false}]},
+                    {node_b,[{{"127.0.0.1",5002},false}]},
+                    {node_c,[{{"127.0.0.1",5003},false}]},
+                    {node_d,[{{"127.0.0.1",5004},false}]},
+                    {node_e,[{{"127.0.0.1",5005},false}]}
+                ]),
+                make_deps(?SOURCE_5, ActiveConns),
+                Expected = [{{"127.0.0.1",5001},true}],
+                ?assertEqual({ok,Expected},riak_core_cluster_mgr:get_my_remote_ip_list("Cluster Name", ?SINK_5, primary))
+            end
+        },
+
+        {"ii) [Secondary Connections] Source 5, Sink 5, Active Conns 5",
+            fun() ->
+
+                ActiveConns = dict:from_list
+                ([
+                    {node(),[{{"127.0.0.1",5004},true}]},
+                    {node_b,[{{"127.0.0.1",5004},false}]},
+                    {node_c,[{{"127.0.0.1",5004},false}]},
+                    {node_d,[{{"127.0.0.1",5004},false}]},
+                    {node_e,[{{"127.0.0.1",5004},false}]}
+                ]),
+                make_deps(?SOURCE_5, ActiveConns),
+                Expected = [{{"127.0.0.1",5004},true}],
+                ?assertEqual({ok,Expected},riak_core_cluster_mgr:get_my_remote_ip_list("Cluster Name", ?SINK_5, primary))
+            end
+        },
+
+        {"iii) [Secondary Connections] Source 5, Sink 5, Active Conns 5",
+            fun() ->
+
+                ActiveConns = dict:from_list
+                ([
+                    {node(),[{{"127.0.0.1",5001},false}]},
+                    {node_b,[{{"127.0.0.1",5001},false}]},
+                    {node_c,[{{"127.0.0.1",5001},true}]},
+                    {node_d,[{{"127.0.0.1",5001},false}]},
+                    {node_e,[{{"127.0.0.1",5001},false}]}
+                ]),
+                make_deps(?SOURCE_5, ActiveConns),
+                Expected = [{{"127.0.0.1",5002},true}],
+                ?assertEqual({ok,Expected},riak_core_cluster_mgr:get_my_remote_ip_list("Cluster Name", ?SINK_5, primary))
+            end
+        },
+    %% ------------------------------------------------------------------------------------------------------------------ %%
+        {"i) [Checking Output Formart] Source 5, Sink 5, Active Conns 5",
+            fun() ->
+
+                ActiveConns = dict:from_list
+                ([
+                    {node(),[{{"127.0.0.1",5001},true}]},
+                    {node_b,[{{"127.0.0.1",5002},true}]},
+                    {node_c,[{{"127.0.0.1",5003},true}]},
+                    {node_d,[{{"127.0.0.1",5004},true}]},
+                    {node_e,[{{"127.0.0.1",5005},true}]}
+                ]),
+                make_deps(?SOURCE_5, ActiveConns),
+                {ok, {Primary, Secondary}} = riak_core_cluster_mgr:get_my_remote_ip_list("Cluster Name", ?SINK_5, split),
+                ExpectedPrimary = [{{"127.0.0.1",5001},true}],
+                ExpectedSecondary = [{{"127.0.0.1",5002},false},{{"127.0.0.1",5003},false},{{"127.0.0.1",5004},false},{{"127.0.0.1",5005},false}],
+                ?assertEqual(ExpectedPrimary, Primary),
+                ?assertEqual(true, check_secondary(Secondary, ExpectedSecondary, true))
+            end
+        }
     ] end }.
+
+
+check_secondary(_,_, false) ->
+    false;
+check_secondary([],_,true) ->
+    true;
+check_secondary([Output|Rest], Expected, true) ->
+    check_secondary(Rest, Expected, lists:member(Output, Expected)).
+
+make_deps(ActiveSourceNodes, ActiveConns) ->
+    meck:expect(riak_repl2_rtsource_conn_data_mgr, read,
+        fun(active_nodes) ->
+            lists:reverse(ActiveSourceNodes)
+        end),
+    meck:expect(riak_repl2_rtsource_conn_data_mgr, read,
+        fun(realtime_connections, _Remote) ->
+            ActiveConns
+        end).
+
 
 wait_for(Fun) ->
     wait_for(Fun, 2000, 10).
@@ -140,6 +832,8 @@ wait_for(Fun, Remaining, Interval) ->
 %% XXX this test is disabled because it doesn't run when certain gostname
 %% configurations are used. Disabling it until we can rewrite it as a
 %% riak_test.
+
+%% These will also now no longer work due to the change to the functionality of get_ipaddrs_of_cluster
 multinode_test__() ->
     {setup, fun() ->
         % superman, batman, and wonder woman are all part of the JLA
@@ -297,6 +991,9 @@ start_link_setup(ClusterAddr) ->
     meck:expect(riak_core_node_watcher, nodes, fun(_) ->
         [node()]
     end),
+
+    catch(meck:unload(riak_repl2_rtsource_conn_data_mgr)),
+    meck:new(riak_repl2_rtsource_conn_data_mgr, [passthrough]),
 
     {ok, Leader} = riak_repl2_leader:start_link(),
 

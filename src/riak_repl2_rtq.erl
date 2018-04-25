@@ -83,7 +83,7 @@
             skips = 0,
             drops = 0, % number of dropped queue entries (not items)
             errs = 0,  % delivery errors
-            deliver,  % deliver function if pending, otherwise undefined
+            deliver = [],  % deliver functions if pending, otherwise undefined
             delivered = false,  % used by the skip count.
             % skip_count is used to help the sink side determine if an item has
             % been dropped since the last delivery. The sink side can't
@@ -349,7 +349,7 @@ handle_call({register, Name}, _From, State = #state{qtab = QTab, qseq = QSeq, cs
                 false -> C#c.aseq
             end,
             UpdCs = [C#c{cseq = CSeq, drops = PrevDrops + Drops,
-                         deliver = undefined} | Cs2];
+                         deliver = []} | Cs2];
         false ->
             %% New registration, start from the beginning
             CSeq = MinSeq,
@@ -464,12 +464,14 @@ handle_info(_Msg, State) ->
     {noreply, State}.
 
 %% @private
-terminate(Reason, #state{cs = Cs}) ->
+terminate(Reason, State=#state{cs = Cs}) ->
+  lager:info("rtq terminating due to: ~p
+  State: ~p", [Reason, State]),
     %% when started from tests, we may not be registered
     catch(erlang:unregister(?SERVER)),
     flush_pending_pushes(),
-    _ = [deliver_error(DeliverFun, {terminate, Reason}) ||
-	    #c{deliver = DeliverFun} <- Cs],
+    DList = [DeliverFunList || #c{deliver = DeliverFunList} <- Cs],
+    _ = [deliver_error(DeliverFun, {terminate, Reason}) || DeliverFun <- lists:flatten(DList)],
     ok.
 
 %% @private
@@ -510,7 +512,7 @@ unregister_q(Name, State = #state{qtab = QTab, cs = Cs}) ->
         {value, C, Cs2} ->
             %% Remove C from Cs, let any pending process know
             %% and clean up the queue
-            case C#c.deliver of
+            case get_delivery_fun(C#c.deliver) of
                 undefined ->
                     ok;
                 DeliverFun ->
@@ -602,7 +604,8 @@ pull(Name, DeliverFun, State = #state{qtab = QTab, qseq = QSeq, cs = Cs, filtere
                     [maybe_pull(QTab, QSeq, C, CsNames, DeliverFun, FEnabled, FilterBuckets) | Cs2];
                 false ->
                     lager:error("Consumer ~p pulled from RTQ, but was not registered", [Name]),
-                    deliver_error(DeliverFun, not_registered)
+                    deliver_error(DeliverFun, not_registered),
+                    Cs
             end,
     State#state{cs = UpdCs}.
 
@@ -644,7 +647,7 @@ maybe_pull(QTab, QSeq, C = #c{cseq = CSeq, name = CName}, CsNames, DeliverFun, F
                         _ ->
                             % if the item can't be delivered due to cascading rt,
                             % just keep trying.
-                            case maybe_deliver_item(C#c{deliver = DeliverFun}, QEntry2, FilteringEnabled) of
+                            case maybe_deliver_item(add_deliver_fun(DeliverFun, C), QEntry2, FilteringEnabled) of
                                 {skipped, C2} ->
                                     maybe_pull(QTab, QSeq, C2, CsNames, DeliverFun, FilteringEnabled, FilteredBuckets);
                                 {_WorkedOrNoFun, C2} ->
@@ -655,7 +658,7 @@ maybe_pull(QTab, QSeq, C = #c{cseq = CSeq, name = CName}, CsNames, DeliverFun, F
         false ->
             %% consumer is up to date with head, keep deliver function
             %% until something pushed
-            C#c{deliver = DeliverFun}
+            add_deliver_fun(DeliverFun, C)
     end.
 
 % We can't filter if bucket filtering is disabled or if the bucket config is undefined
@@ -672,15 +675,16 @@ deliver_if_can_route(false, Consumer, QEntry) ->
 deliver_if_can_route(true, Consumer, {Seq, _NumItem, _Bin, _Meta, {_Bucket, Remotes}} = QEntry) ->
     case allowed_to_route(Consumer#c.name, Remotes) of
         true ->
-            {delivered, deliver_item(Consumer, Consumer#c.deliver, QEntry)};
+            {delivered, deliver_item(Consumer, get_delivery_fun(Consumer#c.deliver), QEntry)};
         false ->
             {filtered, Consumer#c{cseq = Seq, aseq = Seq, filtered = Consumer#c.filtered + 1}}
     end;
 deliver_if_can_route(_, Consumer, QEntry) ->
-    {delivered, deliver_item(Consumer, Consumer#c.deliver, QEntry)}.
+    {delivered, deliver_item(Consumer, get_delivery_fun(Consumer#c.deliver), QEntry)}.
 
-maybe_deliver_item(C = #c{deliver = undefined}, QEntry, FilteringEnabled) ->
+maybe_deliver_item(C = #c{deliver = []}, QEntry, FilteringEnabled) ->
     {_Seq, _NumItem, _Bin, Meta, BucketConfig} = QEntry,
+
     Name = C#c.name,
     Routed = case orddict:find(routed_clusters, Meta) of
         error -> [];
@@ -710,17 +714,18 @@ maybe_deliver_item(C, QEntry, FilteringEnabled) ->
             deliver_if_can_route(FilteringEnabled, C, QEntry)
     end.
 
-deliver_item(C, DeliverFun, {Seq,_NumItem, _Bin, _Meta, _} = QEntry) ->
+deliver_item(C, DeliverFun, {Seq, _NumItem, _Bin, _Meta, _} = QEntry) ->
+  [_ | Rest] = C#c.deliver,
     try
         Seq = C#c.cseq + 1, % bit of paranoia, remove after EQC
         QEntry2 = set_skip_meta(QEntry, Seq, C),
         ok = DeliverFun(QEntry2),
-        C#c{cseq = Seq, deliver = undefined, delivered = true, skips = 0}
+        C#c{cseq = Seq, deliver = Rest, delivered = true, skips = 0}
     catch
         _:_ ->
             riak_repl_stats:rt_source_errors(),
             %% do not advance head so it will be delivered again
-            C#c{errs = C#c.errs + 1, deliver = undefined}
+            C#c{errs = C#c.errs + 1, deliver = Rest}
     end.
 
 %% Deliver an error if a delivery function is registered.
@@ -759,7 +764,7 @@ cleanup(QTab, Seq, State) ->
             lager:warning("Unexpected object in RTQ")
     end.
 
-ets_obj_size(Obj, #state{word_size = WordSize}) when is_binary(Obj) ->
+ets_obj_size(Obj, _State=#state{word_size = WordSize}) when is_binary(Obj) ->
   ets_obj_size(Obj, WordSize);
 ets_obj_size(Obj, WordSize) when is_binary(Obj) ->
   BSize = erlang:byte_size(Obj),
@@ -846,6 +851,19 @@ update_filtered_bucket_state(Enabled) ->
 
 update_filtered_buckets_list(FilteringConfig) ->
     gen_server:call(?SERVER, {filtered_buckets, update_buckets, FilteringConfig}).
+
+get_delivery_fun(DeliverFunList) ->
+  case DeliverFunList of
+    [] ->
+      undefined;
+    _ ->
+      hd(DeliverFunList)
+  end.
+
+add_deliver_fun(DeliverFun, C) ->
+  DeliverFunList = C#c.deliver,
+  NewList = lists:append(DeliverFunList, [DeliverFun]),
+  C#c{deliver = NewList}.
 
 -ifdef(TEST).
 qbytes(_QTab, #state{qsize_bytes = QSizeBytes}) ->
