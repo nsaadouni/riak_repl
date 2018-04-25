@@ -263,6 +263,8 @@ handle_cast(_Request, State) ->
 write_realtime_connections(Msg={_,Remote,Node,ConnectionList}, State = #state{connections=C}) ->
   case State#state.is_leader of
     true ->
+      lager:info("data_mgr is leader writing -> ~p
+      node = ~p", [Msg, node()]),
       OldRemoteDict = get_value(Remote, C, dictionary),
       NewRemoteDict = dict:store(Node, ConnectionList, OldRemoteDict),
       NewConnections = dict:store(Remote, NewRemoteDict, C),
@@ -272,6 +274,8 @@ write_realtime_connections(Msg={_,Remote,Node,ConnectionList}, State = #state{co
       {noreply, State#state{connections = NewConnections}};
 
     false ->
+      lager:info("data_mgr is proxy sending to leader -> ~p
+      node = ~p", [Msg, node()]),
       proxy_cast(Msg, State),
       {noreply, State}
   end.
