@@ -642,7 +642,7 @@ maybe_pull(QTab, QSeq, C = #c{cseq = CSeq, name = CName}, CsNames, DeliverFun, F
                                             C2
                                     end;
                                 false ->
-                                    C#c{skips = 0, cseq = CSeq2, deliver = undefined, delivered = true}
+                                    C#c{skips = 0, cseq = CSeq2, deliver = [], delivered = true}
                             end;
                         _ ->
                             % if the item can't be delivered due to cascading rt,
