@@ -635,7 +635,7 @@ maybe_pull(QTab, QSeq, C = #c{cseq = CSeq, name = CName}, CsNames, DeliverFun, F
                                 true ->
                                     % if the item can't be delivered due to cascading rt,
                                     % just keep trying.
-                                    case maybe_deliver_item(C#c{deliver = DeliverFun}, QEntry2, FilteringEnabled) of
+                                    case maybe_deliver_item(add_deliver_fun(DeliverFun, C), QEntry2, FilteringEnabled) of
                                         {skipped, C2} ->
                                             maybe_pull(QTab, QSeq, C2, CsNames, DeliverFun, FilteringEnabled, FilteredBuckets);
                                         {_WorkedOrNoFun, C2} ->
@@ -671,7 +671,7 @@ filter_if_enabled(_, _, _) ->
     no_fun.
 
 deliver_if_can_route(false, Consumer, QEntry) ->
-    {delivered, deliver_item(Consumer, Consumer#c.deliver, QEntry)};
+    {delivered, deliver_item(Consumer, get_delivery_fun(Consumer#c.deliver), QEntry)};
 deliver_if_can_route(true, Consumer, {Seq, _NumItem, _Bin, _Meta, {_Bucket, Remotes}} = QEntry) ->
     case allowed_to_route(Consumer#c.name, Remotes) of
         true ->

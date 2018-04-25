@@ -307,7 +307,7 @@ start_source(NegotiatedVer) ->
         end),
         {ok, make_ref()}
     end),
-    {ok, SourcePid} = riak_repl2_rtsource_remote_conn_sup:start_link("sink_cluster"),
+    {ok, SourcePid} = riak_repl2_rtsource_conn_mgr:start_link("sink_cluster"),
     %unlink(SourcePid),
     receive
         {sink_started, SinkPid} ->
