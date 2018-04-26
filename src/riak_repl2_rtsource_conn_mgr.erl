@@ -152,7 +152,7 @@ handle_call({connected, Socket, Transport, IPPort, Proto, _Props, Primary}, _Fro
           NewEndpoints = dict:store({IPPort, Primary}, RtSourcePid, NewState#state.endpoints),
 
           % save to ring
-          lager:info("Adding remote connections to data_mgr", [dict:fetch_keys(NewEndpoints)]),
+          lager:info("Adding remote connections to data_mgr: ~p", [dict:fetch_keys(NewEndpoints)]),
           riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, Remote, node(), dict:fetch_keys(NewEndpoints)),
 
           {reply, ok, NewState#state{endpoints = NewEndpoints}};
