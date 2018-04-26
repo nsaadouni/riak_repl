@@ -278,7 +278,7 @@ handle_cast(Msg = {restore_realtime_connections, Remote, Node, ConnectionList}, 
       node = ~p", [Msg, node()]),
 
       OldRemoteDict = get_value(Remote, C, dictionary),
-      OldConns = dict:fetch(Node, OldRemoteDict),
+      OldConns = get_value(Node, OldRemoteDict, list),
       NewConns = lists:usort(OldConns ++ ConnectionList),
       NewRemoteDict = dict:store(Node, NewConns, OldRemoteDict),
       NewConnections = dict:store(Remote, NewRemoteDict, C),
