@@ -251,16 +251,7 @@ handle_cast(Msg = {write_realtime_connections, Remote, Node, IPPort, Primary}, S
       {noreply, State}
   end;
 
-handle_cast(Msg = {write_realtime_connections, _Remote, _Node, _ConnectionList}, State) ->
-  write_realtime_connections(Msg,State);
-
-handle_cast(Msg = {restore_realtime_connections, _Remote, _Node, _ConnectionList}, State) ->
-  write_realtime_connections(Msg,State);
-
-handle_cast(_Request, State) ->
-  {noreply, State}.
-
-write_realtime_connections(Msg={_,Remote,Node,ConnectionList}, State = #state{connections=C}) ->
+handle_cast(Msg = {write_realtime_connections, Remote, Node, ConnectionList}, State = #state{connections = C}) ->
   case State#state.is_leader of
     true ->
       lager:info("data_mgr is leader writing -> ~p
@@ -278,7 +269,33 @@ write_realtime_connections(Msg={_,Remote,Node,ConnectionList}, State = #state{co
       node = ~p", [Msg, node()]),
       proxy_cast(Msg, State),
       {noreply, State}
-  end.
+  end;
+
+handle_cast(Msg = {restore_realtime_connections, Remote, Node, ConnectionList}, State = #state{connections = C}) ->
+  case State#state.is_leader of
+    true ->
+      lager:info("data_mgr is leader writing -> ~p
+      node = ~p", [Msg, node()]),
+
+      OldRemoteDict = get_value(Remote, C, dictionary),
+      OldConns = dict:fetch(Node, OldRemoteDict),
+      NewConns = lists:usort(OldConns ++ ConnectionList),
+      NewRemoteDict = dict:store(Node, NewConns, OldRemoteDict),
+      NewConnections = dict:store(Remote, NewRemoteDict, C),
+
+      % push onto ring
+      riak_core_ring_manager:ring_trans(fun riak_repl_ring:overwrite_realtime_connection_data/2, NewConnections),
+      {noreply, State#state{connections = NewConnections}};
+
+    false ->
+      lager:info("data_mgr is proxy sending to leader -> ~p
+      node = ~p", [Msg, node()]),
+      proxy_cast(Msg, State),
+      {noreply, State}
+  end;
+
+handle_cast(_Request, State) ->
+  {noreply, State}.
 
 
 handle_info(restore_leader_data, State) ->
