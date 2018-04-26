@@ -167,7 +167,7 @@ handle_call({connected, Socket, Transport, IPPort, Proto, _Props, Primary}, _Fro
 
 handle_call(all_status, _From, State=#state{endpoints = E}) ->
   AllKeys = dict:fetch_keys(E),
-  {reply, collect_status_data(AllKeys, [], E), State};
+  {reply, lists:flatten(collect_status_data(AllKeys, [], E)), State};
 
 handle_call(get_rtsource_conn_pids, _From, State = #state{endpoints = E}) ->
   Result = lists:foldl(fun({_,Pid}, Acc) -> Acc ++ [Pid] end, [], dict:to_list(E)),

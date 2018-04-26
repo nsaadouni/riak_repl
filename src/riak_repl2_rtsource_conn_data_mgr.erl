@@ -91,7 +91,7 @@ init([]) ->
                 ReNotify =
                   fun(Node) ->
                     try gen_server:cast({riak_repl2_leader, Node}, re_notify) of
-                      true ->
+                      ok ->
                         ok
                     catch
                       _Type:_Error ->
