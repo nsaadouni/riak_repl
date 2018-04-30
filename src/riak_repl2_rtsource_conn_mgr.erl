@@ -148,6 +148,16 @@ handle_call({connected, Socket, Transport, IPPort, Proto, _Props, Primary}, _Fro
                         State#state{endpoints = E2, remove_endpoint = undefined}
                      end,
 
+          case dict:find({IPPort, Primary}, NewState#state.endpoints) of
+            {ok, OldRtSourcePid} ->
+              HelperPid = riak_repl2_rtsource_conn:get_helper_pid(OldRtSourcePid),
+              riak_repl2_rtsource_helper:stop_pulling(HelperPid),
+              lager:info("duplicate connections found, removing the old one ~p", [{IPPort,Primary}]),
+              erlang:send_after(K, self(), {kill_rtsource_conn, OldRtSourcePid});
+            error ->
+              ok
+          end,
+
           %% Save {EndPoint, Pid}; Pid will come from the supervisor starting a child
           NewEndpoints = dict:store({IPPort, Primary}, RtSourcePid, NewState#state.endpoints),
 
@@ -172,18 +182,6 @@ handle_call(all_status, _From, State=#state{endpoints = E}) ->
 handle_call(get_rtsource_conn_pids, _From, State = #state{endpoints = E}) ->
   Result = lists:foldl(fun({_,Pid}, Acc) -> Acc ++ [Pid] end, [], dict:to_list(E)),
   {reply, Result, State};
-
-%%handle_call({connection_closed, Addr, Primary}, _From, State=#state{endpoints = E, remote = R}) ->
-%%  NewEndpoints = dict:erase({Addr,Primary}, E),
-%%  riak_repl2_rtsource_conn_data_mgr:delete(realtime_connections, R, node(), Addr, Primary),
-%%  NewState = case NewEndpoints of
-%%    [] ->
-%%      RbTimeoutTref = erlang:send_after(0, self(), rebalance_now),
-%%      State#state{rb_timeout_tref = RbTimeoutTref};
-%%    _ ->
-%%      State
-%%  end,
-%%  {reply, ok, NewState#state{endpoints = NewEndpoints}};
 
 handle_call(stop, _From, State) ->
   {stop, normal, ok, State};
@@ -518,7 +516,7 @@ remove_connections([Key={Addr, Primary} | Rest], E, {KillTime, Remote}) ->
   RtSourcePid = dict:fetch(Key, E),
   HelperPid = riak_repl2_rtsource_conn:get_helper_pid(RtSourcePid),
   riak_repl2_rtsource_helper:stop_pulling(HelperPid),
-  lager:debug("rtsource_conn called to gracefully kill itself ~p", [Key]),
+  lager:info("rtsource_conn called to gracefully kill itself ~p", [Key]),
   erlang:send_after(KillTime, self(), {kill_rtsource_conn, RtSourcePid}),
   riak_repl2_rtsource_conn_data_mgr:delete(realtime_connections, Remote, node(), Addr, Primary),
   remove_connections(Rest, dict:erase(Key, E), {KillTime, Remote}).

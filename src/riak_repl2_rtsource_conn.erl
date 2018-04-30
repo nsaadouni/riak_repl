@@ -227,8 +227,9 @@ handle_call({connected, Socket, Transport, EndPoint, Proto, Primary}, _From,
         helper_pid = HelperPid,
         ver = Ver,
         primary = Primary},
-      lager:info("Established realtime connection to site ~p address ~s",
-        [Remote, peername(State2)]),
+      {ok, Peername} = inet:sockname(Socket),
+      lager:info("Established realtime connection to site ~p address ~s, [data socket: ~p]",
+        [Remote, peername(State2), Peername]),
 
       case Proto of
         {realtime, _OurVer, {1, 0}} ->
@@ -306,8 +307,9 @@ handle_info(Msg, State) ->
     lager:warning("Unhandled info:  ~p", [Msg]),
     {noreply, State}.
 
-terminate(Reason, _State) ->
+terminate(Reason, #state{socket = Socket, transport = Transport}) ->
   lager:info("rtsource conn terminated due to ~p", [Reason]),
+  Transport:close(Socket),
   ok.
 
 code_change(_OldVsn, State, _Extra) ->
