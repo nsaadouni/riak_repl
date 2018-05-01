@@ -803,6 +803,10 @@ shuffle(List) ->
   [E || {E, _} <- lists:keysort(2, [{Elm, random:uniform()} || Elm <- List])].
 
 
+%% The purpose of this function is to calculate for all nodes the correct nodes they should connect too for realtime
+%% replication. Once we have calculated all connections for all nodes we can take our own connections for a given node. The
+%% function relies on the fact that the rtsource_conn_data_mgr leader will eventually provide consistent data with regard
+%% too currently active realtime connections, and UP source and sink nodes.
 get_my_remote_ip_list(_Remote, [], _Return) ->
   {ok, []};
 get_my_remote_ip_list(Remote, RemoteUnsorted, Return) ->
@@ -811,29 +815,42 @@ get_my_remote_ip_list(Remote, RemoteUnsorted, Return) ->
   case riak_repl2_rtsource_conn_data_mgr:read(active_nodes) of
     no_leader ->
       {ok, []};
+    %% SourceNodes = [SourceNode1, SourceNode3, SourceNode2 ...]
+    %% They are ordered by chronological time with regard to the time the node was UP in riak_kv
     SourceNodes ->
+      %% we reverse the list so that the latest addition to the source cluster is the end of the list (This is important)
       SourceSortedNodes = lists:reverse(SourceNodes),
       NumberOfSinkNodes = length(SinkNodes),
       NumberOfSourceNodes = length(SourceSortedNodes),
+      %% SourceNodesTagged = [{Index, SourceNode} ...] ->
+      %% 2 Cases:
+      %% 1) 2 source nodes can have the same index as we use modulo arthemtic to index with against the length of the sink nodes
+      %% 2) 1 source node can have multiple indexes
       SourceNodesTagged = case NumberOfSinkNodes < NumberOfSourceNodes of
                             true ->
                               fix_indecies(NumberOfSinkNodes, lists:reverse(lists:zip(lists:seq(0, length(SourceSortedNodes)-1), SourceSortedNodes)), []);
                             false ->
                               lists:zip(lists:seq(1, length(SourceSortedNodes)), SourceSortedNodes)
                           end,
+      %% SinkNodesLinkTagged = [{Index, Position in sink node list}, ...]
       SinkNodesLinkTagged = lists:zip(lists:seq(0, length(SinkNodesLink)-1), SinkNodesLink),
       case lists:keyfind(node(), 2, SourceNodesTagged) of
         false ->
           % This node is not part of the cluster
           % Therefore should not connect to the othe cluster as part of repl for this
-          lager:debug("we are reaching the state that we are not in the cluster! ~p", [SourceSortedNodes]),
+          lager:info("Node: ~p is not yet part of the regonised source nodes: ~p in the cluster, therefore no ", [node(), SourceSortedNodes]),
           {ok, []};
         _ ->
+          %% AllPrimariesList is a list of [{SourceNode, Index1}, ...]. The number of indexes a given source node has depends on its index in the list of source nodes,
+          %% and the number of sink nodes. [One source node can have 1 or more indexes to be give a connection too]
           AllPrimariesList = [ {So, Si}  || {SinkIndex, Si} <- SinkNodesLinkTagged, {SourceIndex, So} <- SourceNodesTagged, SinkIndex rem NumberOfSourceNodes == SourceIndex-1],
+          %% AllPrimariesDict is a dictionary with key-value pairs of {SourceNode, [Index1, Index2 ...]}
           AllPrimariesDict = build_primary_dict(AllPrimariesList, dict:new()),
           case link_addrs(AllPrimariesDict, SinkNodes, Remote) of
             no_leader ->
               {ok, []};
+            %% FinalLinkedNodes is a dictionary
+            %% Key-Value -> {Index, SinkNode}
             FinalLinkedNodes ->
               MyIdx = dict:fetch(node(), AllPrimariesDict),
               NotMyIdx = lists:seq(1,length(SinkNodes)) -- MyIdx,
@@ -845,21 +862,31 @@ get_my_remote_ip_list(Remote, RemoteUnsorted, Return) ->
   end.
 
 
-%%
+%% This was used instead of dict:from_list because we a source node can have multiple indexes, and from_list would not
+%% append the indexes into a list for the value
 build_primary_dict([], Dict) ->
   Dict;
 build_primary_dict([{Key, Value}| Rest], Dict) ->
   Dict2 = dict:append(Key, Value, Dict),
   build_primary_dict(Rest, Dict2).
 
-
+%% link_addrs attempts to link and keep as many currently active connections active and untouched before matching
+%% sink nodes to an index which would cause active connections to be dropped and made by other nodes.
+%% Output: dict -> Key-Value: {Index, SinkNode}
 link_addrs(AllPrimariesDict, SinkNodes, Remote) ->
   case riak_repl2_rtsource_conn_data_mgr:read(realtime_connections, Remote) of
     no_leader ->
       no_leader;
+    %% ActiveConnsDict: this is a dictionary of active realtime connections
+    %% Key-value -> {SourceNodeA, [SinkNode1, SinkNode3 ...]}
     ActiveConnsDict ->
       ActiveSources = dict:fetch_keys(ActiveConnsDict),
-      {LinkedActiveNodes, LeftOverSinkNodes, NewPrimaryLinkDict} = link_active_addr({ActiveConnsDict, ActiveSources}, AllPrimariesDict, dict:new(), SinkNodes),
+
+      %% link_active_addr attempts to match as many active source -> sink node connections as possible before matching
+      %% the unlinked/unactive addresses
+      {LinkedActiveNodes, LeftOverSinkNodes, NewPrimaryLinkDict} =
+        link_active_addr({ActiveConnsDict, ActiveSources}, AllPrimariesDict, dict:new(), SinkNodes),
+
       lager:debug("
       Old Primary Dict: ~p
       Active Sources: ~p
@@ -868,12 +895,15 @@ link_addrs(AllPrimariesDict, SinkNodes, Remote) ->
       Linked Sink Nodes: ~p", [AllPrimariesDict, ActiveSources, NewPrimaryLinkDict, LeftOverSinkNodes, LinkedActiveNodes]),
 
       Unlinked = lists:usort(unlinked_indexes(dict:to_list(NewPrimaryLinkDict), [])),
+
+      %% With the remaining sink nodes that have not been linked to an index yet we just loop through and link them.
+      %% So all sink nodes are matched to an index
       FinalLinkedNodesDict = link_unactive_addr(Unlinked, LeftOverSinkNodes, LinkedActiveNodes),
       lager:debug("All linked Nodes Dict: ~p", [FinalLinkedNodesDict]),
       FinalLinkedNodesDict
   end.
 
-
+%% calculates the list of indexes that still need to linked to a source node
 unlinked_indexes([], ListOfIndexes) ->
   lists:reverse(ListOfIndexes);
 unlinked_indexes([{_Node, []}|Rest], ListOfIndexes) ->
@@ -881,7 +911,7 @@ unlinked_indexes([{_Node, []}|Rest], ListOfIndexes) ->
 unlinked_indexes([{Node, [Idx|Idxs]}|Rest], ListOfIndexes) ->
   unlinked_indexes( [{Node,Idxs}|Rest], [Idx|ListOfIndexes]).
 
-
+%% matches Index to unlinked SinkNodes
 link_unactive_addr([],[], AllLinkedDict) ->
   AllLinkedDict;
 link_unactive_addr([],SinkNodes,AllLinkedDict) ->
@@ -903,7 +933,7 @@ link_unactive_addr([Idx|Idxs], [SinkNode|Y], LinkedDict) ->
       link_unactive_addr(Idxs, Y, NewLinkedDict)
   end.
 
-
+%% Using realtime connection data, we match sink nodes to indexes that are already connected to there source node counter part
 link_active_addr({_ActiveConnsDict,[]},AllPrimariesDict, LinkedActive,SinkNodes) ->
   {LinkedActive, SinkNodes, AllPrimariesDict};
 link_active_addr({ActiveConnsDict, [ActiveSourceNode|Rest]}, AllPrimariesDict, LinkedActiveDict, SinkNodes) ->
