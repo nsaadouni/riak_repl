@@ -219,9 +219,9 @@ handle_info({'EXIT', Pid, Reason}, State = #state{endpoints = E, remote = Remote
   case Reason of
     normal ->
       lager:info("riak_repl2_rtsource_conn terminated due to reason nomral");
-    {rtsource_conn, heartbeat_timeout} ->
+    {shutdown, heartbeat_timeout} ->
       lager:info("riak_repl2_rtsource_conn terminated due to reason heartbeat timeout");
-    {rtsource_conn, Error} ->
+    {shutdown, Error} ->
       lager:info("riak_repl2_rtsource_conn terminated due to reason ~p", [Error]);
     OtherError ->
       lager:warning("riak_repl2_rtsource_conn terminated due to reason ~p", [OtherError])

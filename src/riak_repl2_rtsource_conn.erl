@@ -114,19 +114,19 @@ legacy_status(Pid, Timeout) ->
     gen_server:call(Pid, legacy_status, Timeout).
 
 connected(Socket, Transport, IPPort, Proto, RtSourcePid, _Props, Primary) ->
-  Transport:controlling_process(Socket, RtSourcePid),
-  Transport:setopts(Socket, [{active, true}]),
-  try
-    gen_server:call(RtSourcePid,
-      {connected, Socket, Transport, IPPort, Proto, Primary},
-      ?LONG_TIMEOUT)
-  catch
-    _:Reason ->
-      lager:warning("Unable to contact RT source connection process (~p). Killing it to force reconnect.",
-        [RtSourcePid]),
-      exit(RtSourcePid, {unable_to_contact, Reason}),
-      ok
-  end.
+    Transport:controlling_process(Socket, RtSourcePid),
+    Transport:setopts(Socket, [{active, true}]),
+    try
+        gen_server:call(RtSourcePid,
+          {connected, Socket, Transport, IPPort, Proto, Primary},
+          ?LONG_TIMEOUT)
+    catch
+        _:Reason ->
+            lager:warning("Unable to contact RT source connection process (~p). Killing it to force reconnect.",
+                          [RtSourcePid]),
+            exit(RtSourcePid, {unable_to_contact, Reason}),
+            ok
+    end.
 
 get_helper_pid(RtSourcePid) ->
   gen_server:call(RtSourcePid, get_helper_pid).
@@ -206,54 +206,54 @@ handle_call(legacy_status, _From, State = #state{remote = Remote}) ->
          {socket, Socket}] ++ RTQStats,
     {reply, {status, Status}, State};
 handle_call({connected, Socket, Transport, EndPoint, Proto, Primary}, _From,
-    State = #state{remote = Remote}) ->
-  %% Check the socket is valid, may have been an error
-  %% before turning it active (e.g. handoff of riak_core_service_mgr to handler
-  case Transport:send(Socket, <<>>) of
-    ok ->
-      Ver = riak_repl_util:deduce_wire_version_from_proto(Proto),
-      lager:debug("RT source connection negotiated ~p wire format from proto ~p", [Ver, Proto]),
-      {_, ClientVer, _} = Proto,
-      {ok, HelperPid} = riak_repl2_rtsource_helper:start_link(Remote, Transport, Socket, ClientVer),
-      SocketTag = riak_repl_util:generate_socket_tag("rt_source", Transport, Socket),
-      lager:debug("Keeping stats for " ++ SocketTag),
-      riak_core_tcp_mon:monitor(Socket, {?TCP_MON_RT_APP, source,
-        SocketTag}, Transport),
-      State2 = State#state{transport = Transport,
-        socket = Socket,
-        address = EndPoint,
-        proto = Proto,
-        peername = peername(Transport, Socket),
-        helper_pid = HelperPid,
-        ver = Ver,
-        primary = Primary},
-      {ok, Peername} = inet:sockname(Socket),
-      lager:info("Established realtime connection to site ~p address ~s, [data socket: ~p]",
-        [Remote, peername(State2), Peername]),
+            State = #state{remote = Remote}) ->
+    %% Check the socket is valid, may have been an error
+    %% before turning it active (e.g. handoff of riak_core_service_mgr to handler
+    case Transport:send(Socket, <<>>) of
+        ok ->
+            Ver = riak_repl_util:deduce_wire_version_from_proto(Proto),
+            lager:debug("RT source connection negotiated ~p wire format from proto ~p", [Ver, Proto]),
+            {_, ClientVer, _} = Proto,
+            {ok, HelperPid} = riak_repl2_rtsource_helper:start_link(Remote, Transport, Socket, ClientVer),
+            SocketTag = riak_repl_util:generate_socket_tag("rt_source", Transport, Socket),
+            lager:debug("Keeping stats for " ++ SocketTag),
+            riak_core_tcp_mon:monitor(Socket, {?TCP_MON_RT_APP, source,
+                                               SocketTag}, Transport),
+            State2 = State#state{transport = Transport,
+                                 socket = Socket,
+                                 address = EndPoint,
+                                 proto = Proto,
+                                 peername = peername(Transport, Socket),
+                                 helper_pid = HelperPid,
+                                 ver = Ver,
+                                 primary = Primary},
+            {ok, Peername} = inet:sockname(Socket),
+            lager:info("Established realtime connection to site ~p address ~s, [data socket: ~p]",
+                       [Remote, peername(State2), Peername]),
 
-      case Proto of
-        {realtime, _OurVer, {1, 0}} ->
-          {reply, ok, State2};
-        _ ->
-          %% 1.1 and above, start with a heartbeat
-          HBInterval = app_helper:get_env(riak_repl, rt_heartbeat_interval,
-            ?DEFAULT_HBINTERVAL),
-          HBTimeout = app_helper:get_env(riak_repl, rt_heartbeat_timeout,
-            ?DEFAULT_HBTIMEOUT),
-          State3 = State2#state{hb_interval = HBInterval,
-            hb_timeout = HBTimeout,
-            hb_sent_q = queue:new() },
-          {reply, ok, send_heartbeat(State3)}
-      end;
-    ER ->
-      {reply, ER, State}
-  end;
+            case Proto of
+                {realtime, _OurVer, {1, 0}} ->
+                    {reply, ok, State2};
+                _ ->
+                    %% 1.1 and above, start with a heartbeat
+                    HBInterval = app_helper:get_env(riak_repl, rt_heartbeat_interval,
+                                                    ?DEFAULT_HBINTERVAL),
+                    HBTimeout = app_helper:get_env(riak_repl, rt_heartbeat_timeout,
+                                                   ?DEFAULT_HBTIMEOUT),
+                    State3 = State2#state{hb_interval = HBInterval,
+                                          hb_timeout = HBTimeout,
+                                          hb_sent_q = queue:new() },
+                    {reply, ok, send_heartbeat(State3)}
+            end;
+        ER ->
+            {reply, ER, State}
+    end;
 
 handle_call(get_helper_pid, _From, State=#state{helper_pid = H}) ->
-  {reply, H, State}.
+    {reply, H, State}.
 
 handle_cast(_Request, State) ->
-  {noreply, State}.
+    {noreply, State}.
 
 
 handle_info({Proto, _S, TcpBin}, State= #state{cont = Cont})
@@ -270,14 +270,14 @@ handle_info({Closed, _S},
             lager:warning("Realtime connection ~s to ~p closed with partial receive of ~b bytes\n",
                           [peername(State), Remote, NumBytes])
     end,
-    {stop, {rtsource_conn, Closed}, State};
+    {stop, {shutdown, Closed}, State};
 handle_info({Error, _S, Reason},
             State = #state{remote = Remote, cont = Cont})
   when Error == tcp_error; Error == ssl_error ->
     riak_repl_stats:rt_source_errors(),
     lager:warning("Realtime connection ~s to ~p network error ~p - ~b bytes pending\n",
                   [peername(State), Remote, Reason, size(Cont)]),
-    {stop, {rtsource_conn, {Error, Reason}}, State};
+    {stop, {shutdown, {Error, Reason}}, State};
 
 handle_info(send_heartbeat, State) ->
     {noreply, send_heartbeat(State)};
@@ -300,7 +300,7 @@ handle_info({heartbeat_timeout, HBSent}, State = #state{hb_sent_q = HBSentQ,
                           "after ~p seconds\n",
                           [peername(State), Remote, HBTimeout]),
             lager:info("hb_sent_q_len after heartbeat_timeout: ~p", [queue:len(HBSentQ)]),
-            {stop, {rtsource_conn, heartbeat_timeout}, State}
+            {stop, {shutdown, heartbeat_timeout}, State}
     end;
 
 handle_info(Msg, State) ->
@@ -514,9 +514,6 @@ connect(RemoteName) ->
     stateful:set(version, {realtime, {1,0}, {1,0}}),
     stateful:set(remote, RemoteName),
 
-    %% rtsource_conn now takes in the remote name and the conn_mgr pid
-    %% As this test does not require the conn_mgr we pass self() as the conn_mgr pid in order to start
-    %% rtsource_conn without failure.
     {ok, SourcePid} = riak_repl2_rtsource_conn:start_link(RemoteName),
 
     {status, Status} = riak_repl2_rtsource_conn:legacy_status(SourcePid),

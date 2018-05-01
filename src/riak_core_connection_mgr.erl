@@ -279,7 +279,7 @@ handle_call({should_try_endpoint, Ref, Addr, ConnectedToPrimary}, _From, State =
           Cur = Req#req.cur,
           NewCur = case {Answer, ConnectedToPrimary} of
                      {true, true} ->
-                       lists:flatten([Addr | Cur]);
+                       [Addr] ++ Cur;
                      {true, false} ->
                        [Addr];
                      {false, _} ->
