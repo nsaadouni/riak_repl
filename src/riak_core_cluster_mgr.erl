@@ -771,7 +771,7 @@ shuffle_with_seed(List, Seed) ->
   shuffle_with_seed(List, {S1,S2,S3}).
 
 add_primary_value(List) ->
-  lists:map(fun(IPPort) -> {IPPort, false} end, List).
+  [{IPPort, false} || IPPort <- List].
 
 shuffle_remote_ipaddrs([]) ->
   {ok, []};
@@ -933,7 +933,7 @@ link_unactive_addr([Idx|Idxs], [SinkNode|Y], LinkedDict) ->
       link_unactive_addr(Idxs, Y, NewLinkedDict)
   end.
 
-%% Using realtime connection data, we match sink nodes to indexes that are already connected to there source node counter part
+%% Using realtime connection data, we match sink nodes to indexes that are already connected to there source node counter part.
 link_active_addr({_ActiveConnsDict,[]},AllPrimariesDict, LinkedActive,SinkNodes) ->
   {LinkedActive, SinkNodes, AllPrimariesDict};
 link_active_addr({ActiveConnsDict, [ActiveSourceNode|Rest]}, AllPrimariesDict, LinkedActiveDict, SinkNodes) ->
