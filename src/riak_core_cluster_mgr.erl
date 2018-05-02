@@ -946,7 +946,7 @@ link_active_addr({ActiveConnsDict, [ActiveSourceNode|Rest]}, AllPrimariesDict, L
 
 link_active_node_connections(_ActiveSourceNode, [], AllPrimariesDict, LinkedActiveDict, SinkNodes) ->
     {LinkedActiveDict, SinkNodes, AllPrimariesDict};
-link_active_node_connections(ActiveSourceNode, CS=[{IPPort, Primary}|Rest], AllPrimariesDict, LinkedActiveDict, SinkNodes) ->
+link_active_node_connections(ActiveSourceNode, [{IPPort, Primary}|Rest], AllPrimariesDict, LinkedActiveDict, SinkNodes) ->
     case Primary of
         false ->
             link_active_node_connections(ActiveSourceNode, Rest, AllPrimariesDict, LinkedActiveDict, SinkNodes);
