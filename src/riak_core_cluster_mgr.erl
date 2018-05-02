@@ -813,12 +813,12 @@ get_my_remote_ip_list(Remote, RemoteUnsorted, Return) ->
         %% SourceNodes = [SourceNode1, SourceNode3, SourceNode2 ...]
         %% They are ordered by chronological time with regard to the time the node was UP in riak_kv
         SourceNodes ->
+            SinkNodes = lists:sort(RemoteUnsorted),
+            SinkNodesLink = lists:seq(1, length(SinkNodes)),
             %% we reverse the list so that the latest addition to the source cluster is the end of the list (This is important)
             SourceSortedNodes = lists:reverse(SourceNodes),
             NumberOfSinkNodes = length(SinkNodes),
             NumberOfSourceNodes = length(SourceSortedNodes),
-            SinkNodes = lists:sort(RemoteUnsorted),
-            SinkNodesLink = lists:seq(1, length(SinkNodes)),
             %% SourceNodesTagged = [{Index, SourceNode} ...] ->
             %% 2 Cases:
             %% 1) 2 source nodes can have the same index as we use modulo arthemtic to index with against the length of the sink nodes

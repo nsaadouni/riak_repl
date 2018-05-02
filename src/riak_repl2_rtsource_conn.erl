@@ -434,6 +434,26 @@ setup() ->
     riak_repl_test_util:abstract_stats(),
     riak_repl_test_util:abstract_stateful(),
     % ?debugMsg("leave setup()"),
+
+    catch(meck:unload(folsom_metrics)),
+    meck:new(folsom_metrics, [passthrough]),
+    meck:expect(folsom_metrics, delete_metric,
+        fun(_A) ->
+            ok
+        end),
+    meck:expect(folsom_metrics, new_histogram,
+        fun(_A,_B,_C) ->
+            ok
+        end),
+    meck:expect(folsom_metrics, notify,
+        fun(_A,_B) ->
+            ok
+        end),
+    meck:expect(folsom_metrics, metric_exists,
+        fun(_A) ->
+            false
+        end),
+
     ok.
 
 cleanup(_Ctx) ->
@@ -523,6 +543,7 @@ connect(RemoteName) ->
                   {bytes,0},
                   {max_bytes,104857600},
                   {consumers,[]},
-                  {overload_drops,0}], RTQStats).
+                  {overload_drops,0},
+                  {consumer_latency,[]}], RTQStats).
 
 -endif.
