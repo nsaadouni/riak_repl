@@ -87,17 +87,7 @@ init([]) ->
                             _ ->
                                 %% request connection data from proxy nodes as this could be a restart and we have lost all data
                                 AllNodes = riak_core_node_watcher:nodes(riak_kv),
-                                ReNotify =
-                                    fun(Node) ->
-                                        try gen_server:cast({riak_repl2_leader, Node}, re_notify) of
-                                            ok ->
-                                                ok
-                                        catch
-                                            _Type:_Error ->
-                                                ok
-                                        end
-                                    end,
-                                [ ReNotify(Node) || Node <- AllNodes -- [node()]],
+                                [ gen_server:cast({riak_repl2_leader, Node}, re_notify) || Node <- AllNodes -- [node()]],
                                 riak_repl2_leader:re_notify(),
                                 {node(), true}
                         end;

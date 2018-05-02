@@ -70,9 +70,6 @@ maybe_rebalance_delayed(Pid) ->
 stop(Pid) ->
     gen_server:call(Pid, stop).
 
-%%connection_closed(Pid, Addr, Primary) ->
-%%  gen_server:call(Pid, {connection_closed, Addr, Primary}).
-
 get_all_status(Pid) ->
     get_all_status(Pid, infinity).
 get_all_status(Pid, Timeout) ->
@@ -94,16 +91,11 @@ init([Remote]) ->
 
     process_flag(trap_exit, true),
     riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, Remote, node(), []),
-
-    lager:debug("connecting to remote ~p", [Remote]),
     case riak_core_connection_mgr:connect({rt_repl, Remote}, ?CLIENT_SPEC, multi_connection) of
         {ok, Ref} ->
             _ = riak_repl2_rtq:register(Remote), % re-register to reset stale deliverfun
-            lager:debug("connection ref ~p", [Ref]),
             E = dict:new(),
-
             MaxDelaySecs = app_helper:get_env(riak_repl, realtime_connection_rebalance_max_delay_secs, 120),
-            lager:debug("max delay for connection rebalancing: ~p", [MaxDelaySecs]),
             M = fun(X) -> round(X * crypto:rand_uniform(0, 1000)) end,
             {SourceNodes, SinkNodes} = case get_source_and_sink_nodes(Remote) of
                                            no_leader ->
@@ -114,10 +106,6 @@ init([Remote]) ->
 
             KillTimeSecs = app_helper:get_env(riak_repl, realtime_connection_removal_delay, 60),
             KillTime = KillTimeSecs * 1000,
-            lager:debug("realtime connection removal delay: ~p", [KillTime]),
-
-            lager:debug("conn_mgr node source: ~p", [SourceNodes]),
-            lager:debug("conn_mgr node sink: ~p", [SinkNodes]),
 
             {ok, #state{remote = Remote, connection_ref = Ref, endpoints = E, rebalance_delay_fun = M,
                 max_delay=MaxDelaySecs, source_nodes = SourceNodes, sink_nodes = SinkNodes, kill_time = KillTime}};
@@ -130,12 +118,9 @@ init([Remote]) ->
 handle_call({connected, Socket, Transport, IPPort, Proto, _Props, Primary}, _From,
     State = #state{remote = Remote, endpoints = E, kill_time = K}) ->
 
-    lager:debug("rtsource_conn_mgr connection recieved ~p", [{IPPort, Primary}]),
-
     lager:info("Adding a connection and starting rtsource_conn ~p", [Remote]),
     case riak_repl2_rtsource_conn:start_link(Remote) of
         {ok, RtSourcePid} ->
-            lager:debug("we have added the connection"),
             case riak_repl2_rtsource_conn:connected(Socket, Transport, IPPort, Proto, RtSourcePid, _Props, Primary) of
                 ok ->
 
@@ -168,7 +153,7 @@ handle_call({connected, Socket, Transport, IPPort, Proto, _Props, Primary}, _Fro
                     {reply, ok, NewState#state{endpoints = NewEndpoints}};
 
                 Error ->
-                    lager:debug("rtsouce_conn failed to recieve connection ~p", [IPPort]),
+                    lager:warning("rtsouce_conn failed to recieve connection ~p", [IPPort]),
                     {reply, Error, State}
             end;
         ER ->

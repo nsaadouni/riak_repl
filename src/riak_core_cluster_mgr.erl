@@ -807,8 +807,6 @@ shuffle(List) ->
 get_my_remote_ip_list(_Remote, [], _Return) ->
     {ok, []};
 get_my_remote_ip_list(Remote, RemoteUnsorted, Return) ->
-    SinkNodes = lists:sort(RemoteUnsorted),
-    SinkNodesLink = lists:seq(1, length(SinkNodes)),
     case riak_repl2_rtsource_conn_data_mgr:read(active_nodes) of
         no_leader ->
             {ok, []};
@@ -819,6 +817,8 @@ get_my_remote_ip_list(Remote, RemoteUnsorted, Return) ->
             SourceSortedNodes = lists:reverse(SourceNodes),
             NumberOfSinkNodes = length(SinkNodes),
             NumberOfSourceNodes = length(SourceSortedNodes),
+            SinkNodes = lists:sort(RemoteUnsorted),
+            SinkNodesLink = lists:seq(1, length(SinkNodes)),
             %% SourceNodesTagged = [{Index, SourceNode} ...] ->
             %% 2 Cases:
             %% 1) 2 source nodes can have the same index as we use modulo arthemtic to index with against the length of the sink nodes

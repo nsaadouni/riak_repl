@@ -22,15 +22,15 @@
     terminate/2, code_change/3]).
 
 -record(state, {remote,     % remote site name
-    transport,  % erlang module to use for transport
-    socket,     % socket to pass to transport
-    proto,      % protocol version negotiated
-    deliver_fun,% Deliver function
-    sent_seq,   % last sequence sent
-    v1_offset = 0,
-    v1_seq_map = [],
-    objects = 0, % number of objects sent - really number of pulls as could be multiobj
-    stop_pulling = false
+                transport,  % erlang module to use for transport
+                socket,     % socket to pass to transport
+                proto,      % protocol version negotiated
+                deliver_fun,% Deliver function
+                sent_seq,   % last sequence sent
+                v1_offset = 0,
+                v1_seq_map = [],
+                objects = 0, % number of objects sent - really number of pulls as could be multiobj
+                stop_pulling = false
 }).
 
 start_link(Remote, Transport, Socket, Version) ->
