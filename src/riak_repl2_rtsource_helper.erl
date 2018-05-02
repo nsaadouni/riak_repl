@@ -9,9 +9,9 @@
 -behaviour(gen_server).
 %% API
 -export([start_link/4,
-         stop/1,
-         v1_ack/2, stop_pulling/1,
-         status/1, status/2, send_heartbeat/1]).
+    stop/1,
+    v1_ack/2, stop_pulling/1,
+    status/1, status/2, send_heartbeat/1]).
 
 -include("riak_repl.hrl").
 
@@ -19,7 +19,7 @@
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
-         terminate/2, code_change/3]).
+    terminate/2, code_change/3]).
 
 -record(state, {remote,     % remote site name
                 transport,  % erlang module to use for transport
@@ -31,7 +31,7 @@
                 v1_seq_map = [],
                 objects = 0, % number of objects sent - really number of pulls as could be multiobj
                 stop_pulling = false
-    }).
+}).
 
 start_link(Remote, Transport, Socket, Version) ->
     gen_server:start_link(?MODULE, [Remote, Transport, Socket, Version], []).
@@ -62,7 +62,7 @@ init([Remote, Transport, Socket, Version]) ->
     Me = self(),
     Deliver = fun(Result) -> gen_server:call(Me, {pull, Result}, infinity) end,
     State = #state{remote = Remote, transport = Transport, proto = Version,
-                   socket = Socket, deliver_fun = Deliver},
+        socket = Socket, deliver_fun = Deliver},
     async_pull(State),
     {ok, State}.
 
@@ -72,7 +72,7 @@ handle_call({pull, {error, Reason}}, _From, State) ->
     riak_repl_stats:rt_source_errors(),
     {stop, {queue_error, Reason}, ok, State};
 handle_call({pull, {Seq, NumObjects, _BinObjs, _Meta, _} = Entry}, From,
-            State = #state{transport = T, socket = S, objects = Objects, stop_pulling = Pull}) ->
+    State = #state{transport = T, socket = S, objects = Objects, stop_pulling = Pull}) ->
     %% unblock the rtq as fast as possible
     gen_server:reply(From, ok),
     State2 = maybe_send(T, S, Entry, State),
@@ -86,14 +86,14 @@ handle_call({pull, {Seq, NumObjects, _BinObjs, _Meta, _} = Entry}, From,
 handle_call(stop, _From, State) ->
     {stop, normal, ok, State};
 handle_call(status, _From, State =
-                #state{sent_seq = SentSeq, objects = Objects}) ->
+    #state{sent_seq = SentSeq, objects = Objects}) ->
     {reply, [{sent_seq, SentSeq},
-             {objects, Objects}], State}.
+        {objects, Objects}], State}.
 
 handle_cast(send_heartbeat, State = #state{transport = T, socket = S}) ->
     spawn(fun() ->
-            HBIOL = riak_repl2_rtframe:encode(heartbeat, undefined),
-            T:send(S, HBIOL)
+        HBIOL = riak_repl2_rtframe:encode(heartbeat, undefined),
+        T:send(S, HBIOL)
           end),
     {noreply, State};
 

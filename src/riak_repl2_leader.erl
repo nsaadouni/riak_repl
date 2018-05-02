@@ -72,7 +72,7 @@ is_leader() ->
     gen_server:call(?SERVER, is_leader, infinity).
 
 re_notify() ->
-  gen_server:cast(?SERVER, re_notify).
+    gen_server:cast(?SERVER, re_notify).
 
 %%%===================================================================
 %%% Callback for riak_repl_leader_helper
@@ -122,8 +122,8 @@ handle_call(helper_pid, _From, State) ->
     {reply, State#state.helper_pid, State}.
 
 handle_cast(re_notify, State = #state{leader_node = LeaderNode, leader_pid = LeaderPid, notify_funs = Funs}) ->
-  _ = [NotifyFun(LeaderNode, LeaderPid) || NotifyFun <- Funs],
-  {noreply, State};
+    _ = [NotifyFun(LeaderNode, LeaderPid) || NotifyFun <- Funs],
+    {noreply, State};
 
 handle_cast({register_notify_fun, Fun}, State) ->
     %% Notify the interested party immediately, in case leader election

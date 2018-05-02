@@ -308,19 +308,20 @@ handle_call({filter_blacklisted_ipaddrs, Addrs}, _From, State=#state{ endpoints=
     {reply, Answer, State};
 
 handle_call({update_ref, Ref}, _From, State = #state{pending = Pending}) ->
-    case lists:keyfind(Ref, #req.ref, Pending) of
-        false ->
-            {reply, {error, fail}, State};
-        Req->
-            NewCur = case Req#req.cur of
-                         [] ->
-                             [];
-                         [_Head | Tail] ->
-                             Tail
-                     end,
-            {reply, ok, State#state{pending = lists:keystore(Ref, #req.ref, Pending,
-                                                             Req#req{cur = NewCur})}}
-    end;
+  case lists:keyfind(Ref, #req.ref, Pending) of
+    false ->
+      {reply, {error, fail}, State};
+    Req->
+        NewCur = case Req#req.cur of
+                     [] ->
+                         [];
+                     [_Head | Tail] ->
+                         Tail
+                 end,
+
+      {reply, ok, State#state{pending = lists:keystore(Ref, #req.ref, Pending,
+                                                     Req#req{cur = NewCur})}}
+  end;
 
 handle_call(_Unhandled, _From, State) ->
     lager:debug("Unhandled gen_server call: ~p", [_Unhandled]),
@@ -563,11 +564,11 @@ connection_helper(Ref, _Protocol, _Strategy, [], _ConnectedToPrimary) ->
     %% exhausted the list of endpoints. let server start new helper process
     {error, endpoints_exhausted, Ref};
 connection_helper(Ref, Protocol, Strategy, [{Addr, Primary}|Addrs], ConnectedToPrimary) ->
-    {{ProtocolId, _Foo}, _Bar} = Protocol,
+    {{ProtocolId, _Foo},_Bar} = Protocol,
     %% delay by the backoff_delay for this endpoint.
     {ok, BackoffDelay} = gen_server:call(?SERVER, {get_endpoint_backoff, Addr}),
     lager:debug("Holding off ~p seconds before trying ~p at ~p",
-                [(BackoffDelay/1000), ProtocolId, string_of_ipport(Addr)]),
+               [(BackoffDelay/1000), ProtocolId, string_of_ipport(Addr)]),
     timer:sleep(BackoffDelay),
 
     NextAddrPrimary = case Addrs of
@@ -597,10 +598,12 @@ connection_helper(Ref, Protocol, Strategy, [{Addr, Primary}|Addrs], ConnectedToP
                             % We have connected to a secondary connection stop
                             ok
                     end;
+
                 {error, Reason} ->
                     %% notify connection manager this EP failed and try next one
                     gen_server:call(?SERVER, {update_ref, Ref}),
                     gen_server:cast(?SERVER, {endpoint_failed, Addr, Reason, ProtocolId}),
+
 
                     case {ConnectedToPrimary, NextAddrPrimary} of
                         {true, true} ->
@@ -638,10 +641,10 @@ locate_endpoints({Type, Name}, Strategy, Locators) ->
 %% trying this endpoint again.
 
 fail_endpoints([], _Reason, _ProtocolId, State) ->
-    State;
+  State;
 fail_endpoints([Addr| Addrs], Reason, ProtocolId, State) ->
-    State1 = fail_endpoint(Addr, Reason, ProtocolId, State),
-    fail_endpoints(Addrs, Reason, ProtocolId, State1).
+  State1 = fail_endpoint(Addr, Reason, ProtocolId, State),
+  fail_endpoints(Addrs, Reason, ProtocolId, State1).
 
 -spec fail_endpoint(ip_addr(), term(), proto_id(), #state{}) -> #state{}.
 fail_endpoint(Addr, Reason, ProtocolId, State) ->
@@ -718,16 +721,16 @@ fail_request(Reason, #req{ref = Ref, spec = Spec},
 update_endpoints(Addrs, Endpoints) ->
     %% add addr to Endpoints if not already there
     Fun = (fun({Addr,P}, EPs) ->
-        case orddict:is_key(Addr, Endpoints) of
-            true ->
-                % replace primary status if changed
-                Old = orddict:fetch(Addr, Endpoints),
-                EP = Old#ep{primary = P},
-                orddict:store(Addr, EP, EPs);
-            false ->
-                EP = #ep{addr=Addr, primary = P},
-                orddict:store(Addr, EP, EPs)
-        end
+                   case orddict:is_key(Addr, Endpoints) of
+                       true ->
+                         % replace primary status if changed
+                         Old = orddict:fetch(Addr, Endpoints),
+                         EP = Old#ep{primary = P},
+                         orddict:store(Addr, EP, EPs);
+                       false ->
+                           EP = #ep{addr=Addr, primary = P},
+                           orddict:store(Addr, EP, EPs)
+                   end
            end),
     lists:foldl(Fun, Endpoints, Addrs).
 
@@ -746,9 +749,9 @@ filter_blacklisted_endpoints(EpAddrs, AllEps) ->
     lists:filter(PredicateFun, EpAddrs).
 
 identity_locator({IP,Port}, _Policy) ->
-    {ok, [{{IP,Port}, false}]};
+  {ok, [{{IP,Port}, false}]};
 identity_locator([Ips], _Policy) ->
-    {ok, {Ips, false}}.
+  {ok, {Ips, false}}.
 
 %% @doc Return the ring.
 get_ring() ->

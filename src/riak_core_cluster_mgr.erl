@@ -313,7 +313,7 @@ handle_call(get_connections, _From, State) ->
             NoLeaderResult = {ok, []},
             proxy_call(get_connections, NoLeaderResult, State)
     end;
-    
+
 
 %% Return possible IP addrs of nodes on the named remote cluster.
 %% If a leader has not been elected yet, return an empty list.
@@ -626,7 +626,7 @@ remove_remote(RemoteName, State) ->
     end.
 
 %% Convert an inet:address to a string if needed.
-string_of_ip(IP) when is_tuple(IP) ->    
+string_of_ip(IP) when is_tuple(IP) ->
     inet_parse:ntoa(IP);
 string_of_ip(IP) ->
     IP.
@@ -743,7 +743,7 @@ cluster_mgr_sites_fun() ->
     %% get cluster names from cluster manager
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     Clusters = riak_repl_ring:get_clusters(Ring),
-    [{?CLUSTER_NAME_LOCATOR_TYPE, Name} || {Name, _Addrs} <- Clusters].    
+    [{?CLUSTER_NAME_LOCATOR_TYPE, Name} || {Name, _Addrs} <- Clusters].
 
 %% @doc If the current leader, connect to all clusters that have been
 %%      currently persisted in the ring.
@@ -752,7 +752,7 @@ connect_to_persisted_clusters(State) ->
         true ->
             Fun = State#state.restore_targets_fun,
             ClusterTargets = Fun(),
-            lager:debug("Cluster Manager will connect to clusters: ~p", 
+            lager:debug("Cluster Manager will connect to clusters: ~p",
                         [ClusterTargets]),
             connect_to_targets(ClusterTargets);
         _ ->
@@ -807,8 +807,6 @@ shuffle(List) ->
 get_my_remote_ip_list(_Remote, [], _Return) ->
     {ok, []};
 get_my_remote_ip_list(Remote, RemoteUnsorted, Return) ->
-    SinkNodes = lists:sort(RemoteUnsorted),
-    SinkNodesLink = lists:seq(1, length(SinkNodes)),
     case riak_repl2_rtsource_conn_data_mgr:read(active_nodes) of
         no_leader ->
             {ok, []};
@@ -819,6 +817,8 @@ get_my_remote_ip_list(Remote, RemoteUnsorted, Return) ->
             SourceSortedNodes = lists:reverse(SourceNodes),
             NumberOfSinkNodes = length(SinkNodes),
             NumberOfSourceNodes = length(SourceSortedNodes),
+            SinkNodes = lists:sort(RemoteUnsorted),
+            SinkNodesLink = lists:seq(1, length(SinkNodes)),
             %% SourceNodesTagged = [{Index, SourceNode} ...] ->
             %% 2 Cases:
             %% 1) 2 source nodes can have the same index as we use modulo arthemtic to index with against the length of the sink nodes
@@ -885,11 +885,11 @@ link_addrs(AllPrimariesDict, SinkNodes, Remote) ->
                 link_active_addr({ActiveConnsDict, ActiveSources}, AllPrimariesDict, dict:new(), SinkNodes),
 
             lager:debug("
-      Old Primary Dict: ~p
-      Active Sources: ~p
-      Source Nodes That Are Not Active: ~p
-      Left Over Sink Nodes: ~p
-      Linked Sink Nodes: ~p", [AllPrimariesDict, ActiveSources, NewPrimaryLinkDict, LeftOverSinkNodes, LinkedActiveNodes]),
+              Old Primary Dict: ~p
+              Active Sources: ~p
+              Source Nodes That Are Not Active: ~p
+              Left Over Sink Nodes: ~p
+              Linked Sink Nodes: ~p", [AllPrimariesDict, ActiveSources, NewPrimaryLinkDict, LeftOverSinkNodes, LinkedActiveNodes]),
 
             Unlinked = lists:usort(unlinked_indexes(dict:to_list(NewPrimaryLinkDict), [])),
 
@@ -937,12 +937,6 @@ link_active_addr({ActiveConnsDict, [ActiveSourceNode|Rest]}, AllPrimariesDict, L
     ConnectedSinkNodes = dict:fetch(ActiveSourceNode, ActiveConnsDict),
     case dict:is_key(ActiveSourceNode, AllPrimariesDict) of
         true ->
-
-            lager:debug("cluster_mgr 1
-      ActiveNodes: ~p
-      AllPrimariesDict ~p
-      Active Connections ~p", [[ActiveSourceNode|Rest],AllPrimariesDict, ActiveConnsDict]),
-
             {NewLinkActiveDict, NewSinkNodes, NewAllPrimariesDict} = link_active_node_connections(ActiveSourceNode, ConnectedSinkNodes, AllPrimariesDict, LinkedActiveDict, SinkNodes),
             link_active_addr({ActiveConnsDict, Rest}, NewAllPrimariesDict, NewLinkActiveDict, NewSinkNodes);
         false ->
@@ -952,24 +946,12 @@ link_active_addr({ActiveConnsDict, [ActiveSourceNode|Rest]}, AllPrimariesDict, L
 
 link_active_node_connections(_ActiveSourceNode, [], AllPrimariesDict, LinkedActiveDict, SinkNodes) ->
     {LinkedActiveDict, SinkNodes, AllPrimariesDict};
-link_active_node_connections(ActiveSourceNode, CS=[{IPPort, Primary}|Rest], AllPrimariesDict, LinkedActiveDict, SinkNodes) ->
-    lager:debug("cluster_mgr 2
-      ActiveNode: ~p
-      AllPrimariesDict ~p
-      Connected Sinks ~p", [ActiveSourceNode ,AllPrimariesDict, CS]),
+link_active_node_connections(ActiveSourceNode, [{IPPort, Primary}|Rest], AllPrimariesDict, LinkedActiveDict, SinkNodes) ->
     case Primary of
         false ->
             link_active_node_connections(ActiveSourceNode, Rest, AllPrimariesDict, LinkedActiveDict, SinkNodes);
         true ->
             [Idx|Idxs] = dict:fetch(ActiveSourceNode, AllPrimariesDict),
-
-            lager:debug("linking active nodes
-            Active source node: ~p
-            Index ~p
-            Idxs ~p
-            IP-Port ~p
-            Index is key ~p ", [ActiveSourceNode, Idx, Idxs, IPPort, dunno_yet]),
-
             NewLinkedActiveDict = dict:store(Idx, IPPort,  LinkedActiveDict),
             NewSinkNodes = lists:delete(IPPort, SinkNodes),
             case {dict:is_key(Idx, LinkedActiveDict), lists:member(IPPort, SinkNodes), Idxs} of

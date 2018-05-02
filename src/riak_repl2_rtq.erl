@@ -883,17 +883,17 @@ update_filtered_buckets_list(FilteringConfig) ->
     gen_server:call(?SERVER, {filtered_buckets, update_buckets, FilteringConfig}).
 
 get_delivery_fun(DeliverFunList) ->
-  case DeliverFunList of
-    [] ->
-      undefined;
-    _ ->
-      hd(DeliverFunList)
-  end.
+    case DeliverFunList of
+        [] ->
+            undefined;
+        _ ->
+            hd(DeliverFunList)
+    end.
 
 add_deliver_fun(DeliverFun, C) ->
-  DeliverFunList = C#c.deliver,
-  NewList = lists:append(DeliverFunList, [DeliverFun]),
-  C#c{deliver = NewList}.
+    DeliverFunList = C#c.deliver,
+    NewList = lists:append(DeliverFunList, [DeliverFun]),
+    C#c{deliver = NewList}.
 
 -ifdef(TEST).
 qbytes(_QTab, #state{qsize_bytes = QSizeBytes}) ->

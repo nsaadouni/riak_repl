@@ -120,15 +120,8 @@ status(Ref, Timeout) ->
     gen_fsm:sync_send_event(Ref, status, Timeout).
 
 -spec connected(port(), atom(), ip_addr(), term(), term(), proplists:proplist(), boolean()) -> ok.
-connected(Socket,
-          Transport,
-          Addr,
-          {?REMOTE_CLUSTER_PROTO_ID,
-           _MyVer    ={CommonMajor,LocalMinor},
-           _RemoteVer={CommonMajor,RemoteMinor}},
-          {_Remote, Client},
-          Props,
-          _Primary) ->
+connected(Socket, Transport, Addr, {?REMOTE_CLUSTER_PROTO_ID, _MyVer ={CommonMajor,LocalMinor},
+    _RemoteVer={CommonMajor,RemoteMinor}}, {_Remote, Client}, Props, _Primary) ->
     %% give control over the socket to the `Client' process.
     %% tell client we're connected and to whom
     Transport:controlling_process(Socket, Client),
