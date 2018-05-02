@@ -55,7 +55,7 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
--record(state, {qtab = ets:new(?MODULE, [private, ordered_set]), % ETS table
+-record(state, {qtab = ets:new(?MODULE, [protected, ordered_set]), % ETS table
                 qseq = 0,  % Last sequence number handed out
                 max_bytes = undefined, % maximum ETS table memory usage in bytes
 
@@ -464,9 +464,7 @@ handle_info(_Msg, State) ->
     {noreply, State}.
 
 %% @private
-terminate(Reason, State=#state{cs = Cs}) ->
-  lager:info("rtq terminating due to: ~p
-  State: ~p", [Reason, State]),
+terminate(Reason, #state{cs = Cs}) ->
     %% when started from tests, we may not be registered
     catch(erlang:unregister(?SERVER)),
     flush_pending_pushes(),
@@ -599,7 +597,7 @@ push(NumItems, Bin, Meta, State = #state{shutting_down = true}) ->
 
 pull(Name, DeliverFun, State = #state{qtab = QTab, qseq = QSeq, cs = Cs, filtered_buckets_enabled = FEnabled, filtered_buckets = FilterBuckets}) ->
     CsNames = [C#c.name || C <- Cs],
-    UpdCs = case lists:keytake(Name, #c.name, Cs) of
+     UpdCs = case lists:keytake(Name, #c.name, Cs) of
                 {value, C, Cs2} ->
                     [maybe_pull(QTab, QSeq, C, CsNames, DeliverFun, FEnabled, FilterBuckets) | Cs2];
                 false ->
@@ -633,13 +631,13 @@ maybe_pull(QTab, QSeq, C = #c{cseq = CSeq, name = CName}, CsNames, DeliverFun, F
                         {_, Config} when Config /= [] ->
                             case allowed_to_route(CName, Config) of
                                 true ->
-                                    % if the item can't be delivered due to cascading rt,
-                                    % just keep trying.
+                    % if the item can't be delivered due to cascading rt,
+                    % just keep trying.
                                     case maybe_deliver_item(add_deliver_fun(DeliverFun, C), QEntry2, FilteringEnabled) of
-                                        {skipped, C2} ->
+                        {skipped, C2} ->
                                             maybe_pull(QTab, QSeq, C2, CsNames, DeliverFun, FilteringEnabled, FilteredBuckets);
-                                        {_WorkedOrNoFun, C2} ->
-                                            C2
+                        {_WorkedOrNoFun, C2} ->
+                            C2
                                     end;
                                 false ->
                                     C#c{skips = 0, cseq = CSeq2, deliver = [], delivered = true}
@@ -690,7 +688,7 @@ maybe_deliver_item(C = #c{deliver = []}, QEntry, FilteringEnabled) ->
         error -> [];
         {ok, V} -> V
     end,
-    Cause = case lists:member(Name, Routed)  of
+    Cause = case lists:member(Name, Routed) of
         true ->
             skipped;
         false ->
@@ -704,7 +702,7 @@ maybe_deliver_item(C, QEntry, FilteringEnabled) ->
         error -> [];
         {ok, V} -> V
     end,
-    case lists:member(Name, Routed)  of
+    case lists:member(Name, Routed) of
         true when C#c.delivered ->
             Skipped = C#c.skips + 1,
             {skipped, C#c{skips = Skipped, cseq = Seq}};
@@ -798,7 +796,6 @@ trim_q(State = #state{qtab = QTab, qseq = QSeq, max_bytes = MaxBytes}) ->
                           MinSeq ->
                               MinSeq - 1
                       end,
-
             Cs3 = [case CSeq < NewCSeq of
                        true ->
                            C#c{cseq = NewCSeq, aseq = NewCSeq};
