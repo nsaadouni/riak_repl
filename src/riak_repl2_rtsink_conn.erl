@@ -482,29 +482,29 @@ setup() ->
     application:set_env(riak_repl, realtime_connection_removal_delay, 1000),
     application:set_env(riak_repl, realtime_connection_rebalance_max_delay_secs, 1000),
 
-  catch(meck:unload(riak_core_connection_mgr)),
-  meck:new(riak_core_connection_mgr, [passthrough]),
-  meck:expect(riak_core_connection_mgr, disconnect,
-    fun(_Remote) ->
-      ok
-    end),
+    catch(meck:unload(riak_core_connection_mgr)),
+    meck:new(riak_core_connection_mgr, [passthrough]),
+    meck:expect(riak_core_connection_mgr, disconnect,
+        fun(_Remote) ->
+            ok
+        end),
 
-  catch(meck:unload(riak_repl2_rtsource_conn_data_mgr)),
-  meck:new(riak_repl2_rtsource_conn_data_mgr, [passthrough]),
-  meck:expect(riak_repl2_rtsource_conn_data_mgr, read, fun(active_nodes) -> [node()]
-                                                       end),
-  meck:expect(riak_repl2_rtsource_conn_data_mgr, read,
-    fun(realtime_connections, _Remote) ->
-      dict:new()
-    end
-  ),
+    catch(meck:unload(riak_repl2_rtsource_conn_data_mgr)),
+    meck:new(riak_repl2_rtsource_conn_data_mgr, [passthrough]),
+    meck:expect(riak_repl2_rtsource_conn_data_mgr, read, fun(active_nodes) -> [node()]
+                                                         end),
+    meck:expect(riak_repl2_rtsource_conn_data_mgr, read,
+        fun(realtime_connections, _Remote) ->
+            dict:new()
+        end
+    ),
 
-  catch(meck:unload(riak_core_cluster_mgr)),
-  meck:new(riak_core_cluster_mgr, [passthrough]),
-  meck:expect(riak_core_cluster_mgr, get_unshuffled_ipaddrs_of_cluster, fun(_Remote) -> [] end ),
-  meck:expect(riak_core_cluster_mgr, get_ipaddrs_of_cluster, fun(_) -> {ok,[]} end ),
-  meck:expect(riak_core_cluster_mgr, get_ipaddrs_of_cluster, fun(_, split) -> {ok, {[],[]}} end ),
-  meck:expect(riak_core_cluster_mgr, get_ipaddrs_of_cluster, fun(_, _) -> {ok,[]} end ),
+    catch(meck:unload(riak_core_cluster_mgr)),
+    meck:new(riak_core_cluster_mgr, [passthrough]),
+    meck:expect(riak_core_cluster_mgr, get_unshuffled_ipaddrs_of_cluster, fun(_Remote) -> [] end ),
+    meck:expect(riak_core_cluster_mgr, get_ipaddrs_of_cluster, fun(_) -> {ok,[]} end ),
+    meck:expect(riak_core_cluster_mgr, get_ipaddrs_of_cluster, fun(_, split) -> {ok, {[],[]}} end ),
+    meck:expect(riak_core_cluster_mgr, get_ipaddrs_of_cluster, fun(_, _) -> {ok,[]} end ),
 
     ok.
 

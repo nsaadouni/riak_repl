@@ -276,15 +276,15 @@ handle_call({should_try_endpoint, Ref, Addr, ConnectedToPrimary}, _From, State =
                         {true, connecting}
                 end,
 
-          Cur = Req#req.cur,
-          NewCur = case {Answer, ConnectedToPrimary} of
-                     {true, true} ->
-                       [Addr] ++ Cur;
-                     {true, false} ->
-                       [Addr];
-                     {false, _} ->
-                       [Addr]
-                   end,
+            Cur = Req#req.cur,
+            NewCur = case {Answer, ConnectedToPrimary} of
+                         {true, true} ->
+                             [Addr] ++ Cur;
+                         {true, false} ->
+                             [Addr];
+                         {false, _} ->
+                             [Addr]
+                     end,
             {reply, Answer, State#state{pending = lists:keystore(Ref, #req.ref, Pending,
                                                                  Req#req{cur = NewCur,
                                                                          state = ReqState})}}
@@ -312,13 +312,12 @@ handle_call({update_ref, Ref}, _From, State = #state{pending = Pending}) ->
     false ->
       {reply, {error, fail}, State};
     Req->
-
-      NewCur = case Req#req.cur of
-        [] ->
-          [];
-        [_Head | Tail] ->
-          Tail
-      end,
+        NewCur = case Req#req.cur of
+                     [] ->
+                         [];
+                     [_Head | Tail] ->
+                         Tail
+                 end,
 
       {reply, ok, State#state{pending = lists:keystore(Ref, #req.ref, Pending,
                                                      Req#req{cur = NewCur})}}
@@ -572,33 +571,33 @@ connection_helper(Ref, Protocol, Strategy, [{Addr, Primary}|Addrs], ConnectedToP
                [(BackoffDelay/1000), ProtocolId, string_of_ipport(Addr)]),
     timer:sleep(BackoffDelay),
 
-  NextAddrPrimary = case Addrs of
-                      [] ->
-                        false;
-                      [{_X, Y} | _Xs] ->
-                        Y
-                    end,
+    NextAddrPrimary = case Addrs of
+                          [] ->
+                              false;
+                          [{_X, Y} | _Xs] ->
+                              Y
+                      end,
 
     case gen_server:call(?SERVER, {should_try_endpoint, Ref, Addr, ConnectedToPrimary}) of
         true ->
             lager:debug("Trying connection to: ~p at ~p", [ProtocolId, string_of_ipport(Addr)]),
             lager:debug("Attempting riak_core_connection:sync_connect/2"),
 
-          case riak_core_connection:sync_connect(Addr, Primary, Protocol) of
+            case riak_core_connection:sync_connect(Addr, Primary, Protocol) of
                 ok ->
-                  case {NextAddrPrimary, Primary} of
-                    {true, true} ->
-                      connection_helper(Ref, Protocol, Strategy, Addrs, true);
-                    {true, false} ->
-                      % This should never happen!
-                      ok;
-                    {false, true} ->
-                      % We have connected to all possible primaries stop
-                      ok;
-                    {false, false} ->
-                      % We have connected to a secondary connection stop
-                      ok
-                  end;
+                    case {NextAddrPrimary, Primary} of
+                        {true, true} ->
+                            connection_helper(Ref, Protocol, Strategy, Addrs, true);
+                        {true, false} ->
+                            % This should never happen!
+                            ok;
+                        {false, true} ->
+                            % We have connected to all possible primaries stop
+                            ok;
+                        {false, false} ->
+                            % We have connected to a secondary connection stop
+                            ok
+                    end;
 
                 {error, Reason} ->
                     %% notify connection manager this EP failed and try next one
@@ -606,19 +605,19 @@ connection_helper(Ref, Protocol, Strategy, [{Addr, Primary}|Addrs], ConnectedToP
                     gen_server:cast(?SERVER, {endpoint_failed, Addr, Reason, ProtocolId}),
 
 
-                  case {ConnectedToPrimary, NextAddrPrimary} of
-                    {true, true} ->
-                      connection_helper(Ref, Protocol, Strategy, Addrs, true);
-                    {true, false} ->
-                      ok;
-                    {false, _} ->
-                      connection_helper(Ref, Protocol, Strategy, Addrs, false)
-                  end
+                    case {ConnectedToPrimary, NextAddrPrimary} of
+                        {true, true} ->
+                            connection_helper(Ref, Protocol, Strategy, Addrs, true);
+                        {true, false} ->
+                            ok;
+                        {false, _} ->
+                            connection_helper(Ref, Protocol, Strategy, Addrs, false)
+                    end
             end;
         _ ->
             %% connection request has been cancelled
             lager:debug("Ignoring connection to: ~p at ~p because it was cancelled",
-                       [ProtocolId, string_of_ipport(Addr)]),
+                [ProtocolId, string_of_ipport(Addr)]),
             {ok, cancelled}
     end.
 

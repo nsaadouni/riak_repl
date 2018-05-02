@@ -666,78 +666,78 @@ remove_filtered_bucket(Ring, BucketName) ->
 
 
 get_value(Key, Dictionary, Type) ->
-  case dict:find(Key, Dictionary) of
-    {ok, X} ->
-      X;
-    error ->
-      case Type of
-        dictionary ->
-          dict:new();
-        list ->
-          []
-      end
-  end.
+    case dict:find(Key, Dictionary) of
+        {ok, X} ->
+            X;
+        error ->
+            case Type of
+                dictionary ->
+                    dict:new();
+                list ->
+                    []
+            end
+    end.
 
 overwrite_realtime_connection_data(Ring, Dictionary) ->
-  RC = get_repl_config(ensure_config(Ring)),
-  RC2 = dict:store(realtime_connections, Dictionary, RC),
-  case RC == RC2 of
-    true ->
-      %% nothing changed
-      {ignore, {not_changed, clustername}};
-    false ->
-      {new_ring, riak_core_ring:update_meta(
-        ?MODULE,
-        RC2,
-        Ring)}
-  end.
+    RC = get_repl_config(ensure_config(Ring)),
+    RC2 = dict:store(realtime_connections, Dictionary, RC),
+    case RC == RC2 of
+        true ->
+            %% nothing changed
+            {ignore, {not_changed, clustername}};
+        false ->
+            {new_ring, riak_core_ring:update_meta(
+                ?MODULE,
+                RC2,
+                Ring)}
+    end.
 
 get_realtime_connection_data() ->
-  case riak_core_ring_manager:get_my_ring() of
-    {ok, Ring} ->
-      RC = get_repl_config(ensure_config(Ring)),
-      get_value(realtime_connections, RC, dictionary);
-    RingError ->
-      RingError
-  end.
+    case riak_core_ring_manager:get_my_ring() of
+        {ok, Ring} ->
+            RC = get_repl_config(ensure_config(Ring)),
+            get_value(realtime_connections, RC, dictionary);
+        RingError ->
+            RingError
+    end.
 
 overwrite_active_nodes(Ring, ActiveNodeList) ->
-  RC = get_repl_config(ensure_config(Ring)),
-  RC2 = dict:store(active_nodes, ActiveNodeList, RC),
-  case RC == RC2 of
-    true ->
-      %% nothing changed
-      {ignore, {not_changed, clustername}};
-    false ->
-      {new_ring, riak_core_ring:update_meta(
-        ?MODULE,
-        RC2,
-        Ring)}
-  end.
+    RC = get_repl_config(ensure_config(Ring)),
+    RC2 = dict:store(active_nodes, ActiveNodeList, RC),
+    case RC == RC2 of
+        true ->
+            %% nothing changed
+            {ignore, {not_changed, clustername}};
+        false ->
+            {new_ring, riak_core_ring:update_meta(
+                ?MODULE,
+                RC2,
+                Ring)}
+    end.
 
 overwrite_active_nodes_and_realtime_connection_data(Ring, {RealtimeDictionary, ActiveNodeList}) ->
-  RC = get_repl_config(ensure_config(Ring)),
-  RC2 = dict:store(active_nodes, ActiveNodeList, RC),
-  RC3 = dict:store(realtime_connections, RealtimeDictionary, RC2),
-  case RC == RC3 of
-    true ->
-      %% nothing changed
-      {ignore, {not_changed, clustername}};
-    false ->
-      {new_ring, riak_core_ring:update_meta(
-        ?MODULE,
-        RC3,
-        Ring)}
-  end.
+    RC = get_repl_config(ensure_config(Ring)),
+    RC2 = dict:store(active_nodes, ActiveNodeList, RC),
+    RC3 = dict:store(realtime_connections, RealtimeDictionary, RC2),
+    case RC == RC3 of
+        true ->
+            %% nothing changed
+            {ignore, {not_changed, clustername}};
+        false ->
+            {new_ring, riak_core_ring:update_meta(
+                ?MODULE,
+                RC3,
+                Ring)}
+    end.
 
 get_active_nodes() ->
-  case riak_core_ring_manager:get_my_ring() of
-    {ok, Ring} ->
-      RC = get_repl_config(ensure_config(Ring)),
-      get_value(active_nodes, RC, list);
-    RingError ->
-      RingError
-  end.
+    case riak_core_ring_manager:get_my_ring() of
+        {ok, Ring} ->
+            RC = get_repl_config(ensure_config(Ring)),
+            get_value(active_nodes, RC, list);
+        RingError ->
+            RingError
+    end.
 
 
 %% unit tests
@@ -765,7 +765,6 @@ bucket_filtering_can_disable_test() ->
     Ring2.
 
 set_clusterIpAddrs_test() ->
-    % set_clusterIpAddrs(Ring, {ClusterName, Addrs})
     Ring = ensure_config_test(),
     {new_ring, Ring2} = set_clusterIpAddrs(Ring, {"test_cluster", ["127.0.0.1:60036"]}),
     ?assertEqual(get_clusterIpAddrs(Ring2, "test_cluster"), ["127.0.0.1:60036"]),
@@ -803,9 +802,6 @@ bucket_filtering_remove_cluster_test() ->
     {new_ring, Ring2} = set_clusterIpAddrs(Ring, {"test_cluster2", ["127.0.0.1:50036"]}),
     ?assertEqual(["127.0.0.1:50036"], get_clusterIpAddrs(Ring2, "test_cluster2")),
     ?assertEqual(["127.0.0.1:60036"], get_clusterIpAddrs(Ring2, "test_cluster")),
-
-%%    io:format("cluster config: ~p~n", [get_clusters(Ring2)]),
-%%    io:format("filtered config for bkt1: ~p", [get_filtered_bucket_config_for_bucket(Ring2, <<"bkt1">>)]),
 
     {new_ring, Ring3} = add_filtered_bucket(Ring2, {"test_cluster2", <<"bkt1">>}),
 
@@ -1040,79 +1036,79 @@ realtime_cascades_invalid_set_test() ->
 
 
 overwrite_realtime_connection_data_1_test() ->
-  Ring0 = riak_repl_ring:ensure_config(mock_ring()),
-  Dictionary = dict:from_list([{key1, value1}, {key2, value2}]),
-  Result = riak_repl_ring:overwrite_realtime_connection_data(Ring0, Dictionary),
-  ?assertMatch({new_ring, _Ring1}, Result),
+    Ring0 = riak_repl_ring:ensure_config(mock_ring()),
+    Dictionary = dict:from_list([{key1, value1}, {key2, value2}]),
+    Result = riak_repl_ring:overwrite_realtime_connection_data(Ring0, Dictionary),
+    ?assertMatch({new_ring, _Ring1}, Result),
 
-  {new_ring, Ring1} = Result,
-  RC = get_repl_config(ensure_config(Ring1)),
-  Dictionary2 = dict:fetch(realtime_connections, RC),
-  ?assertMatch(Dictionary, Dictionary2),
-  Ring1.
+    {new_ring, Ring1} = Result,
+    RC = get_repl_config(ensure_config(Ring1)),
+    Dictionary2 = dict:fetch(realtime_connections, RC),
+    ?assertMatch(Dictionary, Dictionary2),
+    Ring1.
 
 overwrite_realtime_connection_data_2_test() ->
-  Ring0 = overwrite_realtime_connection_data_1_test(),
-  Dictionary = dict:new(),
-  Result = riak_repl_ring:overwrite_realtime_connection_data(Ring0, Dictionary),
-  ?assertMatch({new_ring, _Ring1}, Result),
+    Ring0 = overwrite_realtime_connection_data_1_test(),
+    Dictionary = dict:new(),
+    Result = riak_repl_ring:overwrite_realtime_connection_data(Ring0, Dictionary),
+    ?assertMatch({new_ring, _Ring1}, Result),
 
-  {new_ring, Ring1} = Result,
-  RC = get_repl_config(ensure_config(Ring1)),
-  Dictionary2 = dict:fetch(realtime_connections, RC),
-  ?assertMatch(Dictionary, Dictionary2).
+    {new_ring, Ring1} = Result,
+    RC = get_repl_config(ensure_config(Ring1)),
+    Dictionary2 = dict:fetch(realtime_connections, RC),
+    ?assertMatch(Dictionary, Dictionary2).
 
 overwrite_active_nodes_1_test() ->
-  Ring0 = riak_repl_ring:ensure_config(mock_ring()),
-  ActiveNodes = [a,b,c,d,e,f],
-  Result = riak_repl_ring:overwrite_active_nodes(Ring0, ActiveNodes),
-  ?assertMatch({new_ring, _Ring1}, Result),
+    Ring0 = riak_repl_ring:ensure_config(mock_ring()),
+    ActiveNodes = [a,b,c,d,e,f],
+    Result = riak_repl_ring:overwrite_active_nodes(Ring0, ActiveNodes),
+    ?assertMatch({new_ring, _Ring1}, Result),
 
-  {new_ring, Ring1} = Result,
-  RC = get_repl_config(ensure_config(Ring1)),
-  ActiveNodes2 = dict:fetch(active_nodes, RC),
-  ?assertMatch(ActiveNodes, ActiveNodes2),
-  Ring1.
+    {new_ring, Ring1} = Result,
+    RC = get_repl_config(ensure_config(Ring1)),
+    ActiveNodes2 = dict:fetch(active_nodes, RC),
+    ?assertMatch(ActiveNodes, ActiveNodes2),
+    Ring1.
 
 overwrite_active_nodes_2_test() ->
-  Ring0 = overwrite_active_nodes_1_test(),
-  ActiveNodes = [node_1, node_2, node_3],
-  Result = riak_repl_ring:overwrite_active_nodes(Ring0, ActiveNodes),
-  ?assertMatch({new_ring, _Ring1}, Result),
+    Ring0 = overwrite_active_nodes_1_test(),
+    ActiveNodes = [node_1, node_2, node_3],
+    Result = riak_repl_ring:overwrite_active_nodes(Ring0, ActiveNodes),
+    ?assertMatch({new_ring, _Ring1}, Result),
 
-  {new_ring, Ring1} = Result,
-  RC = get_repl_config(ensure_config(Ring1)),
-  ActiveNodes2 = dict:fetch(active_nodes, RC),
-  ?assertMatch(ActiveNodes, ActiveNodes2).
+    {new_ring, Ring1} = Result,
+    RC = get_repl_config(ensure_config(Ring1)),
+    ActiveNodes2 = dict:fetch(active_nodes, RC),
+    ?assertMatch(ActiveNodes, ActiveNodes2).
 
 overwrite_active_nodes_and_realtime_connection_data_1_test() ->
-  Ring0 = riak_repl_ring:ensure_config(mock_ring()),
-  ActiveNodes = [a,b,c,d,e,f],
-  Dictionary = dict:from_list([{key1, value1}, {key2, value2}]),
-  Result = riak_repl_ring:overwrite_active_nodes_and_realtime_connection_data(Ring0, {Dictionary, ActiveNodes}),
-  ?assertMatch({new_ring, _Ring1}, Result),
+    Ring0 = riak_repl_ring:ensure_config(mock_ring()),
+    ActiveNodes = [a,b,c,d,e,f],
+    Dictionary = dict:from_list([{key1, value1}, {key2, value2}]),
+    Result = riak_repl_ring:overwrite_active_nodes_and_realtime_connection_data(Ring0, {Dictionary, ActiveNodes}),
+    ?assertMatch({new_ring, _Ring1}, Result),
 
-  {new_ring, Ring1} = Result,
-  RC = get_repl_config(ensure_config(Ring1)),
-  ActiveNodes2 = dict:fetch(active_nodes, RC),
-  ?assertMatch(ActiveNodes, ActiveNodes2),
-  Dictionary2 = dict:fetch(realtime_connections, RC),
-  ?assertMatch(Dictionary, Dictionary2),
-  Ring1.
+    {new_ring, Ring1} = Result,
+    RC = get_repl_config(ensure_config(Ring1)),
+    ActiveNodes2 = dict:fetch(active_nodes, RC),
+    ?assertMatch(ActiveNodes, ActiveNodes2),
+    Dictionary2 = dict:fetch(realtime_connections, RC),
+    ?assertMatch(Dictionary, Dictionary2),
+    Ring1.
 
 overwrite_active_nodes_and_realtime_connection_data_2_test() ->
-  Ring0 = overwrite_active_nodes_and_realtime_connection_data_1_test(),
-  ActiveNodes = [node_1, node_2, node_3],
-  Dictionary = dict:new(),
-  Result = riak_repl_ring:overwrite_active_nodes_and_realtime_connection_data(Ring0, {Dictionary, ActiveNodes}),
-  ?assertMatch({new_ring, _Ring1}, Result),
+    Ring0 = overwrite_active_nodes_and_realtime_connection_data_1_test(),
+    ActiveNodes = [node_1, node_2, node_3],
+    Dictionary = dict:new(),
+    Result = riak_repl_ring:overwrite_active_nodes_and_realtime_connection_data(Ring0, {Dictionary, ActiveNodes}),
+    ?assertMatch({new_ring, _Ring1}, Result),
 
-  {new_ring, Ring1} = Result,
-  RC = get_repl_config(ensure_config(Ring1)),
-  ActiveNodes2 = dict:fetch(active_nodes, RC),
-  ?assertMatch(ActiveNodes, ActiveNodes2),
-  Dictionary2 = dict:fetch(realtime_connections, RC),
-  ?assertMatch(Dictionary, Dictionary2).
+    {new_ring, Ring1} = Result,
+    RC = get_repl_config(ensure_config(Ring1)),
+    ActiveNodes2 = dict:fetch(active_nodes, RC),
+    ?assertMatch(ActiveNodes, ActiveNodes2),
+    Dictionary2 = dict:fetch(realtime_connections, RC),
+    ?assertMatch(Dictionary, Dictionary2).
 
 
 -endif.
