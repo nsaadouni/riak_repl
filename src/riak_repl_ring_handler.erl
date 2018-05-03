@@ -200,7 +200,7 @@ rt_update_events(Ring) ->
                                      false
                              end,
 
-    CurrentFilteringState = application:get_env(riak_repl, bucket_filtering_enabled),
+    CurrentFilteringState = app_helper:get_env(riak_repl, bucket_filtering_enabled),
     case BucketFilteringEnabled == CurrentFilteringState of
         true ->
             % do nothing, value hasn't changed
@@ -220,7 +220,7 @@ rt_update_events(Ring) ->
                               []
                       end,
 
-    CurrentFilteringConfig = application:get_env(riak_repl, filtered_buckets),
+    CurrentFilteringConfig = app_helper:get_env(riak_repl, filtered_buckets),
     case FilteringConfig == CurrentFilteringConfig of
         true ->
             ok;
