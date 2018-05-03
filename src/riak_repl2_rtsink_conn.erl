@@ -130,6 +130,10 @@ handle_call(status, _From, State = #state{remote = Remote,
                                           active = Active, deactivated = Deactivated,
                                           source_drops = SourceDrops,
                                           expect_seq = ExpSeq, acked_seq = AckedSeq}) ->
+
+    {PoolboyState, PoolboyQueueLength, PoolboyOverflow, PoolboyMonitorsActive}
+        = poolboy:status(riak_repl2_rtsink_pool),
+
     Pending = pending(State),
     SocketStats = riak_core_tcp_mon:socket_status(State#state.socket),
     Status = [{source, Remote},
@@ -148,7 +152,11 @@ handle_call(status, _From, State = #state{remote = Remote,
               {source_drops, SourceDrops},
               {expect_seq, ExpSeq},
               {acked_seq, AckedSeq},
-              {pending, Pending}],
+              {pending, Pending},
+              {poolboy_state, PoolboyState},
+              {poolboy_queue_length, PoolboyQueueLength},
+              {poolboy_overflow, PoolboyOverflow},
+              {poolboy_monitors_active, PoolboyMonitorsActive}],
     {reply, Status, State};
 handle_call(legacy_status, _From, State = #state{remote = Remote,
                                                  socket = Socket}) ->
