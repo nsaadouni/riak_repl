@@ -213,7 +213,7 @@ handle_call(_Req, _From, State) ->
     {reply, ok, State}.
 
 handle_cast({update, Stat, Addrs, ProtocolId}, State) ->
-    update(Stat, Addrs, ProtocolId),
+    update_list(Stat, Addrs, ProtocolId),
     {noreply, State};
 handle_cast(_Req, State) ->
     {noreply, State}.
@@ -227,9 +227,9 @@ terminate(_Reason, _State) ->
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
-update(Stat, [], ProtocolId) ->
+update_list(_Stat, [], _ProtocolId) ->
     ok;
-update(Stat, [Addr|Rest], ProtocolId) ->
+update_list(Stat, [Addr|Rest], ProtocolId) ->
     do_update(Stat, Addr, ProtocolId),
     update(Stat, Rest, ProtocolId).
 
