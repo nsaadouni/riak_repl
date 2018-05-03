@@ -22,6 +22,26 @@
 }).
 
 setup() ->
+    catch(meck:unload(riak_repl2_rtsource_conn_data_mgr)),
+    meck:new(riak_repl2_rtsource_conn_data_mgr, [passthrough]),
+    meck:expect(riak_repl2_rtsource_conn_data_mgr, read,
+        fun(X) ->
+            case X of
+                active_nodes ->
+                    [node()];
+                realtime_connections ->
+                    dict:new()
+            end
+        end),
+
+    catch(meck:unload(riak_core_cluster_mgr)),
+    meck:new(riak_core_cluster_mgr, [passthrough]),
+    meck:expect(riak_core_cluster_mgr, get_unshuffled_ipaddrs_of_cluster, fun(_Remote) -> {ok,[]} end ),
+    meck:expect(riak_core_cluster_mgr, get_ipaddrs_of_cluster, fun(_) -> {ok,[]} end ),
+    meck:expect(riak_core_cluster_mgr, get_ipaddrs_of_cluster, fun(_, split) -> {ok, {[],[]}} end ),
+    meck:expect(riak_core_cluster_mgr, get_ipaddrs_of_cluster, fun(_, _) -> {ok,[]} end ),
+
+    folsom:start(),
     error_logger:tty(false),
     riak_repl_test_util:start_test_ring(),
     riak_repl_test_util:abstract_gen_tcp(),
@@ -115,17 +135,6 @@ v2_to_v2_comms(_State) ->
      end}]}.
 
 v2_to_v2_comms_setup() ->
-  catch(meck:unload(riak_repl2_rtsource_conn_data_mgr)),
-  meck:new(riak_repl2_rtsource_conn_data_mgr, [passthrough]),
-  meck:expect(riak_repl2_rtsource_conn_data_mgr, read, fun(active_nodes) -> [node()]
-                                                       end),
-  catch(meck:unload(riak_core_cluster_mgr)),
-  meck:new(riak_core_cluster_mgr, [passthrough]),
-  meck:expect(riak_core_cluster_mgr, get_unshuffled_ipaddrs_of_cluster, fun(_Remote) -> {ok,[]} end ),
-  meck:expect(riak_core_cluster_mgr, get_ipaddrs_of_cluster, fun(_) -> {ok,[]} end ),
-  meck:expect(riak_core_cluster_mgr, get_ipaddrs_of_cluster, fun(_, split) -> {ok, {[],[]}} end ),
-  meck:expect(riak_core_cluster_mgr, get_ipaddrs_of_cluster, fun(_, _) -> {ok,[]} end ),
-
     {ok, _ListenPid} = start_sink(?VER2),
     {ok, {Source, Sink}} = start_source(?VER2),
     meck:new(poolboy, [passthrough]),
@@ -184,17 +193,6 @@ v1_to_v1_comms(_State) ->
      end}]}.
 
 v1_to_v1_setup() ->
-  catch(meck:unload(riak_repl2_rtsource_conn_data_mgr)),
-  meck:new(riak_repl2_rtsource_conn_data_mgr, [passthrough]),
-  meck:expect(riak_repl2_rtsource_conn_data_mgr, read, fun(active_nodes) -> [node()]
-                                                       end),
-  catch(meck:unload(riak_core_cluster_mgr)),
-  meck:new(riak_core_cluster_mgr, [passthrough]),
-  meck:expect(riak_core_cluster_mgr, get_unshuffled_ipaddrs_of_cluster, fun(_Remote) -> {ok,[]} end ),
-  meck:expect(riak_core_cluster_mgr, get_ipaddrs_of_cluster, fun(_) -> {ok,[]} end ),
-  meck:expect(riak_core_cluster_mgr, get_ipaddrs_of_cluster, fun(_, split) -> {ok, {[],[]}} end ),
-  meck:expect(riak_core_cluster_mgr, get_ipaddrs_of_cluster, fun(_, _) -> {ok,[]} end ),
-
     {ok, _ListenPid} = start_sink(?VER1),
     {ok, {Source, Sink}} = start_source(?VER1),
     meck:new(poolboy, [passthrough]),
