@@ -6,26 +6,7 @@
 -define(CLEAN_ENV, application:unset_env(riak_repl, rtq_max_bytes)).
 
 rtq_trim_test() ->
-
-    catch(meck:unload(folsom_metrics)),
-    meck:new(folsom_metrics, [passthrough]),
-    meck:expect(folsom_metrics, delete_metric,
-        fun(_A) ->
-            ok
-        end),
-    meck:expect(folsom_metrics, new_histogram,
-        fun(_A,_B,_C) ->
-            ok
-        end),
-    meck:expect(folsom_metrics, notify,
-        fun(_A,_B) ->
-            ok
-        end),
-    meck:expect(folsom_metrics, metric_exists,
-        fun(_A) ->
-            false
-        end),
-
+    folsom:start(),
     %% make sure the queue is 10mb
     ?SETUP_ENV,
     {ok, Pid} = riak_repl2_rtq:start_test(),
@@ -68,24 +49,6 @@ accumulate(Pid, Acc, C) ->
 
 status_test_() ->
     {setup, fun() ->
-        catch(meck:unload(folsom_metrics)),
-        meck:new(folsom_metrics, [passthrough]),
-        meck:expect(folsom_metrics, delete_metric,
-            fun(_A) ->
-                ok
-            end),
-        meck:expect(folsom_metrics, new_histogram,
-            fun(_A,_B,_C) ->
-                ok
-            end),
-        meck:expect(folsom_metrics, notify,
-            fun(_A,_B) ->
-                ok
-            end),
-        meck:expect(folsom_metrics, metric_exists,
-            fun(_A) ->
-                false
-            end),
         ?SETUP_ENV,
         {ok, QPid} = riak_repl2_rtq:start_link(),
         QPid
@@ -168,24 +131,6 @@ evict_test_() ->
     }.
 
 overload_protection_start_test_() ->
-    catch(meck:unload(folsom_metrics)),
-    meck:new(folsom_metrics, [passthrough]),
-    meck:expect(folsom_metrics, delete_metric,
-        fun(_A) ->
-            ok
-        end),
-    meck:expect(folsom_metrics, new_histogram,
-        fun(_A,_B,_C) ->
-            ok
-        end),
-    meck:expect(folsom_metrics, notify,
-        fun(_A,_B) ->
-            ok
-        end),
-    meck:expect(folsom_metrics, metric_exists,
-        fun(_A) ->
-            false
-        end),
     [
         {"able to start after a crash without ets errors", fun() ->
             {ok, Rtq1} = riak_repl2_rtq:start_link(),
@@ -234,24 +179,6 @@ overload_test_() ->
                 application:start(lager),
                 lager:set_loglevel(lager_console_backend, debug)
         end,
-         catch(meck:unload(folsom_metrics)),
-         meck:new(folsom_metrics, [passthrough]),
-         meck:expect(folsom_metrics, delete_metric,
-             fun(_A) ->
-                 ok
-             end),
-         meck:expect(folsom_metrics, new_histogram,
-             fun(_A,_B,_C) ->
-                 ok
-             end),
-         meck:expect(folsom_metrics, notify,
-             fun(_A,_B) ->
-                 ok
-             end),
-         meck:expect(folsom_metrics, metric_exists,
-             fun(_A) ->
-                 false
-             end),
         riak_repl_test_util:abstract_stats(),
         riak_repl2_rtq:start_link([{overload_threshold, 5}, {overload_recover, 1}]),
         riak_repl2_rtq_overload_counter:start_link([{report_interval, 1000}]),
@@ -349,24 +276,6 @@ overload_test_() ->
     ]}.
 
 start_rtq() ->
-    catch(meck:unload(folsom_metrics)),
-    meck:new(folsom_metrics, [passthrough]),
-    meck:expect(folsom_metrics, delete_metric,
-        fun(_A) ->
-            ok
-        end),
-    meck:expect(folsom_metrics, new_histogram,
-        fun(_A,_B,_C) ->
-            ok
-        end),
-    meck:expect(folsom_metrics, notify,
-        fun(_A,_B) ->
-            ok
-        end),
-    meck:expect(folsom_metrics, metric_exists,
-        fun(_A) ->
-            false
-        end),
     ?SETUP_ENV,
     {ok, Pid} = riak_repl2_rtq:start_link(),
     gen_server:call(Pid, {register, rtq_test}),

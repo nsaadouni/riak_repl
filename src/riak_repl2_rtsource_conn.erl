@@ -435,24 +435,7 @@ setup() ->
     riak_repl_test_util:abstract_stateful(),
     % ?debugMsg("leave setup()"),
 
-    catch(meck:unload(folsom_metrics)),
-    meck:new(folsom_metrics, [passthrough]),
-    meck:expect(folsom_metrics, delete_metric,
-        fun(_A) ->
-            ok
-        end),
-    meck:expect(folsom_metrics, new_histogram,
-        fun(_A,_B,_C) ->
-            ok
-        end),
-    meck:expect(folsom_metrics, notify,
-        fun(_A,_B) ->
-            ok
-        end),
-    meck:expect(folsom_metrics, metric_exists,
-        fun(_A) ->
-            false
-        end),
+    folsom:start(),
 
     ok.
 
