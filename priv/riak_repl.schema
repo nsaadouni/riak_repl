@@ -197,3 +197,15 @@
     {datatype, {duration, s}},
     {default, "10s"}
 ]}.
+
+%% @doc realtime sink replication minimum workers for poolboy
+{mapping, "mdc.rtsink_min_workers", "riak_repl.rtsink_min_workers", [
+    {datatype, integer},
+    {default, 5}
+]}.
+
+%% @doc realtime sink replication maximum works for poolboy
+{mapping, "mdc.rtsink_max_workers", "riak_repl.rtsink_max_workers", [
+    {datatype, integer},
+    {default, 100}
+]}.
