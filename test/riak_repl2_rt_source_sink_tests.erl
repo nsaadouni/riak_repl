@@ -29,7 +29,9 @@ setup() ->
             case X of
                 active_nodes ->
                     [node()];
-                realtime_connections ->
+                {realtime_connections, _,_} ->
+                    dict:new();
+                {realtime_connections, _} ->
                     dict:new()
             end
         end),
@@ -295,6 +297,27 @@ start_source() ->
     start_source(?VER1).
 
 start_source(NegotiatedVer) ->
+    catch(meck:unload(riak_repl2_rtsource_conn_data_mgr)),
+    meck:new(riak_repl2_rtsource_conn_data_mgr, [passthrough]),
+    meck:expect(riak_repl2_rtsource_conn_data_mgr, read,
+        fun(X) ->
+            case X of
+                active_nodes ->
+                    [node()];
+                {realtime_connections, _,_} ->
+                    dict:new();
+                {realtime_connections, _} ->
+                    dict:new()
+            end
+        end),
+
+    catch(meck:unload(riak_core_cluster_mgr)),
+    meck:new(riak_core_cluster_mgr, [passthrough]),
+    meck:expect(riak_core_cluster_mgr, get_unshuffled_ipaddrs_of_cluster, fun(_Remote) -> {ok,[]} end ),
+    meck:expect(riak_core_cluster_mgr, get_ipaddrs_of_cluster, fun(_) -> {ok,[]} end ),
+    meck:expect(riak_core_cluster_mgr, get_ipaddrs_of_cluster, fun(_, split) -> {ok, {[],[]}} end ),
+    meck:expect(riak_core_cluster_mgr, get_ipaddrs_of_cluster, fun(_, _) -> {ok,[]} end ),
+
     catch(meck:unload(riak_core_connection_mgr)),
     meck:new(riak_core_connection_mgr, [passthrough]),
     meck:expect(riak_core_connection_mgr, connect, fun(_ServiceAndRemote, ClientSpec, _Strategy) ->
