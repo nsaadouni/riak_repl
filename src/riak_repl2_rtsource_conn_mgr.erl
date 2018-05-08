@@ -213,8 +213,6 @@ handle_info({'EXIT', Pid, Reason}, State = #state{endpoints = E, remote = Remote
                                lager:info("riak_repl2_rtsource_conn terminated due to reason nomral, Endpoint: ~p", [Key]);
                            {shutdown, heartbeat_timeout} ->
                                lager:info("riak_repl2_rtsource_conn terminated due to reason heartbeat timeout, Endpoint: ~p", [Key]);
-                           {shutdown, rebalance} ->
-                               lager:info("riak_repl2_rtsource_conn terminated due to reason heartbeat timeout, Endpoint: ~p", [Key]);
                            {shutdown, Error} ->
                                lager:info("riak_repl2_rtsource_conn terminated due to reason ~p, Endpoint: ~p", [Error, Key]);
                            OtherError ->
@@ -229,7 +227,12 @@ handle_info({'EXIT', Pid, Reason}, State = #state{endpoints = E, remote = Remote
                                State2
                        end;
                    false ->
-                       lager:warning("riak_repl2_rtsource_conn terminated due to reason ~p, [NOT IN ENDPOINTS]", [Reason]),
+                       case Reason of
+                           {shutdown, rebalance, RemovedKey} ->
+                               lager:info("riak_repl2_rtsource_conn terminated due to rebalancing, Endpoint: ~p", [RemovedKey]);
+                           _ ->
+                               lager:warning("riak_repl2_rtsource_conn terminated due to reason ~p, [NOT IN ENDPOINTS]", [Reason])
+                       end,
                        State
                end,
     {noreply, NewState};
@@ -507,7 +510,7 @@ remove_connections([Key={Addr, Primary} | Rest], E, {KillTime, Remote}) ->
 %%    riak_repl2_rtsource_helper:stop_pulling(HelperPid),
 %%    lager:info("rtsource_conn called to gracefully kill itself ~p", [Key]),
 %%    erlang:send_after(KillTime, self(), {kill_rtsource_conn, RtSourcePid}),
-    exit(RtSourcePid, {shutdown, rebalance}),
+    exit(RtSourcePid, {shutdown, rebalance, Key}),
     riak_repl2_rtsource_conn_data_mgr:delete(realtime_connections, Remote, node(), Addr, Primary),
     remove_connections(Rest, dict:erase(Key, E), {KillTime, Remote}).
 
