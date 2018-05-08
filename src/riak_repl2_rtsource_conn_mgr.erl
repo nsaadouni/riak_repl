@@ -201,23 +201,26 @@ handle_cast(_Request, State) ->
 %%%=====================================================================================================================
 
 handle_info({'EXIT', Pid, Reason}, State = #state{endpoints = E, remote = Remote}) ->
-    case Reason of
-        normal ->
-            lager:info("riak_repl2_rtsource_conn terminated due to reason nomral");
-        {shutdown, heartbeat_timeout} ->
-            lager:info("riak_repl2_rtsource_conn terminated due to reason heartbeat timeout");
-        {shutdown, Error} ->
-            lager:info("riak_repl2_rtsource_conn terminated due to reason ~p", [Error]);
-        OtherError ->
-            lager:warning("riak_repl2_rtsource_conn terminated due to reason ~p", [OtherError])
-    end,
-
     NewState = case lists:keyfind(Pid, 2, dict:to_list(E)) of
                    {Key, Pid} ->
                        NewEndpoints = dict:erase(Key, E),
                        State2 = State#state{endpoints = NewEndpoints},
                        {IPPort, Primary} = Key,
                        riak_repl2_rtsource_conn_data_mgr:delete(realtime_connections, Remote, node(), IPPort, Primary),
+
+                       case Reason of
+                           normal ->
+                               lager:info("riak_repl2_rtsource_conn terminated due to reason nomral, Endpoint: ~p", [Key]);
+                           {shutdown, heartbeat_timeout} ->
+                               lager:info("riak_repl2_rtsource_conn terminated due to reason heartbeat timeout, Endpoint: ~p", [Key]);
+                           {shutdown, rebalance} ->
+                               lager:info("riak_repl2_rtsource_conn terminated due to reason heartbeat timeout, Endpoint: ~p", [Key]);
+                           {shutdown, Error} ->
+                               lager:info("riak_repl2_rtsource_conn terminated due to reason ~p, Endpoint: ~p", [Error, Key]);
+                           OtherError ->
+                               lager:warning("riak_repl2_rtsource_conn terminated due to reason ~p, Endpoint: ~p", [OtherError, Key])
+                       end,
+
                        case dict:fetch_keys(NewEndpoints) of
                            [] ->
                                RbTimeoutTref = erlang:send_after(0, self(), rebalance_now),
@@ -226,6 +229,7 @@ handle_info({'EXIT', Pid, Reason}, State = #state{endpoints = E, remote = Remote
                                State2
                        end;
                    false ->
+                       lager:warning("riak_repl2_rtsource_conn terminated due to reason ~p, [NOT IN ENDPOINTS]", [Reason]),
                        State
                end,
     {noreply, NewState};
@@ -499,10 +503,11 @@ remove_connections([], E, _) ->
     E;
 remove_connections([Key={Addr, Primary} | Rest], E, {KillTime, Remote}) ->
     RtSourcePid = dict:fetch(Key, E),
-    HelperPid = riak_repl2_rtsource_conn:get_helper_pid(RtSourcePid),
-    riak_repl2_rtsource_helper:stop_pulling(HelperPid),
-    lager:info("rtsource_conn called to gracefully kill itself ~p", [Key]),
-    erlang:send_after(KillTime, self(), {kill_rtsource_conn, RtSourcePid}),
+%%    HelperPid = riak_repl2_rtsource_conn:get_helper_pid(RtSourcePid),
+%%    riak_repl2_rtsource_helper:stop_pulling(HelperPid),
+%%    lager:info("rtsource_conn called to gracefully kill itself ~p", [Key]),
+%%    erlang:send_after(KillTime, self(), {kill_rtsource_conn, RtSourcePid}),
+    exit(RtSourcePid, {shutdown, rebalance}),
     riak_repl2_rtsource_conn_data_mgr:delete(realtime_connections, Remote, node(), Addr, Primary),
     remove_connections(Rest, dict:erase(Key, E), {KillTime, Remote}).
 

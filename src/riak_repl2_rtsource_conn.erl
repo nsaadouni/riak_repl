@@ -307,10 +307,11 @@ handle_info(Msg, State) ->
     lager:warning("Unhandled info:  ~p", [Msg]),
     {noreply, State}.
 
-terminate(Reason, #state{socket = Socket, transport = Transport}) ->
-  lager:info("rtsource conn terminated due to ~p", [Reason]),
-  Transport:close(Socket),
-  ok.
+terminate(Reason, #state{socket = Socket, transport = Transport, address = A, primary = P}) ->
+    Key = {A,P},
+    lager:info("rtsource conn terminated due to ~p, Endpoint: ~p", [Reason, Key]),
+    Transport:close(Socket),
+    ok.
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
