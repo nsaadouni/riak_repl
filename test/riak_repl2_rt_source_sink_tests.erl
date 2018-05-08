@@ -297,18 +297,20 @@ start_source() ->
     start_source(?VER1).
 
 start_source(NegotiatedVer) ->
+
     catch(meck:unload(riak_repl2_rtsource_conn_data_mgr)),
     meck:new(riak_repl2_rtsource_conn_data_mgr, [passthrough]),
-    meck:expect(riak_repl2_rtsource_conn_data_mgr, read,
-        fun(X) ->
-            case X of
-                active_nodes ->
-                    [node()];
-                {realtime_connections, _,_} ->
-                    dict:new();
-                {realtime_connections, _} ->
-                    dict:new()
-            end
+    meck:expect(riak_repl2_rtsource_conn_data_mgr, read, 1,
+        fun(active_nodes) ->
+            [node()]
+        end),
+    meck:expect(riak_repl2_rtsource_conn_data_mgr, read, 2,
+        fun(realtime_connections, _) ->
+            dict:new()
+        end),
+    meck:expect(riak_repl2_rtsource_conn_data_mgr, read, 3,
+        fun(realtime_connections, _,_) ->
+            dict:new()
         end),
 
     catch(meck:unload(riak_core_cluster_mgr)),
