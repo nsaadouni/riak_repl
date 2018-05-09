@@ -240,10 +240,6 @@ handle_info({'EXIT', Pid, Reason}, State = #state{endpoints = E, remote = Remote
 handle_info(rebalance_now, State) ->
     {noreply, maybe_rebalance(State#state{rb_timeout_tref = undefined}, now)};
 
-handle_info({kill_rtsource_conn, RtSourceConnPid}, State) ->
-    catch riak_repl2_rtsource_conn:stop(RtSourceConnPid),
-    {noreply, State};
-
 
 handle_info(_Info, State) ->
     {noreply, State}.
@@ -506,11 +502,8 @@ remove_connections([], E, _) ->
     E;
 remove_connections([Key={Addr, Primary} | Rest], E, {KillTime, Remote}) ->
     RtSourcePid = dict:fetch(Key, E),
-%%    HelperPid = riak_repl2_rtsource_conn:get_helper_pid(RtSourcePid),
-%%    riak_repl2_rtsource_helper:stop_pulling(HelperPid),
-%%    lager:info("rtsource_conn called to gracefully kill itself ~p", [Key]),
-%%    erlang:send_after(KillTime, self(), {kill_rtsource_conn, RtSourcePid}),
     exit(RtSourcePid, {shutdown, rebalance, Key}),
+    lager:info("rtsource_conn is killed", [Key]),
     riak_repl2_rtsource_conn_data_mgr:delete(realtime_connections, Remote, node(), Addr, Primary),
     remove_connections(Rest, dict:erase(Key, E), {KillTime, Remote}).
 
