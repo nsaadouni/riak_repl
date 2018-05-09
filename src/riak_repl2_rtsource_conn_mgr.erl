@@ -250,8 +250,8 @@ handle_info(_Info, State) ->
 
 %%%=====================================================================================================================
 
-terminate(_Reason, _State=#state{remote = Remote, endpoints = E}) ->
-    lager:info("rtrsource conn mgr terminating"),
+terminate(Reason, _State=#state{remote = Remote, endpoints = E}) ->
+    lager:info("rtrsource conn mgr terminating, Reason: ~p", [Reason]),
     riak_core_connection_mgr:disconnect({rt_repl, Remote}),
     [catch riak_repl2_rtsource_conn:stop(Pid) || {{{_IP, _Port},_Primary},Pid} <- dict:to_list(E)],
     ok.
