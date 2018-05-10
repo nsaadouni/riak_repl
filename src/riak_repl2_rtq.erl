@@ -753,7 +753,8 @@ deliver_item(C, DeliverFun, {Seq, _NumItem, _Bin, _Meta, _} = QEntry) ->
         ok = DeliverFun(QEntry2),
         C#c{cseq = Seq, deliver = Rest, delivered = true, skips = 0, last_seen = {Seq, os:timestamp()}}
     catch
-        _:_ ->
+        Type:Error ->
+            lager:warning("failed to send object back to rtsource_helper, Reason: {~p, ~p}", [Type, Error]),
             riak_repl_stats:rt_source_errors(),
             %% do not advance head so it will be delivered again
             C#c{errs = C#c.errs + 1, deliver = Rest}
