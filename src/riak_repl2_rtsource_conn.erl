@@ -104,7 +104,12 @@ status(Pid) ->
     status(Pid, infinity).
 
 status(Pid, Timeout) ->
-    gen_server:call(Pid, status, Timeout).
+    try
+        gen_server:call(Pid, status, Timeout)
+    catch
+        _:_ ->
+            []
+    end.
 
 %% legacy status -- look like a riak_repl_tcp_server
 legacy_status(Pid) ->

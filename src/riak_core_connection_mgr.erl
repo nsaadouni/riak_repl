@@ -651,7 +651,7 @@ fail_endpoint(Addr, Reason, ProtocolId, State) ->
     %% update the stats module
     Err = reason_to_atom(Reason),
     Stat = {conn_error, Err},
-    riak_core_connection_mgr_stats:update(Stat, Addr, ProtocolId),
+    riak_core_connection_mgr_stats:update(Stat, [Addr], ProtocolId),
     %% update the endpoint
     Fun = fun(EP=#ep{backoff_delay = Backoff, failures = Failures}) ->
                   erlang:send_after(Backoff, self(), {backoff_timer, Addr}),

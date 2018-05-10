@@ -135,10 +135,8 @@ handle_call({connected, Socket, Transport, IPPort, Proto, _Props, Primary}, _Fro
 
                     case dict:find({IPPort, Primary}, NewState#state.endpoints) of
                         {ok, OldRtSourcePid} ->
-                            HelperPid = riak_repl2_rtsource_conn:get_helper_pid(OldRtSourcePid),
-                            riak_repl2_rtsource_helper:stop_pulling(HelperPid),
-                            lager:info("duplicate connections found, removing the old one ~p", [{IPPort,Primary}]),
-                            erlang:send_after(K, self(), {kill_rtsource_conn, OldRtSourcePid});
+                            exit(OldRtSourcePid, {shutdown, rebalance, {IPPort,Primary}}),
+                            lager:info("duplicate connections found, removing the old one ~p", [{IPPort,Primary}]);
                         error ->
                             ok
                     end,
@@ -175,7 +173,8 @@ handle_call(stop, _From, State) ->
 handle_call(get_endpoints, _From, State=#state{endpoints = E}) ->
     {reply, E, State};
 
-handle_call(_Request, _From, State) ->
+handle_call(Request, _From, State) ->
+    lager:warning("unhandled call: ~p", [Request]),
     {reply, ok, State}.
 
 %%%=====================================================================================================================
@@ -196,7 +195,8 @@ handle_cast({connect_failed, Reason}, State = #state{remote = Remote, endpoints 
 handle_cast(rebalance_delayed, State) ->
     {noreply, maybe_rebalance(State, delayed)};
 
-handle_cast(_Request, State) ->
+handle_cast(Request, State) ->
+    lager:warning("unhandled cast: ~p", [Request]),
     {noreply, State}.
 
 %%%=====================================================================================================================
@@ -242,7 +242,8 @@ handle_info(rebalance_now, State) ->
     {noreply, maybe_rebalance(State#state{rb_timeout_tref = undefined}, now)};
 
 
-handle_info(_Info, State) ->
+handle_info(Info, State) ->
+    lager:warning("unhandled info: ~p", [Info]),
     {noreply, State}.
 
 %%%=====================================================================================================================
@@ -569,5 +570,5 @@ collect_status_data([], _Timeout, Data, _E) ->
     Data;
 collect_status_data([Key | Rest], Timeout, Data, E) ->
     Pid = dict:fetch(Key, E),
-    NewData = [riak_repl2_rtsource_conn:status(Pid, Timeout) | Data],
-    collect_status_data(Rest, Timeout, NewData, E).
+    NewData = riak_repl2_rtsource_conn:status(Pid, Timeout),
+    collect_status_data(Rest, Timeout, [NewData|Data], E).
