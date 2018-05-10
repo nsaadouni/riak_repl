@@ -149,7 +149,7 @@ encode_and_send(QEntry, Remote, Transport, Socket, State) ->
     State2.
 
 
-encode({Seq, _NumObjs, BinObjs, Meta, _}, State = #state{proto = Ver}) when Ver < {2,0} ->
+encode({Seq, _NumObjs, BinObjs, Meta}, State = #state{proto = Ver}) when Ver < {2,0} ->
     Skips = orddict:fetch(skip_count, Meta),
     Offset = State#state.v1_offset + Skips,
     Seq2 = Seq - Offset,
@@ -158,7 +158,7 @@ encode({Seq, _NumObjs, BinObjs, Meta, _}, State = #state{proto = Ver}) when Ver 
     Encoded = riak_repl2_rtframe:encode(objects, {Seq2, BinObjs2}),
     State2 = State#state{v1_offset = Offset, v1_seq_map = V1Map},
     {Encoded, State2};
-encode({Seq, _NumbOjbs, BinObjs, Meta, _}, State = #state{proto = Ver}) when Ver >= {2,0} ->
+encode({Seq, _NumbOjbs, BinObjs, Meta}, State = #state{proto = Ver}) when Ver >= {2,0} ->
     {riak_repl2_rtframe:encode(objects_and_meta, {Seq, BinObjs, Meta}), State}.
 
 get_routed(Meta) ->

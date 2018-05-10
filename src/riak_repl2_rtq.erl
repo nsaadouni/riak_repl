@@ -611,7 +611,7 @@ maybe_deliver_item(C, QEntry) ->
             {delivered, deliver_item(C, get_delivery_fun(C#c.deliver), QEntry)}
     end.
 
-deliver_item(C, DeliverFun, {Seq,_NumItem, _Bin, _Meta} = QEntry) ->
+deliver_item(C, DeliverFun, {Seq, _NumItem, _Bin, _Meta} = QEntry) ->
   [_ | Rest] = C#c.deliver,
     try
         Seq = C#c.cseq + 1, % bit of paranoia, remove after EQC
