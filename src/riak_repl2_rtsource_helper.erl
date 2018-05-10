@@ -119,7 +119,7 @@ async_pull(_State=#state{remote = Remote, deliver_fun = Deliver}) ->
     riak_repl2_rtq:pull(Remote, Deliver).
 
 maybe_send(Transport, Socket, QEntry, State) ->
-    {_Seq, _NumObjects, _BinObjs, Meta, _} = QEntry,
+    {_Seq, _NumObjects, _BinObjs, Meta} = QEntry,
     #state{remote = Remote} = State,
     Routed = get_routed(Meta),
     case lists:member(Remote, Routed) of
@@ -170,7 +170,7 @@ meta_get(Key, Default, Meta) ->
         {ok, Value} -> Value
     end.
 
-merge_forwards_and_routed_meta({_, _, _, Meta, _} = QEntry, Remote) ->
+merge_forwards_and_routed_meta({_, _, _, Meta} = QEntry, Remote) ->
     LocalForwards = meta_get(local_forwards, [Remote], Meta),
     Routed = meta_get(routed_clusters, [], Meta),
     Self = riak_core_connection:symbolic_clustername(),
