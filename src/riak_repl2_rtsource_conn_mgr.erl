@@ -162,7 +162,8 @@ handle_call({connected, Socket, Transport, IPPort, Proto, _Props, Primary}, _Fro
 
 handle_call(all_status, _From, State=#state{endpoints = E}) ->
     AllKeys = dict:fetch_keys(E),
-    {reply, lists:flatten(collect_status_data(AllKeys, [], E)), State};
+    Timeout = app_helper:get_env(riak_repl, status_timeout, 5000),
+    {reply, lists:flatten(collect_status_data(AllKeys, Timeout, [], E)), State};
 
 handle_call(get_rtsource_conn_pids, _From, State = #state{endpoints = E}) ->
     Result = lists:foldl(fun({_,Pid}, Acc) -> Acc ++ [Pid] end, [], dict:to_list(E)),
@@ -564,9 +565,9 @@ rebalance_connect(State=#state{remote=Remote}, BetterAddrs) ->
             State
     end.
 
-collect_status_data([], Data, _E) ->
+collect_status_data([], _Timeout, Data, _E) ->
     Data;
-collect_status_data([Key | Rest], Data, E) ->
+collect_status_data([Key | Rest], Timeout, Data, E) ->
     Pid = dict:fetch(Key, E),
-    NewData = [riak_repl2_rtsource_conn:status(Pid) | Data],
-    collect_status_data(Rest, NewData, E).
+    NewData = [riak_repl2_rtsource_conn:status(Pid, Timeout) | Data],
+    collect_status_data(Rest, Timeout, NewData, E).
