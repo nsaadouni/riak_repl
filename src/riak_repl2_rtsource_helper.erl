@@ -67,7 +67,7 @@ handle_call({pull, {error, {terminate, normal}}}, _From, State) ->
 handle_call({pull, {error, Reason}}, _From, State) ->
     riak_repl_stats:rt_source_errors(),
     {stop, {queue_error, Reason}, ok, State};
-handle_call({pull, {Seq, NumObjects, _BinObjs, _Meta, _} = Entry}, From,
+handle_call({pull, {Seq, NumObjects, _BinObjs, _Meta} = Entry}, From,
     State = #state{transport = T, socket = S, objects = Objects}) ->
     %% unblock the rtq as fast as possible
     gen_server:reply(From, ok),
