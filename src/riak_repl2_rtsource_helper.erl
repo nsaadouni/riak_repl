@@ -67,7 +67,7 @@ handle_call({pull, {error, {terminate, normal}}}, _From, State) ->
 handle_call({pull, {error, Reason}}, _From, State) ->
     riak_repl_stats:rt_source_errors(),
     {stop, {queue_error, Reason}, ok, State};
-handle_call({pull, {Seq, NumObjects, _BinObjs, _Meta} = Entry}, From,
+handle_call({pull, {Seq, NumObjects, _BinObjs, _Meta, _} = Entry}, From,
     State = #state{transport = T, socket = S, objects = Objects}) ->
     %% unblock the rtq as fast as possible
     gen_server:reply(From, ok),
@@ -119,7 +119,7 @@ async_pull(_State=#state{remote = Remote, deliver_fun = Deliver}) ->
     riak_repl2_rtq:pull(Remote, Deliver).
 
 maybe_send(Transport, Socket, QEntry, State) ->
-    {_Seq, _NumObjects, _BinObjs, Meta} = QEntry,
+    {_Seq, _NumObjects, _BinObjs, Meta, _} = QEntry,
     #state{remote = Remote} = State,
     Routed = get_routed(Meta),
     case lists:member(Remote, Routed) of
@@ -149,7 +149,7 @@ encode_and_send(QEntry, Remote, Transport, Socket, State) ->
     State2.
 
 
-encode({Seq, _NumObjs, BinObjs, Meta}, State = #state{proto = Ver}) when Ver < {2,0} ->
+encode({Seq, _NumObjs, BinObjs, Meta, _}, State = #state{proto = Ver}) when Ver < {2,0} ->
     Skips = orddict:fetch(skip_count, Meta),
     Offset = State#state.v1_offset + Skips,
     Seq2 = Seq - Offset,
@@ -158,7 +158,7 @@ encode({Seq, _NumObjs, BinObjs, Meta}, State = #state{proto = Ver}) when Ver < {
     Encoded = riak_repl2_rtframe:encode(objects, {Seq2, BinObjs2}),
     State2 = State#state{v1_offset = Offset, v1_seq_map = V1Map},
     {Encoded, State2};
-encode({Seq, _NumbOjbs, BinObjs, Meta}, State = #state{proto = Ver}) when Ver >= {2,0} ->
+encode({Seq, _NumbOjbs, BinObjs, Meta, _}, State = #state{proto = Ver}) when Ver >= {2,0} ->
     {riak_repl2_rtframe:encode(objects_and_meta, {Seq, BinObjs, Meta}), State}.
 
 get_routed(Meta) ->
@@ -170,7 +170,7 @@ meta_get(Key, Default, Meta) ->
         {ok, Value} -> Value
     end.
 
-merge_forwards_and_routed_meta({_, _, _, Meta} = QEntry, Remote) ->
+merge_forwards_and_routed_meta({_, _, _, Meta, _} = QEntry, Remote) ->
     LocalForwards = meta_get(local_forwards, [Remote], Meta),
     Routed = meta_get(routed_clusters, [], Meta),
     Self = riak_core_connection:symbolic_clustername(),

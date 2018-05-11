@@ -40,7 +40,9 @@
          all_queues_empty/0,
          shutdown/0,
          stop/0,
-         is_running/0]).
+         is_running/0,
+         update_filtered_bucket_state/1,
+         update_filtered_buckets_list/1]).
 % private api
 -export([report_drops/1]).
 
@@ -70,7 +72,9 @@
                 cs = [],
                 shutting_down=false,
                 qsize_bytes = 0,
-                word_size=erlang:system_info(wordsize)
+                word_size=erlang:system_info(wordsize),
+                filtered_buckets_enabled = false, % is bucket filtering enabled?
+                filtered_buckets = []
                }).
 
 % Consumers
@@ -86,7 +90,8 @@
             % been dropped since the last delivery. The sink side can't
             % determine if there's been drops accurately if the source says there
             % were skips before it's sent even one item.
-            last_seen
+            filtered = 0,
+            last_seen  % a timestamp of when we received the last ack to measure latency
            }).
 
 -type name() :: term().
@@ -299,9 +304,10 @@ handle_call(status, _From, State = #state{qtab = QTab, max_bytes = MaxBytes,
         [{Name, [{pending, QSeq - CSeq},  % items to be send
                  {unacked, CSeq - ASeq - Skips},  % sent items requiring ack
                  {drops, Drops},          % number of dropped entries due to max bytes
-                 {errs, Errs}]}           % number of non-ok returns from deliver fun
+                 {errs, Errs},            % number of non-ok returns from deliver fun
+                 {filtered, Filters}]}    % number of objects filtered
          || #c{name = Name, aseq = ASeq, cseq = CSeq,
-               drops = Drops, errs = Errs, skips = Skips} <- Cs],
+               drops = Drops, errs = Errs, skips = Skips, filtered = Filters} <- Cs],
 
     ConsumerStats = lists:foldl(fun(ConsumerName, Acc) ->
                                     MetricName = {latency, ConsumerName},
@@ -425,7 +431,16 @@ handle_call({push, NumItems, Bin, Meta}, _From, State) ->
     {reply, ok, push(NumItems, Bin, Meta, State2)};
 
 handle_call({ack_sync, Name, Seq, Ts}, _From, State) ->
-    {reply, ok, ack_seq(Name, Seq, Ts, State)}.
+    {reply, ok, ack_seq(Name, Seq, Ts, State)};
+
+handle_call({filtered_buckets, update_bucket_filtering_state, Enabled}, _From, State) when is_boolean(Enabled) ->
+    {reply, ok, State#state{filtered_buckets_enabled = Enabled}};
+handle_call({filtered_buckets, update_bucket_filtering_state, InvalidState}, _From, State) ->
+    lager:warning("[~s] invalid value of bucket filtering enabled: '~p'~n", [?MODULE, InvalidState]),
+    {reply, ok, State};
+
+handle_call({filtered_buckets, update_buckets, BucketList}, _From, State) ->
+    {reply, ok, State#state{filtered_buckets = BucketList}}.
 
 % ye previous cast. rtq_proxy may send us an old pattern.
 handle_cast({push, NumItems, Bin}, State) ->
@@ -458,8 +473,7 @@ record_consumer_latency(Name, OldLastSeen, SeqNumber, NewTimestamp) ->
         _ ->
             % Don't log for a non-matching seq number
             skip
-    end,
-    {SeqNumber, NewTimestamp}.
+    end.
 
 ack_seq(Name, Seq, NewTs, State = #state{qtab = QTab, qseq = QSeq, cs = Cs}) ->
     %% Scan through the clients, updating Name for Seq and also finding the minimum
@@ -468,8 +482,8 @@ ack_seq(Name, Seq, NewTs, State = #state{qtab = QTab, qseq = QSeq, cs = Cs}) ->
                         fun(C, {Cs2, MinSeq2}) ->
                                 case {C#c.name, C#c.last_seen} of
                                     {Name, LastSeen} ->
-                                        NewLastSeen = record_consumer_latency(Name, LastSeen, Seq, NewTs),
-                                        {[C#c{aseq = Seq, last_seen = NewLastSeen} | Cs2], min(Seq, MinSeq2)};
+                                        record_consumer_latency(Name, LastSeen, Seq, NewTs),
+                                        {[C#c{aseq = Seq} | Cs2], min(Seq, MinSeq2)};
                                     _ ->
                                         {[C | Cs2], min(C#c.aseq, MinSeq2)}
                                 end
@@ -549,23 +563,63 @@ unregister_q(Name, State = #state{qtab = QTab, cs = Cs}) ->
             {{error, not_registered}, State}
     end.
 
+-spec filter_consumers(Enabled :: boolean(), AllConsumers :: [list()], BucketConfig :: {binary(), list(list())}, Buckets :: [binary()]) -> [list()].
+filter_consumers(_, AllConsumers, undefined, _) -> AllConsumers;
+filter_consumers(false, AllConsumers, _, _) -> AllConsumers;
+filter_consumers(true, AllConsumers, _, []) -> AllConsumers;
+filter_consumers(true, AllConsumers, {BucketName, _}, Buckets) ->
+    case lists:keyfind(BucketName, 1, Buckets) of
+        false ->
+            % If we can't find config, then we send everywhere
+            AllConsumers;
+        {BucketName, Clusters} ->
+            [Consumer || Consumer <- AllConsumers, allowed_to_route(Consumer, Clusters) ]
+    end;
+filter_consumers(_, AllConsumers, _, _) -> AllConsumers.
+
+%% Buckets -> {Bucket, [Consumers_names]}
+config_for_bucket(Bucket, Buckets) ->
+    case lists:keyfind(Bucket, 1, Buckets) of
+        false -> [];
+        {_, Clusters} -> Clusters
+    end.
+
 push(NumItems, Bin, Meta, State = #state{qtab = QTab,
                                          qseq = QSeq,
                                          cs = Cs,
-                                         shutting_down = false}) ->
+                                         shutting_down = false,
+                                         filtered_buckets_enabled = FEnabled,
+                                         filtered_buckets = Buckets}) ->
     QSeq2 = QSeq + 1,
-    QEntry = {QSeq2, NumItems, Bin, Meta},
-    %% Send to any pending consumers
-    CsNames = [Consumer#c.name || Consumer <- Cs],
-    QEntry2 = set_local_forwards_meta(CsNames, QEntry),
-    DeliverAndCs2 = [maybe_deliver_item(C, QEntry2) || C <- Cs],
+
+    {NewMeta, BucketConfig} =
+        case orddict:find(bucket_name, Meta) of
+            {ok, BucketName} ->
+                BucketConfig2 = config_for_bucket(BucketName, Buckets),
+                NewMeta2 = orddict:erase(bucket_name, Meta),
+                {NewMeta2, {BucketName, BucketConfig2}};
+            error ->
+                {Meta, undefined}
+        end,
+
+    QEntry = {QSeq2, NumItems, Bin, NewMeta, BucketConfig},
+
+    AllConsumers = [Consumer#c.name || Consumer <- Cs],
+
+    FilteredConsumers = filter_consumers(FEnabled, AllConsumers, BucketConfig, Buckets),
+
+    QEntry2 = set_local_forwards_meta(FilteredConsumers, QEntry),
+
+    % Deliver to all, but skip if needed
+    DeliverAndCs2 = [maybe_deliver_item(C, QEntry2, FEnabled) || C <- Cs],
+
     {DeliverResults, Cs2} = lists:unzip(DeliverAndCs2),
     AllSkipped = lists:all(fun
         (skipped) -> true;
         (_) -> false
     end, DeliverResults),
     State2 = if
-        AllSkipped andalso length(Cs) > 0 ->
+        AllSkipped andalso length(FilteredConsumers) > 0 ->
             State;
         true ->
             ets:insert(QTab, QEntry2),
@@ -577,11 +631,11 @@ push(NumItems, Bin, Meta, State = #state{shutting_down = true}) ->
     riak_repl2_rtq_proxy:push(NumItems, Bin, Meta),
     State.
 
-pull(Name, DeliverFun, State = #state{qtab = QTab, qseq = QSeq, cs = Cs}) ->
-    CsNames = [Consumer#c.name || Consumer <- Cs],
+pull(Name, DeliverFun, State = #state{qtab = QTab, qseq = QSeq, cs = Cs, filtered_buckets_enabled = FEnabled, filtered_buckets = FilterBuckets}) ->
+    CsNames = [C#c.name || C <- Cs],
      UpdCs = case lists:keytake(Name, #c.name, Cs) of
                 {value, C, Cs2} ->
-                    [maybe_pull(QTab, QSeq, C, CsNames, DeliverFun) | Cs2];
+                    [maybe_pull(QTab, QSeq, C, CsNames, DeliverFun, FEnabled, FilterBuckets) | Cs2];
                 false ->
                     lager:error("Consumer ~p pulled from RTQ, but was not registered", [Name]),
                     deliver_error(DeliverFun, not_registered),
@@ -589,23 +643,51 @@ pull(Name, DeliverFun, State = #state{qtab = QTab, qseq = QSeq, cs = Cs}) ->
             end,
     State#state{cs = UpdCs}.
 
-maybe_pull(QTab, QSeq, C = #c{cseq = CSeq}, CsNames, DeliverFun) ->
+%% @doc check if the given remote name is allowed to be routed to when bucket filtering is enabled
+-spec allowed_to_route(list(), [list()]) -> boolean().
+allowed_to_route(RemoteName, RemoteNames) ->
+    RemoteName == "qm" orelse lists:member(RemoteName, RemoteNames).
+
+maybe_pull(QTab, QSeq, C = #c{cseq = CSeq, name = CName}, CsNames, DeliverFun, FilteringEnabled, FilteredBuckets) ->
     CSeq2 = CSeq + 1,
     case CSeq2 =< QSeq of
         true -> % something reday
             case ets:lookup(QTab, CSeq2) of
                 [] -> % entry removed, due to previously being unroutable
                     C2 = C#c{skips = C#c.skips + 1, cseq = CSeq2},
-                    maybe_pull(QTab, QSeq, C2, CsNames, DeliverFun);
+                    maybe_pull(QTab, QSeq, C2, CsNames, DeliverFun, FilteringEnabled, FilteredBuckets);
                 [QEntry] ->
-                    QEntry2 = set_local_forwards_meta(CsNames, QEntry),
-                    % if the item can't be delivered due to cascading rt,
-                    % just keep trying.
-                    case maybe_deliver_item(add_deliver_fun(DeliverFun, C), QEntry2) of
-                        {skipped, C2} ->
-                            maybe_pull(QTab, QSeq, C2, CsNames, DeliverFun);
-                        {_WorkedOrNoFun, C2} ->
-                            C2
+                    % BucketConfig can be {_BucketName, AllowedRemotes} or undefined - we need to handle when
+                    % old items come into the queue
+                    {_, _, _, _, BucketConfig} = QEntry,
+                    FilteredCsNames = filter_consumers(FilteringEnabled, CsNames, BucketConfig, FilteredBuckets),
+                    QEntry2 = set_local_forwards_meta(FilteredCsNames, QEntry),
+
+                    case BucketConfig of
+                        {_, Config} when Config /= [] ->
+                            case allowed_to_route(CName, Config) of
+                                true ->
+                                    % if the item can't be delivered due to cascading rt,
+                                    % just keep trying.
+                                    case maybe_deliver_item(add_deliver_fun(DeliverFun, C), QEntry2, FilteringEnabled) of
+                                        {skipped, C2} ->
+                                            maybe_pull(QTab, QSeq, C2, CsNames, DeliverFun, FilteringEnabled, FilteredBuckets);
+                                        {_WorkedOrNoFun, C2} ->
+                                            C2
+                                    end;
+                                false ->
+                                    %% not removing any deliver function as we have purposely not used it
+                                    C#c{skips = 0, cseq = CSeq2, delivered = true}
+                            end;
+                        _ ->
+                            % if the item can't be delivered due to cascading rt,
+                            % just keep trying.
+                            case maybe_deliver_item(add_deliver_fun(DeliverFun, C), QEntry2, FilteringEnabled) of
+                                {skipped, C2} ->
+                                    maybe_pull(QTab, QSeq, C2, CsNames, DeliverFun, FilteringEnabled, FilteredBuckets);
+                                {_WorkedOrNoFun, C2} ->
+                                    C2
+                            end
                     end
             end;
         false ->
@@ -614,8 +696,30 @@ maybe_pull(QTab, QSeq, C = #c{cseq = CSeq}, CsNames, DeliverFun) ->
             add_deliver_fun(DeliverFun, C)
     end.
 
-maybe_deliver_item(C = #c{deliver = []}, QEntry) ->
-    {_Seq, _NumItem, _Bin, Meta} = QEntry,
+% We can't filter if bucket filtering is disabled or if the bucket config is undefined
+filter_if_enabled(true, Name, {_Bucket, AllowedRemotes} = _BucketConfig) ->
+    case allowed_to_route(Name, AllowedRemotes) of
+        true -> no_fun;
+        false -> filtered
+    end;
+filter_if_enabled(_, _, _) ->
+    no_fun.
+
+deliver_if_can_route(false, Consumer, QEntry) ->
+    {delivered, deliver_item(Consumer, get_delivery_fun(Consumer#c.deliver), QEntry)};
+deliver_if_can_route(true, Consumer, {Seq, _NumItem, _Bin, _Meta, {_Bucket, Remotes}} = QEntry) ->
+    case allowed_to_route(Consumer#c.name, Remotes) of
+        true ->
+            {delivered, deliver_item(Consumer, get_delivery_fun(Consumer#c.deliver), QEntry)};
+        false ->
+            {filtered, Consumer#c{cseq = Seq, aseq = Seq, filtered = Consumer#c.filtered + 1, delivered = true, skips=0}}
+    end;
+deliver_if_can_route(_, Consumer, QEntry) ->
+    {delivered, deliver_item(Consumer, get_delivery_fun(Consumer#c.deliver), QEntry)}.
+
+maybe_deliver_item(C = #c{deliver = []}, QEntry, FilteringEnabled) ->
+    {_Seq, _NumItem, _Bin, Meta, BucketConfig} = QEntry,
+
     Name = C#c.name,
     Routed = case orddict:find(routed_clusters, Meta) of
         error -> [];
@@ -625,11 +729,11 @@ maybe_deliver_item(C = #c{deliver = []}, QEntry) ->
         true ->
             skipped;
         false ->
-            no_fun
+            filter_if_enabled(FilteringEnabled, Name, BucketConfig)
     end,
     {Cause, C};
-maybe_deliver_item(C, QEntry) ->
-    {Seq, _NumItem, _Bin, Meta} = QEntry,
+maybe_deliver_item(C, QEntry, FilteringEnabled) ->
+    {Seq, _NumItem, _Bin, Meta, _BucketConfig} = QEntry,
     #c{name = Name} = C,
     Routed = case orddict:find(routed_clusters, Meta) of
         error -> [];
@@ -642,16 +746,16 @@ maybe_deliver_item(C, QEntry) ->
         true ->
             {skipped, C#c{cseq = Seq, aseq = Seq}};
         false ->
-            {delivered, deliver_item(C, get_delivery_fun(C#c.deliver), QEntry)}
+            deliver_if_can_route(FilteringEnabled, C, QEntry)
     end.
 
-deliver_item(C, DeliverFun, {Seq, _NumItem, _Bin, _Meta} = QEntry) ->
+deliver_item(C, DeliverFun, {Seq, _NumItem, _Bin, _Meta, _} = QEntry) ->
   [_ | Rest] = C#c.deliver,
     try
         Seq = C#c.cseq + 1, % bit of paranoia, remove after EQC
         QEntry2 = set_skip_meta(QEntry, Seq, C),
         ok = DeliverFun(QEntry2),
-        C#c{cseq = Seq, deliver = Rest, delivered = true, skips = 0}
+        C#c{cseq = Seq, deliver = Rest, delivered = true, skips = 0, last_seen = {Seq, os:timestamp()}}
     catch
         Type:Error ->
             lager:warning("did not deliver object back to rtsource_helper, Reason: {~p,~p}", [Type, Error]),
@@ -677,7 +781,7 @@ set_skip_meta(QEntry, _Seq, _C = #c{skips = S}) ->
 set_local_forwards_meta(LocalForwards, QEntry) ->
     set_meta(QEntry, local_forwards, LocalForwards).
 
-set_meta({_Seq, _NumItems, _Bin, Meta} = QEntry, Key, Value) ->
+set_meta({_Seq, _NumItems, _Bin, Meta, _} = QEntry, Key, Value) ->
     Meta2 = orddict:store(Key, Value, Meta),
     setelement(4, QEntry, Meta2).
 
@@ -687,7 +791,7 @@ cleanup(_QTab, '$end_of_table', State) ->
 cleanup(QTab, Seq, State) ->
     case ets:lookup(QTab, Seq) of
         [] -> cleanup(QTab, ets:prev(QTab, Seq), State);
-        [{_, _, Bin, _Meta}] ->
+        [{_, _, Bin, _Meta, _}] ->
            ShrinkSize = ets_obj_size(Bin, State),
            NewState = update_q_size(State, -ShrinkSize),
            ets:delete(QTab, Seq),
@@ -756,7 +860,7 @@ trim_q_entries(QTab, MaxBytes, Cs, State, Entries, Objects) ->
         '$end_of_table' ->
             {Cs, State, Entries, Objects};
         TrimSeq ->
-            [{_, NumObjects, Bin, _Meta}] = ets:lookup(QTab, TrimSeq),
+            [{_, NumObjects, Bin, _Meta, _}] = ets:lookup(QTab, TrimSeq),
             ShrinkSize = ets_obj_size(Bin, State),
             NewState = update_q_size(State, -ShrinkSize),
             ets:delete(QTab, TrimSeq),
@@ -777,23 +881,24 @@ trim_q_entries(QTab, MaxBytes, Cs, State, Entries, Objects) ->
             end
     end.
 
+update_filtered_bucket_state(Enabled) ->
+    gen_server:call(?SERVER, {filtered_buckets, update_bucket_filtering_state, Enabled}).
+
+update_filtered_buckets_list(FilteringConfig) ->
+    gen_server:call(?SERVER, {filtered_buckets, update_buckets, FilteringConfig}).
 
 get_delivery_fun(DeliverFunList) ->
-  case DeliverFunList of
-    [] ->
-      undefined;
-    _ ->
-      hd(DeliverFunList)
-  end.
-
+    case DeliverFunList of
+        [] ->
+            undefined;
+        _ ->
+            hd(DeliverFunList)
+    end.
 
 add_deliver_fun(DeliverFun, C) ->
-  DeliverFunList = C#c.deliver,
-  NewList = lists:append(DeliverFunList, [DeliverFun]),
-  C#c{deliver = NewList}.
-
-
-
+    DeliverFunList = C#c.deliver,
+    NewList = lists:append(DeliverFunList, [DeliverFun]),
+    C#c{deliver = NewList}.
 
 -ifdef(TEST).
 qbytes(_QTab, #state{qsize_bytes = QSizeBytes}) ->
