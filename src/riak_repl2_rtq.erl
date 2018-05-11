@@ -453,13 +453,13 @@ handle_cast({ack, Name, Seq, Ts}, State) ->
 
 record_consumer_latency(Name, OldLastSeen, SeqNumber, NewTimestamp) ->
     case OldLastSeen of
-        {SeqNumber, OldTimestamp} ->
+        {OldSeqNumber, OldTimestamp} when SeqNumber == OldSeqNumber+1 ->
             folsom_metrics:notify({{latency, Name}, abs(timer:now_diff(NewTimestamp, OldTimestamp))});
         _ ->
             % Don't log for a non-matching seq number
             skip
     end,
-    {SeqNumber, os:timestamp()}.
+    {SeqNumber, NewTimestamp}.
 
 ack_seq(Name, Seq, NewTs, State = #state{qtab = QTab, qseq = QSeq, cs = Cs}) ->
     %% Scan through the clients, updating Name for Seq and also finding the minimum
