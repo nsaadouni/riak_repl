@@ -243,8 +243,7 @@ handle_cast(Msg = {write_realtime_connections, Remote, Node, IPPort, Primary}, S
 handle_cast(Msg = {write_realtime_connections, Remote, Node, ConnectionList}, State = #state{connections = C}) ->
     case State#state.is_leader of
         true ->
-            lager:info("data_mgr is leader writing -> ~p
-      node = ~p", [Msg, node()]),
+            lager:info("data_mgr is leader writing -> ~p node = ~p", [Msg, node()]),
             OldRemoteDict = get_value(Remote, C, dictionary),
             NewRemoteDict = dict:store(Node, ConnectionList, OldRemoteDict),
             NewConnections = dict:store(Remote, NewRemoteDict, C),
@@ -263,8 +262,7 @@ handle_cast(Msg = {write_realtime_connections, Remote, Node, ConnectionList}, St
 handle_cast(Msg = {restore_realtime_connections, Remote, Node, ConnectionList}, State = #state{connections = C}) ->
     case State#state.is_leader of
         true ->
-            lager:info("data_mgr is leader writing -> ~p
-      node = ~p", [Msg, node()]),
+            lager:info("data_mgr is leader writing -> ~p node = ~p", [Msg, node()]),
 
             OldRemoteDict = get_value(Remote, C, dictionary),
             OldConns = get_value(Node, OldRemoteDict, list),

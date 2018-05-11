@@ -393,7 +393,7 @@ handle_call(dumpq, _From, State = #state{qtab = QTab}) ->
     {reply, ets:tab2list(QTab), State};
 
 handle_call(summarize, _From, State = #state{qtab = QTab}) ->
-    Fun = fun({Seq, _NumItems, Bin, _Meta}, Acc) ->
+    Fun = fun({Seq, _NumItems, Bin, _Meta, _}, Acc) ->
         Obj = riak_repl_util:from_wire(Bin),
         {Key, Size} = summarize_object(Obj),
         Acc ++ [{Seq, Key, Size}]
@@ -405,7 +405,7 @@ handle_call({evict, Seq}, _From, State = #state{qtab = QTab}) ->
     {reply, ok, State};
 handle_call({evict, Seq, Key}, _From, State = #state{qtab = QTab}) ->
     case ets:lookup(QTab, Seq) of
-        [{Seq, _, Bin, _}] ->
+        [{Seq, _, Bin, _, _}] ->
             Obj = riak_repl_util:from_wire(Bin),
             case Key =:= riak_object:key(Obj) of
                 true ->
@@ -468,7 +468,7 @@ handle_cast({ack, Name, Seq, Ts}, State) ->
 
 record_consumer_latency(Name, OldLastSeen, SeqNumber, NewTimestamp) ->
     case OldLastSeen of
-        {OldSeqNumber, OldTimestamp} when SeqNumber == OldSeqNumber+1 ->
+        {SeqNumber, OldTimestamp} ->
             folsom_metrics:notify({{latency, Name}, abs(timer:now_diff(NewTimestamp, OldTimestamp))});
         _ ->
             % Don't log for a non-matching seq number
@@ -755,7 +755,12 @@ deliver_item(C, DeliverFun, {Seq, _NumItem, _Bin, _Meta, _} = QEntry) ->
         Seq = C#c.cseq + 1, % bit of paranoia, remove after EQC
         QEntry2 = set_skip_meta(QEntry, Seq, C),
         ok = DeliverFun(QEntry2),
-        C#c{cseq = Seq, deliver = Rest, delivered = true, skips = 0, last_seen = {Seq, os:timestamp()}}
+        case Seq rem app_helper:get_env(riak_repl, rtq_latency_interval, 1000) of
+            0 ->
+                C#c{cseq = Seq, deliver = Rest, delivered = true, skips = 0, last_seen = {Seq, os:timestamp()}};
+            _ ->
+                C#c{cseq = Seq, deliver = Rest, delivered = true, skips = 0}
+        end
     catch
         Type:Error ->
             lager:warning("did not deliver object back to rtsource_helper, Reason: {~p,~p}", [Type, Error]),
