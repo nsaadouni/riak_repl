@@ -545,11 +545,12 @@ unregister_q(Name, State = #state{qtab = QTab, cs = Cs}) ->
         {value, C, Cs2} ->
             %% Remove C from Cs, let any pending process know
             %% and clean up the queue
-            case get_delivery_fun(C#c.deliver) of
-                undefined ->
+            case C#c.deliver of
+                [] ->
                     ok;
-                DeliverFun ->
-                    deliver_error(DeliverFun, {error, unregistered})
+                _ ->
+                    DList = [DeliverFunList || #c{deliver = DeliverFunList} <- Cs],
+                    _ = [deliver_error(DeliverFun, {error, unregistered}) || DeliverFun <- lists:flatten(DList)]
             end,
             MinSeq = case Cs2 of
                          [] ->
@@ -638,7 +639,8 @@ pull(Name, DeliverFun, State = #state{qtab = QTab, qseq = QSeq, cs = Cs, filtere
                     [maybe_pull(QTab, QSeq, C, CsNames, DeliverFun, FEnabled, FilterBuckets) | Cs2];
                 false ->
                     lager:error("Consumer ~p pulled from RTQ, but was not registered", [Name]),
-                    deliver_error(DeliverFun, not_registered),
+                    DList = [DeliverFunList || #c{deliver = DeliverFunList} <- Cs],
+                    _ = [deliver_error(DeliverFun, not_registered) || DeliverFun <- lists:flatten(DList)],
                     Cs
             end,
     State#state{cs = UpdCs}.
