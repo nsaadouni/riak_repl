@@ -48,12 +48,13 @@
 -define(SERVER, ?MODULE).
 -define(DEFAULT_OVERLOAD, 2000).
 -define(DEFAULT_RECOVER, 1000).
+-define(DEFAULT_RTQ_LATENCY_SLIDING_WINDOW, 300).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
--record(state, {qtab = ets:new(?MODULE, [private, ordered_set]), % ETS table
+-record(state, {qtab = ets:new(?MODULE, [protected, ordered_set]), % ETS table
                 qseq = 0,  % Last sequence number handed out
                 max_bytes = undefined, % maximum ETS table memory usage in bytes
 
@@ -80,11 +81,12 @@
             drops = 0, % number of dropped queue entries (not items)
             errs = 0,  % delivery errors
             deliver = [],  % deliver functions if pending, otherwise undefined
-            delivered = false  % used by the skip count.
+            delivered = false,  % used by the skip count.
             % skip_count is used to help the sink side determine if an item has
             % been dropped since the last delivery. The sink side can't
             % determine if there's been drops accurately if the source says there
             % were skips before it's sent even one item.
+            last_seen
            }).
 
 -type name() :: term().
@@ -199,12 +201,12 @@ pull_sync(Name, DeliverFun) ->
 %% equal or lower to Seq for the consumer.
 -spec ack(Name :: name(), Seq :: pos_integer()) -> 'ok'.
 ack(Name, Seq) ->
-    gen_server:cast(?SERVER, {ack, Name, Seq}).
+    gen_server:cast(?SERVER, {ack, Name, Seq, os:timestamp()}).
 
 %% @doc Same as `ack/2', but blocks the caller.
 -spec ack_sync(Name :: name(), Seq :: pos_integer()) ->'ok'.
 ack_sync(Name, Seq) ->
-    gen_server:call(?SERVER, {ack_sync, Name, Seq}, infinity).
+    gen_server:call(?SERVER, {ack_sync, Name, Seq, os:timestamp()}, infinity).
 
 %% @doc The status of the queue.
 %% <dl>
@@ -300,11 +302,23 @@ handle_call(status, _From, State = #state{qtab = QTab, max_bytes = MaxBytes,
                  {errs, Errs}]}           % number of non-ok returns from deliver fun
          || #c{name = Name, aseq = ASeq, cseq = CSeq,
                drops = Drops, errs = Errs, skips = Skips} <- Cs],
+
+    ConsumerStats = lists:foldl(fun(ConsumerName, Acc) ->
+                                    MetricName = {latency, ConsumerName},
+                                    case folsom_metrics:metric_exists(MetricName) of
+                                        true ->
+                                            Acc ++ [{ConsumerName, folsom_metrics:get_histogram_statistics(MetricName)}];
+                                        false ->
+                                            Acc
+                                    end
+                                end, [], [ C#c.name || C <- Cs ]),
+
     Status =
         [{bytes, qbytes(QTab, State)},
          {max_bytes, MaxBytes},
          {consumers, Consumers},
-         {overload_drops, State#state.overload_drops}],
+         {overload_drops, State#state.overload_drops},
+         {consumer_latency, ConsumerStats}],
     {reply, Status, State};
 
 handle_call(shutting_down, _From, State = #state{shutting_down=false}) ->
@@ -349,10 +363,19 @@ handle_call({register, Name}, _From, State = #state{qtab = QTab, qseq = QSeq, cs
             CSeq = MinSeq,
             UpdCs = [#c{name = Name, aseq = CSeq, cseq = CSeq} | Cs]
     end,
+
+    RTQSlidingWindow = app_helper:get_env(riak_repl, rtq_latency_window, ?DEFAULT_RTQ_LATENCY_SLIDING_WINDOW),
+    case folsom_metrics:metric_exists({latency, Name}) of
+        true -> skip;
+        false ->
+            folsom_metrics:new_histogram({latency, Name}, slide, RTQSlidingWindow)
+    end,
+
     {reply, {ok, CSeq}, State#state{cs = UpdCs}};
 handle_call({unregister, Name}, _From, State) ->
     case unregister_q(Name, State) of
         {ok, NewState} ->
+            catch folsom_metrics:delete_metric({latency, Name}),
             {reply, ok, NewState};
         {{error, not_registered}, State} ->
             {reply, {error, not_registered}, State}
@@ -401,8 +424,8 @@ handle_call({push, NumItems, Bin, Meta}, _From, State) ->
     State2 = maybe_flip_overload(State),
     {reply, ok, push(NumItems, Bin, Meta, State2)};
 
-handle_call({ack_sync, Name, Seq}, _From, State) ->
-    {reply, ok, ack_seq(Name, Seq, State)}.
+handle_call({ack_sync, Name, Seq, Ts}, _From, State) ->
+    {reply, ok, ack_seq(Name, Seq, Ts, State)}.
 
 % ye previous cast. rtq_proxy may send us an old pattern.
 handle_cast({push, NumItems, Bin}, State) ->
@@ -425,17 +448,28 @@ handle_cast({report_drops, N}, State) ->
 handle_cast({pull, Name, DeliverFun}, State) ->
      {noreply, pull(Name, DeliverFun, State)};
 
-handle_cast({ack, Name, Seq}, State) ->
-       {noreply, ack_seq(Name, Seq, State)}.
+handle_cast({ack, Name, Seq, Ts}, State) ->
+       {noreply, ack_seq(Name, Seq, Ts, State)}.
 
-ack_seq(Name, Seq, State = #state{qtab = QTab, qseq = QSeq, cs = Cs}) ->
+record_consumer_latency(Name, OldLastSeen, SeqNumber, NewTimestamp) ->
+    case OldLastSeen of
+        {SeqNumber, OldTimestamp} ->
+            folsom_metrics:notify({{latency, Name}, abs(timer:now_diff(NewTimestamp, OldTimestamp))});
+        _ ->
+            % Don't log for a non-matching seq number
+            skip
+    end,
+    {SeqNumber, os:timestamp()}.
+
+ack_seq(Name, Seq, NewTs, State = #state{qtab = QTab, qseq = QSeq, cs = Cs}) ->
     %% Scan through the clients, updating Name for Seq and also finding the minimum
     %% sequence
     {UpdCs, MinSeq} = lists:foldl(
                         fun(C, {Cs2, MinSeq2}) ->
-                                case C#c.name of
-                                    Name ->
-                                        {[C#c{aseq = Seq} | Cs2], min(Seq, MinSeq2)};
+                                case {C#c.name, C#c.last_seen} of
+                                    {Name, LastSeen} ->
+                                        NewLastSeen = record_consumer_latency(Name, LastSeen, Seq, NewTs),
+                                        {[C#c{aseq = Seq, last_seen = NewLastSeen} | Cs2], min(Seq, MinSeq2)};
                                     _ ->
                                         {[C | Cs2], min(C#c.aseq, MinSeq2)}
                                 end
