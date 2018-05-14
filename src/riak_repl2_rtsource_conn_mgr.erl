@@ -546,7 +546,7 @@ remove_connections([], E, _, _) ->
 remove_connections([Key={Addr, Primary} | Rest], E, Remote, Version) ->
     RtSourcePid = dict:fetch(Key, E),
     exit(RtSourcePid, {shutdown, rebalance, Key}),
-    lager:info("rtsource_conn is killed", [Key]),
+    lager:info("rtsource_conn is killed ~p", [Key]),
     case Version of
         legacy ->
             ok;
