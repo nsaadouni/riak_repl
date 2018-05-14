@@ -23,7 +23,8 @@
     get_all_status/2,
     get_source_and_sink_nodes/1,
     get_endpoints/1,
-    get_rtsource_conn_pids/1
+    get_rtsource_conn_pids/1,
+    upgrade_connection_version/1
 ]).
 
 -define(SERVER, ?MODULE).
@@ -37,12 +38,12 @@
     {active, false}]).
 
 -record(state, {
+    version,
     remote, % remote sink cluster name
     connection_ref, % reference handed out by connection manager
     rb_timeout_tref, % Rebalance timeout timer reference
     rebalance_delay_fun,
     max_delay,
-    kill_time,
     source_nodes,
     sink_nodes,
     remove_endpoint,
@@ -81,6 +82,9 @@ get_endpoints(Pid) ->
 get_rtsource_conn_pids(Pid) ->
     gen_server:call(Pid, get_rtsource_conn_pids).
 
+upgrade_connection_version(Pid) ->
+    gen_server:cast(Pid, upgrade_connection_version).
+
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -88,35 +92,45 @@ get_rtsource_conn_pids(Pid) ->
 
 
 init([Remote]) ->
-
     process_flag(trap_exit, true),
-    riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, Remote, node(), []),
-    case riak_core_connection_mgr:connect({rt_repl, Remote}, ?CLIENT_SPEC, multi_connection) of
-        {ok, Ref} ->
-            _ = riak_repl2_rtq:register(Remote), % re-register to reset stale deliverfun
-            E = dict:new(),
-            MaxDelaySecs = app_helper:get_env(riak_repl, realtime_connection_rebalance_max_delay_secs, 120),
-            M = fun(X) -> round(X * crypto:rand_uniform(0, 1000)) end,
-            {SourceNodes, SinkNodes} = case get_source_and_sink_nodes(Remote) of
-                                           no_leader ->
-                                               {[], []};
-                                           {X,Y} ->
-                                               {X,Y}
-                                       end,
 
-            KillTimeSecs = app_helper:get_env(riak_repl, realtime_connection_removal_delay, 60),
-            KillTime = KillTimeSecs * 1000,
+    _ = riak_repl2_rtq:register(Remote), % re-register to reset stale deliverfun
+    E = dict:new(),
+    MaxDelaySecs = app_helper:get_env(riak_repl, realtime_connection_rebalance_max_delay_secs, 120),
+    M = fun(X) -> round(X * crypto:rand_uniform(0, 1000)) end,
 
-            {ok, #state{remote = Remote, connection_ref = Ref, endpoints = E, rebalance_delay_fun = M,
-                max_delay=MaxDelaySecs, source_nodes = SourceNodes, sink_nodes = SinkNodes, kill_time = KillTime}};
-        {error, Reason}->
-            lager:warning("Error connecting to remote"),
-            {stop, Reason}
+    case riak_core_capability:get({riak_repl, realtime_connections}, legacy) of
+        legacy ->
+            case riak_core_connection_mgr:connect({rt_repl, Remote}, ?CLIENT_SPEC, legacy) of
+                {ok, Ref} ->
+                    {ok, #state{version = legacy, remote = Remote, connection_ref = Ref, endpoints = E, rebalance_delay_fun = M,
+                        max_delay=MaxDelaySecs, source_nodes = [], sink_nodes = []}};
+                {error, Reason}->
+                    lager:warning("Error connecting to remote, verions: legacy"),
+                    {stop, Reason}
+            end;
+        v1 ->
+            riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, Remote, node(), []),
+            case riak_core_connection_mgr:connect({rt_repl, Remote}, ?CLIENT_SPEC, multi_connection) of
+                {ok, Ref} ->
+                    {SourceNodes, SinkNodes} = case get_source_and_sink_nodes(Remote) of
+                                                   no_leader ->
+                                                       {[], []};
+                                                   {X,Y} ->
+                                                       {X,Y}
+                                               end,
+
+                    {ok, #state{version = v1, remote = Remote, connection_ref = Ref, endpoints = E, rebalance_delay_fun = M,
+                        max_delay=MaxDelaySecs, source_nodes = SourceNodes, sink_nodes = SinkNodes}};
+                {error, Reason}->
+                    lager:warning("Error connecting to remote, verions: v1"),
+                    {stop, Reason}
+            end
     end.
 
 %%%=====================================================================================================================
 handle_call({connected, Socket, Transport, IPPort, Proto, _Props, Primary}, _From,
-    State = #state{remote = Remote, endpoints = E, kill_time = K}) ->
+    State = #state{remote = Remote, endpoints = E, version = V}) ->
 
     lager:info("Adding a connection and starting rtsource_conn ~p", [Remote]),
     case riak_repl2_rtsource_conn:start_link(Remote) of
@@ -129,7 +143,7 @@ handle_call({connected, Socket, Transport, IPPort, Proto, _Props, Primary}, _Fro
                                    undefined ->
                                        State;
                                    RC ->
-                                       E2 = remove_connections([RC], E, {K,Remote}),
+                                       E2 = remove_connections([RC], E, Remote, V),
                                        State#state{endpoints = E2, remove_endpoint = undefined}
                                end,
 
@@ -144,14 +158,20 @@ handle_call({connected, Socket, Transport, IPPort, Proto, _Props, Primary}, _Fro
                     %% Save {EndPoint, Pid}; Pid will come from the supervisor starting a child
                     NewEndpoints = dict:store({IPPort, Primary}, RtSourcePid, NewState#state.endpoints),
 
-                    % save to ring
-                    lager:info("Adding remote connections to data_mgr: ~p", [dict:fetch_keys(NewEndpoints)]),
-                    riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, Remote, node(), dict:fetch_keys(NewEndpoints)),
+                    case V of
+                        legacy ->
+                            lager:info("Adding remote connection, however not sending to data_mgr as we are running legacy code base"),
+                            ok;
+                        v1 ->
+                            % save to ring
+                            lager:info("Adding remote connections to data_mgr: ~p", [dict:fetch_keys(NewEndpoints)]),
+                            riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, Remote, node(), dict:fetch_keys(NewEndpoints))
+                    end,
 
                     {reply, ok, NewState#state{endpoints = NewEndpoints}};
 
                 Error ->
-                    lager:warning("rtsouce_conn failed to recieve connection ~p", [IPPort]),
+                    lager:warning("rtsource_conn failed to recieve connection ~p", [IPPort]),
                     {reply, Error, State}
             end;
         ER ->
@@ -185,6 +205,7 @@ handle_cast({connect_failed, Reason}, State = #state{remote = Remote, endpoints 
     NewState =
         case dict:fetch_keys(E) of
             [] ->
+                cancel_timer(State#state.rb_timeout_tref),
                 RbTimeoutTref = erlang:send_after(0, self(), rebalance_now),
                 State#state{rb_timeout_tref = RbTimeoutTref};
             _ ->
@@ -192,8 +213,18 @@ handle_cast({connect_failed, Reason}, State = #state{remote = Remote, endpoints 
         end,
     {noreply, NewState};
 
-handle_cast(rebalance_delayed, State) ->
-    {noreply, maybe_rebalance(State, delayed)};
+handle_cast(rebalance_delayed, State=#state{version = Version}) ->
+    case Version of
+        legacy ->
+            {noreply, maybe_rebalance_legacy(State, delayed)};
+        v1 ->
+            {noreply, maybe_rebalance(State, delayed)}
+    end;
+
+handle_cast(upgrade_connection_version, State) ->
+    cancel_timer(State#state.rb_timeout_tref),
+    RbTimeoutTref = erlang:send_after(0, self(), rebalance_now),
+    {noreply, State#state{version = v1, rb_timeout_tref = RbTimeoutTref}};
 
 handle_cast(Request, State) ->
     lager:warning("unhandled cast: ~p", [Request]),
@@ -201,13 +232,19 @@ handle_cast(Request, State) ->
 
 %%%=====================================================================================================================
 
-handle_info({'EXIT', Pid, Reason}, State = #state{endpoints = E, remote = Remote}) ->
+handle_info({'EXIT', Pid, Reason}, State = #state{endpoints = E, remote = Remote, version = Version}) ->
     NewState = case lists:keyfind(Pid, 2, dict:to_list(E)) of
                    {Key, Pid} ->
                        NewEndpoints = dict:erase(Key, E),
                        State2 = State#state{endpoints = NewEndpoints},
                        {IPPort, Primary} = Key,
-                       riak_repl2_rtsource_conn_data_mgr:delete(realtime_connections, Remote, node(), IPPort, Primary),
+
+                       case Version of
+                           legacy ->
+                               ok;
+                           v1 ->
+                               riak_repl2_rtsource_conn_data_mgr:delete(realtime_connections, Remote, node(), IPPort, Primary)
+                       end,
 
                        case Reason of
                            normal ->
@@ -222,6 +259,7 @@ handle_info({'EXIT', Pid, Reason}, State = #state{endpoints = E, remote = Remote
 
                        case dict:fetch_keys(NewEndpoints) of
                            [] ->
+                               cancel_timer(State2#state.rb_timeout_tref),
                                RbTimeoutTref = erlang:send_after(0, self(), rebalance_now),
                                State2#state{rb_timeout_tref = RbTimeoutTref};
                            _ ->
@@ -238,8 +276,13 @@ handle_info({'EXIT', Pid, Reason}, State = #state{endpoints = E, remote = Remote
                end,
     {noreply, NewState};
 
-handle_info(rebalance_now, State) ->
-    {noreply, maybe_rebalance(State#state{rb_timeout_tref = undefined}, now)};
+handle_info(rebalance_now, State=#state{version = Version}) ->
+    case Version of
+        legacy ->
+            {noreply, maybe_rebalance_legacy(State#state{rb_timeout_tref = undefined}, now)};
+        v1 ->
+            {noreply, maybe_rebalance(State#state{rb_timeout_tref = undefined}, now)}
+    end;
 
 
 handle_info(Info, State) ->
@@ -267,6 +310,7 @@ maybe_rebalance(State, now) ->
     case get_source_and_sink_nodes(State#state.remote) of
         no_leader ->
             lager:info("rebalancing triggered, but an error occured with regard to the leader in the data mgr, will rebalance in 5 seconds"),
+            cancel_timer(State#state.rb_timeout_tref),
             RbTimeoutTref = erlang:send_after(5000, self(), rebalance_now),
             State#state{rb_timeout_tref = RbTimeoutTref};
         {NewSource, NewSink} ->
@@ -278,11 +322,13 @@ maybe_rebalance(State, now) ->
                 inconsistent_data ->
                     lager:info("rebalancing triggered, but an inconsistent data was found in realtime connections on data mgr, will rebalance in 5 seconds"),
                     riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, State#state.remote, node(), dict:fetch_keys(State#state.endpoints)),
+                    cancel_timer(State#state.rb_timeout_tref),
                     RbTimeoutTref = erlang:send_after(5000, self(), rebalance_now),
                     State#state{rb_timeout_tref = RbTimeoutTref};
 
                 no_leader ->
                     lager:info("rebalancing triggered, but an error occured with regard to the leader in the data mgr, will rebalance in 5 seconds"),
+                    cancel_timer(State#state.rb_timeout_tref),
                     RbTimeoutTref = erlang:send_after(5000, self(), rebalance_now),
                     State#state{rb_timeout_tref = RbTimeoutTref};
 
@@ -490,24 +536,29 @@ check_remove_endpoint(State=#state{remove_endpoint = RE}, ConnectToNodes) ->
     end.
 
 
-check_and_drop_connections(State=#state{endpoints = E, kill_time = K, remote = R}, DropNodes=[X|Xs], ConnectedSinkNodes) ->
+check_and_drop_connections(State=#state{endpoints = E, remote = R, version = V}, DropNodes=[X|Xs], ConnectedSinkNodes) ->
     case ConnectedSinkNodes -- DropNodes of
         [] ->
-            NewEndpoints = remove_connections(Xs, E, {K,R}),
+            NewEndpoints = remove_connections(Xs, E, R, V),
             {true, State#state{endpoints = NewEndpoints, remove_endpoint = X}};
         _ ->
-            NewEndpoints = remove_connections(DropNodes, E, {K,R}),
+            NewEndpoints = remove_connections(DropNodes, E, R, V),
             {false, State#state{endpoints = NewEndpoints, remove_endpoint = undefined}}
     end.
 
-remove_connections([], E, _) ->
+remove_connections([], E, _, _) ->
     E;
-remove_connections([Key={Addr, Primary} | Rest], E, {KillTime, Remote}) ->
+remove_connections([Key={Addr, Primary} | Rest], E, Remote, Version) ->
     RtSourcePid = dict:fetch(Key, E),
     exit(RtSourcePid, {shutdown, rebalance, Key}),
     lager:info("rtsource_conn is killed", [Key]),
-    riak_repl2_rtsource_conn_data_mgr:delete(realtime_connections, Remote, node(), Addr, Primary),
-    remove_connections(Rest, dict:erase(Key, E), {KillTime, Remote}).
+    case Version of
+        legacy ->
+            ok;
+        v1 ->
+            riak_repl2_rtsource_conn_data_mgr:delete(realtime_connections, Remote, node(), Addr, Primary)
+    end,
+    remove_connections(Rest, dict:erase(Key, E), Remote, Version).
 
 get_source_and_sink_nodes(Remote) ->
     Source = riak_repl2_rtsource_conn_data_mgr:read(active_nodes),
@@ -566,9 +617,88 @@ rebalance_connect(State=#state{remote=Remote}, BetterAddrs) ->
             State
     end.
 
+cancel_timer(undefined) -> ok;
+cancel_timer(TRef)      -> _ = erlang:cancel_timer(TRef).
+
 collect_status_data([], _Timeout, Data, _E) ->
     Data;
 collect_status_data([Key | Rest], Timeout, Data, E) ->
     Pid = dict:fetch(Key, E),
     NewData = riak_repl2_rtsource_conn:status(Pid, Timeout),
     collect_status_data(Rest, Timeout, [NewData|Data], E).
+
+%% ------------------------------------------------------------------------------------------------------------------ %%
+%%                                                 Legacy Code                                                        %%
+%% ------------------------------------------------------------------------------------------------------------------ %%
+
+maybe_rebalance_legacy(State=#state{rebalance_delay_fun = Fun, max_delay = M}, delayed) ->
+    case State#state.rb_timeout_tref of
+        undefined ->
+            RbTimeoutTref = erlang:send_after(Fun(M), self(), rebalance_now),
+            State#state{rb_timeout_tref = RbTimeoutTref};
+        _ ->
+            %% Already sent a "rebalance_now"
+            State
+    end;
+
+maybe_rebalance_legacy(State, now) ->
+    case should_rebalance_legacy(State) of
+        no ->
+            State;
+        {yes, UsefulAddrs} ->
+            reconnect_legacy(State, UsefulAddrs)
+    end.
+
+should_rebalance_legacy(#state{endpoints = E, remote=Remote}) ->
+    ConnectedAddr = case dict:fetch_keys(E) of
+                        [] ->
+                            [];
+                        [C] ->
+                            C;
+                        MultipleConns ->
+                            lager:warning("(legacy) multiple connections found and should not have been"),
+                            hd(MultipleConns)
+                    end,
+    {ok, ShuffledAddrs} = riak_core_cluster_mgr:get_ipaddrs_of_cluster_single(Remote),
+    case (ShuffledAddrs /= []) andalso same_ipaddr(ConnectedAddr, hd(ShuffledAddrs)) of
+        true ->
+            no; % we're already connected to the ideal buddy
+        false ->
+            %% compute the addrs that are "better" than the currently connected addr
+            BetterAddrs = lists:filter(fun(A) -> not same_ipaddr(ConnectedAddr, A) end,
+                ShuffledAddrs),
+            %% remove those that are blacklisted anyway
+            UsefulAddrs = riak_core_connection_mgr:filter_blacklisted_ipaddrs(BetterAddrs),
+            lager:debug("(legacy) betterAddrs: ~p, UsefulAddrs ~p", [BetterAddrs, UsefulAddrs]),
+            case UsefulAddrs of
+                [] ->
+                    no;
+                UsefulAddrs ->
+                    {yes, UsefulAddrs}
+            end
+    end.
+
+reconnect_legacy(State=#state{endpoints=Endpoints, remote=Remote, version = Version}, BetterAddrs) ->
+    lager:info("(legacy) trying reconnect to one of: ~p", [BetterAddrs]),
+
+    % remove current connection
+    Keys = dict:fetch_keys(Endpoints),
+    NewEndpoints = remove_connections(Keys, Endpoints, Remote, Version),
+
+    lager:debug("(legacy) re-connecting to remote ~p", [Remote]),
+    case riak_core_connection_mgr:connect({rt_repl, Remote}, ?CLIENT_SPEC, {use_only, BetterAddrs}) of
+        {ok, Ref} ->
+            lager:debug("(legacy) connecting ref ~p", [Ref]),
+            State#state{connection_ref = Ref, endpoints = NewEndpoints};
+        {error, Reason}->
+            lager:warning("(legacy) error connecting to remote ~p (ignoring as we're reconnecting)", [Reason]),
+            State#state{endpoints = NewEndpoints}
+    end.
+
+same_ipaddr({{IP,Port},_}, {{IP,Port},_}) ->
+    true;
+same_ipaddr({{_IP1,_Port1},_}, {{_IP2,_Port2}, _}) ->
+    false;
+same_ipaddr(X,Y) ->
+    lager:warning("(legacy) ipaddrs have unexpected format! ~p, ~p", [X,Y]),
+    false.

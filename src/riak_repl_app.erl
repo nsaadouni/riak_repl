@@ -61,6 +61,12 @@ start(_Type, _StartArgs) ->
         ],
         [consistent, datatype, n_val, allow_mult, last_write_wins]),
 
+    riak_core_capability:register(
+        {riak_repl, realtime_connections},
+        [v1, legacy],
+        legacy
+        ),
+
     %% skip Riak CS blocks
     case riak_repl_util:proxy_get_active() of
         true ->

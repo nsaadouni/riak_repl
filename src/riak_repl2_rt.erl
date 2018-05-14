@@ -138,6 +138,8 @@ register_remote_locator() ->
     Locator =
         fun(_, {use_only, Addrs}) ->
             {ok, Addrs};
+            (Name, legacy) ->
+                riak_core_cluster_mgr:get_ipaddrs_of_cluster_single(Name);
             (Name, _Policy) ->
                 riak_core_cluster_mgr:get_ipaddrs_of_cluster(Name)
         end,

@@ -26,12 +26,14 @@
 
 -record(state, {
 
+    version,
     leader_node,
     is_leader,
     connections,
     active_nodes,
-    polling_interval,
-    restoration
+    restoration,
+    node_watcher_polling_interval,
+    core_capability_polling_interval
 
 }).
 
@@ -74,7 +76,26 @@ delete(realtime_connections, Remote, Node, IPPort, Primary) ->
 %%%===================================================================
 
 init([]) ->
-    %% try catch leader_node
+    Version = riak_core_capability:get({riak_repl, realtime_connections}, legacy),
+    State = case Version of
+                legacy ->
+                    legacy_init(#state{});
+                v1 ->
+                    v1_init(#state{})
+            end,
+    {ok, State}.
+
+
+legacy_init(State) ->
+    CoreCapabilityPollingIntervalSecs = app_helper:get_env(riak_repl, realtime_core_capability_polling_interval, 60),
+    CoreCapabilityPollingInterval = CoreCapabilityPollingIntervalSecs * 1000,
+    PollingIntervalSecs = app_helper:get_env(riak_repl, realtime_node_watcher_polling_interval, 10),
+    PollingInterval = PollingIntervalSecs * 1000,
+    erlang:send_after(CoreCapabilityPollingInterval, self(), poll_core_capability),
+    State#state{version = legacy, leader_node = undefined, is_leader = false, connections = dict:new(), active_nodes = [], restoration = false,
+        core_capability_polling_interval = CoreCapabilityPollingInterval, node_watcher_polling_interval = PollingInterval}.
+
+v1_init(State) ->
     {Leader, IsLeader} =
         try riak_repl2_leader:leader_node() of
             LeaderNode ->
@@ -101,13 +122,14 @@ init([]) ->
 
     C = dict:new(),
     AN = [],
-    lager:debug("conn_data_mgr started"),
     riak_core_ring_manager:ring_trans(fun riak_repl_ring:overwrite_realtime_connection_data/2, C),
+    CoreCapabilityPollingIntervalSecs = app_helper:get_env(riak_repl, realtime_core_capability_polling_interval, 60),
+    CoreCapabilityPollingInterval = CoreCapabilityPollingIntervalSecs * 1000,
     PollingIntervalSecs = app_helper:get_env(riak_repl, realtime_node_watcher_polling_interval, 10),
     PollingInterval = PollingIntervalSecs * 1000,
-    lager:debug("node watcher polling interval: ~p", [PollingInterval]),
     erlang:send_after(PollingInterval, self(), poll_node_watcher),
-    {ok, #state{is_leader = IsLeader, leader_node = Leader, connections = C, active_nodes = AN, polling_interval = PollingInterval, restoration = false}}.
+    State#state{version = v1, leader_node = Leader, is_leader = IsLeader, connections = C, active_nodes = AN, restoration = false,
+        node_watcher_polling_interval = PollingInterval, core_capability_polling_interval = CoreCapabilityPollingInterval}.
 
 
 %% -------------------------------------------------- Read ---------------------------------------------------------- %%
@@ -161,12 +183,16 @@ handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 
 
-handle_cast({set_leader_node, LeaderNode}, State) ->
+handle_cast({set_leader_node, LeaderNode}, State=#state{version = V}) ->
     lager:info("setting leader node as: ~p", [LeaderNode]),
-    case node() of
-        LeaderNode ->
+    case {V, node()} of
+        {legacy, LeaderNode} ->
+            {noreply, State#state{leader_node = LeaderNode, is_leader = true}};
+        {legacy, _} ->
+            {noreply, State#state{leader_node = LeaderNode, is_leader = false}};
+        {v1, LeaderNode} ->
             {noreply, become_leader(State, LeaderNode)};
-        _ ->
+        {v1, _} ->
             {noreply, become_proxy(State, LeaderNode)}
     end;
 
@@ -293,7 +319,7 @@ handle_info(restore_leader_data, State) ->
 handle_info(reset_restoration_flag, State) ->
     {noreply, State#state{restoration = false}};
 
-handle_info(poll_node_watcher, State=#state{active_nodes = OldActiveNodes, connections = C, polling_interval = PI}) when State#state.is_leader == true ->
+handle_info(poll_node_watcher, State=#state{active_nodes = OldActiveNodes, connections = C, node_watcher_polling_interval = PI}) when State#state.is_leader == true ->
     NewActiveNodes = riak_core_node_watcher:nodes(riak_kv),
     DownNodes = OldActiveNodes -- NewActiveNodes,
     UpNodes = NewActiveNodes -- OldActiveNodes,
@@ -313,9 +339,25 @@ handle_info(poll_node_watcher, State=#state{active_nodes = OldActiveNodes, conne
                   end,
     erlang:send_after(PI, self(), poll_node_watcher),
     {noreply, State#state{active_nodes = NewActiveNodes, connections = Connections}};
-handle_info(poll_node_watcher, State=#state{polling_interval = PI}) ->
+
+handle_info(poll_node_watcher, State=#state{node_watcher_polling_interval = PI}) ->
     erlang:send_after(PI, self(), poll_node_watcher),
     {noreply, State};
+
+handle_info(poll_core_capability, State=#state{version = OldVersion, core_capability_polling_interval = PI}) ->
+    NewVersion = riak_core_capability:get({riak_repl, realtime_connections}, legacy),
+    case {OldVersion, NewVersion} of
+        {legacy, legacy} ->
+            erlang:send_after(PI, self(), poll_core_capability),
+            {noreply, State};
+        {legacy, v1} ->
+            %% send upgrade message to conn_mgr after 30 seconds to give the data manager time to get into the correct state
+            %% after changing versions
+            [erlang:send_after(30000, Pid, upgrade_connection_version) || {_Remote, Pid} <- riak_repl2_rtsource_conn_sup:enabled()],
+            {noreply, v1_init(State)};
+        {v1, _} ->
+            {noreply, State}
+    end;
 
 handle_info({cast_again, CastMsg}, State) ->
     gen_server:cast(?SERVER, CastMsg),

@@ -14,6 +14,12 @@ data_manager_test_() ->
         fun() ->
           Apps = riak_repl_test_util:maybe_start_lager(),
           _MockRing = ets:new(mock_ring_test, [named_table, public]),
+
+          catch(meck:unload(riak_core_capability)),
+          meck:new(riak_core_capability, [passthrough]),
+          meck:expect(riak_core_capability, get, 1, fun(_) -> v1 end),
+          meck:expect(riak_core_capability, get, 2, fun(_, _) -> v1 end),
+
           %% ring_trans
           riak_core_ring_manager_start(),
           %% nodes
@@ -33,6 +39,7 @@ data_manager_test_() ->
           catch(meck:unload(riak_core_ring_manager)),
           catch(meck:unload(riak_repl_ring)),
           catch(meck:unload(riak_repl2_rtsource_conn_sup)),
+          catch(meck:unload(riak_core_capability)),
           ets:delete(mock_ring_test),
           timer:sleep(200),
           process_flag(trap_exit, false),
