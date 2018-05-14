@@ -23,8 +23,7 @@
     get_all_status/2,
     get_source_and_sink_nodes/1,
     get_endpoints/1,
-    get_rtsource_conn_pids/1,
-    upgrade_connection_version/1
+    get_rtsource_conn_pids/1
 ]).
 
 -define(SERVER, ?MODULE).
@@ -81,9 +80,6 @@ get_endpoints(Pid) ->
 
 get_rtsource_conn_pids(Pid) ->
     gen_server:call(Pid, get_rtsource_conn_pids).
-
-upgrade_connection_version(Pid) ->
-    gen_server:cast(Pid, upgrade_connection_version).
 
 
 %%%===================================================================
@@ -221,11 +217,6 @@ handle_cast(rebalance_delayed, State=#state{version = Version}) ->
             {noreply, maybe_rebalance(State, delayed)}
     end;
 
-handle_cast(upgrade_connection_version, State) ->
-    cancel_timer(State#state.rb_timeout_tref),
-    RbTimeoutTref = erlang:send_after(0, self(), rebalance_now),
-    {noreply, State#state{version = v1, rb_timeout_tref = RbTimeoutTref}};
-
 handle_cast(Request, State) ->
     lager:warning("unhandled cast: ~p", [Request]),
     {noreply, State}.
@@ -284,6 +275,10 @@ handle_info(rebalance_now, State=#state{version = Version}) ->
             {noreply, maybe_rebalance(State#state{rb_timeout_tref = undefined}, now)}
     end;
 
+handle_info(upgrade_connection_version, State) ->
+    cancel_timer(State#state.rb_timeout_tref),
+    RbTimeoutTref = erlang:send_after(0, self(), rebalance_now),
+    {noreply, State#state{version = v1, rb_timeout_tref = RbTimeoutTref}};
 
 handle_info(Info, State) ->
     lager:warning("unhandled info: ~p", [Info]),
