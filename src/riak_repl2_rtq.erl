@@ -640,7 +640,7 @@ pull(Name, DeliverFun, State = #state{qtab = QTab, qseq = QSeq, cs = Cs, filtere
                 false ->
                     lager:error("Consumer ~p pulled from RTQ, but was not registered", [Name]),
                     DList = [DeliverFunList || #c{deliver = DeliverFunList} <- Cs],
-                    _ = [deliver_error(DeliverFun, not_registered) || DeliverFun <- lists:flatten(DList)],
+                    _ = [deliver_error(Fun, not_registered) || Fun <- lists:flatten(DList)],
                     Cs
             end,
     State#state{cs = UpdCs}.
