@@ -209,8 +209,8 @@ rt_update_events(Ring) ->
             % Only update when there has been a changed, updating state in the realtime queue is done via a call
             % we don't want to block when we don't have to
             lager:info("[bucket filtering] value changed from: ~p to ~p~n", [CurrentFilteringState, BucketFilteringEnabled]),
-            application:set_env(riak_repl, bucket_filtering_enabled, BucketFilteringEnabled),
-            riak_repl2_rtq:update_filtered_bucket_state(BucketFilteringEnabled)
+            application:set_env(riak_repl, bucket_filtering_enabled, BucketFilteringEnabled)
+%%            riak_repl2_rtq:update_filtered_bucket_state(BucketFilteringEnabled)
     end,
 
     FilteringConfig = case dict:find(filteredbuckets, RC) of
@@ -226,8 +226,8 @@ rt_update_events(Ring) ->
             ok;
         false ->
             lager:info("[bucket filtering] filtered bucket list has changed from ~p to ~p~n", [CurrentFilteringConfig, FilteringConfig]),
-            application:set_env(riak_repl, filtered_buckets, FilteringConfig),
-            riak_repl2_rtq:update_filtered_buckets_list(FilteringConfig)
+            application:set_env(riak_repl, filtered_buckets, FilteringConfig)
+%%            riak_repl2_rtq:update_filtered_buckets_list(FilteringConfig)
     end,
 
     %% always 'install' the hook, the postcommit hooks will be toggled by
