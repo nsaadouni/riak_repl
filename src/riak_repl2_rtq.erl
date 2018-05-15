@@ -330,6 +330,13 @@ handle_call(all_queues_empty, _From, State = #state{qseq = QSeq, cs = Cs}) ->
 
 
 handle_call({register, Name}, _From, State = #state{qtab = QTab, qseq = QSeq, cs = Cs}) ->
+    case Name of
+        qm ->
+            lager:info("qm registered");
+        _ ->
+            ok
+    end,
+
     MinSeq = minseq(QTab, QSeq),
     case lists:keytake(Name, #c.name, Cs) of
         {value, C = #c{aseq = PrevASeq, drops = PrevDrops}, Cs2} ->
@@ -390,6 +397,7 @@ handle_call({evict, Seq, Key}, _From, State = #state{qtab = QTab}) ->
     end;
 
 handle_call({pull_with_ack, Name, DeliverFun}, _From, State) ->
+    lager:info("pull_sync called (must be from qm!"),
     {reply, ok, pull(Name, DeliverFun, State)};
 
 % either old code or old node has sent us a old push, upvert it.
@@ -449,7 +457,9 @@ handle_info(_Msg, State) ->
     {noreply, State}.
 
 %% @private
-terminate(Reason, #state{cs = Cs}) ->
+terminate(Reason, State=#state{cs = Cs}) ->
+  lager:info("rtq terminating due to: ~p
+  State: ~p", [Reason, State]),
     %% when started from tests, we may not be registered
     catch(erlang:unregister(?SERVER)),
     flush_pending_pushes(),
@@ -615,7 +625,10 @@ deliver_item(C, DeliverFun, {Seq,_NumItem, _Bin, _Meta} = QEntry) ->
         ok = DeliverFun(QEntry2),
         C#c{cseq = Seq, deliver = undefined, delivered = true, skips = 0}
     catch
-        _:_ ->
+        Type:Error ->
+            lager:warning("did not deliver object back to rtsource_helper, Reason: {~p,~p}", [Type, Error]),
+            lager:info("Seq: ~p   -> CSeq: ~p", [Seq, C#c.cseq]),
+            lager:info("consumer: ~p" ,[C]),
             riak_repl_stats:rt_source_errors(),
             %% do not advance head so it will be delivered again
             C#c{errs = C#c.errs + 1, deliver = undefined}
