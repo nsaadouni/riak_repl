@@ -344,6 +344,13 @@ handle_call(all_queues_empty, _From, State = #state{qseq = QSeq, cs = Cs}) ->
 
 
 handle_call({register, Name}, _From, State = #state{qtab = QTab, qseq = QSeq, cs = Cs}) ->
+    case Name of
+        qm ->
+            lager:info("qm registered");
+        _ ->
+            ok
+    end,
+
     MinSeq = minseq(QTab, QSeq),
     case lists:keytake(Name, #c.name, Cs) of
         {value, C = #c{aseq = PrevASeq, drops = PrevDrops}, Cs2} ->
@@ -413,6 +420,7 @@ handle_call({evict, Seq, Key}, _From, State = #state{qtab = QTab}) ->
     end;
 
 handle_call({pull_with_ack, Name, DeliverFun}, _From, State) ->
+    lager:info("pull_sync called (must be from qm!"),
     {reply, ok, pull(Name, DeliverFun, State)};
 
 % either old code or old node has sent us a old push, upvert it.
