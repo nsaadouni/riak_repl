@@ -85,6 +85,7 @@
             drops = 0, % number of dropped queue entries (not items)
             errs = 0,  % delivery errors
             deliver = [],  % deliver functions if pending, otherwise undefined
+            failed_deliver_funs = [],
             delivered = false,  % used by the skip count.
             % skip_count is used to help the sink side determine if an item has
             % been dropped since the last delivery. The sink side can't
@@ -606,25 +607,14 @@ push(NumItems, Bin, Meta, State = #state{qtab = QTab,
     AllConsumersNames = [Consumer#c.name || Consumer <- Cs],
     FilteredConsumersNames = filter_consumers(FEnabled, AllConsumersNames, BucketConfig, Buckets),
     QEntry2 = set_local_forwards_meta(FilteredConsumersNames, QEntry),
-    FilteredConsumers = [C || C <- Cs, lists:member(C#c.name, FilteredConsumersNames)],
-    FilteredConsumersAtHeadOfQueue = [C || C <- FilteredConsumers, C#c.cseq == QSeq2],
-    DeliverAndCs2 = [maybe_deliver_item(C, QEntry2, FEnabled) || C <- FilteredConsumersAtHeadOfQueue],
+    ets:insert(QTab, QEntry2),
+    Size = ets_obj_size(Bin, State),
+    State2 = update_q_size(State, Size),
 
-    {DeliverResults, Cs2} = lists:unzip(DeliverAndCs2),
-    AllSkipped = lists:all(fun
-        (skipped) -> true;
-        (_) -> false
-    end, DeliverResults),
-    State2 = if
-        AllSkipped andalso length(FilteredConsumersAtHeadOfQueue) > 0 ->
-            State;
-        true ->
-            ets:insert(QTab, QEntry2),
-            Size = ets_obj_size(Bin, State),
-            update_q_size(State, Size)
-    end,
+    %% check all consumers for failed deliver functions and re-cast them out
+    _ = [Fun || Fun <- lists:flatten([ C#c.failed_deliver_funs || C <- Cs])],
 
-    trim_q(State2#state{qseq = QSeq2, cs = merge_consumers(Cs, Cs2)});
+    trim_q(State2#state{qseq = QSeq2});
 push(NumItems, Bin, Meta, State = #state{shutting_down = true}) ->
     riak_repl2_rtq_proxy:push(NumItems, Bin, Meta),
     State.
@@ -701,7 +691,10 @@ maybe_pull(QTab, QSeq, C = #c{cseq = CSeq, name = CName}, CsNames, DeliverFun, F
         false ->
             %% consumer is up to date with head, keep deliver function
             %% until something pushed
-            add_deliver_fun(DeliverFun, C)
+            Fun = pull(CName, DeliverFun),
+            Funs = C#c.failed_deliver_funs,
+            NewList = lists:append(Funs, [Fun]),
+            C#c{failed_deliver_funs = NewList}
     end.
 
 % We can't filter if bucket filtering is disabled or if the bucket config is undefined
