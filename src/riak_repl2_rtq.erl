@@ -607,7 +607,7 @@ push(NumItems, Bin, Meta, State = #state{qtab = QTab,
     FilteredConsumersNames = filter_consumers(FEnabled, AllConsumersNames, BucketConfig, Buckets),
     QEntry2 = set_local_forwards_meta(FilteredConsumersNames, QEntry),
     FilteredConsumers = [C || C <- Cs, lists:member(C#c.name, FilteredConsumersNames)],
-    FilteredConsumersAtHeadOfQueue = [C || C <- FilteredConsumers, C#c.cseq == ets:first(QTab)],
+    FilteredConsumersAtHeadOfQueue = [C || C <- FilteredConsumers, C#c.cseq == QSeq2],
     DeliverAndCs2 = [maybe_deliver_item(C, QEntry2, FEnabled) || C <- FilteredConsumersAtHeadOfQueue],
 
     {DeliverResults, Cs2} = lists:unzip(DeliverAndCs2),
