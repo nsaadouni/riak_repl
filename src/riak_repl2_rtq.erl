@@ -602,16 +602,11 @@ push(NumItems, Bin, Meta, State = #state{qtab = QTab,
             error ->
                 {Meta, undefined}
         end,
-
     QEntry = {QSeq2, NumItems, Bin, NewMeta, BucketConfig},
-
-    AllConsumers = [Consumer#c.name || Consumer <- Cs],
-
-    FilteredConsumers = filter_consumers(FEnabled, AllConsumers, BucketConfig, Buckets),
-
-    QEntry2 = set_local_forwards_meta(FilteredConsumers, QEntry),
-
-    % Deliver to all, but skip if needed
+    AllConsumersNames = [Consumer#c.name || Consumer <- Cs],
+    FilteredConsumersNames = filter_consumers(FEnabled, AllConsumersNames, BucketConfig, Buckets),
+    QEntry2 = set_local_forwards_meta(FilteredConsumersNames, QEntry),
+    FilteredConsumers = [C || C <- Cs, lists:member(C#c.name, FilteredConsumersNames)],
     FilteredConsumersAtHeadOfQueue = [C || C <- FilteredConsumers, C#c.cseq == QSeq],
     DeliverAndCs2 = [maybe_deliver_item(C, QEntry2, FEnabled) || C <- FilteredConsumersAtHeadOfQueue],
 
