@@ -623,10 +623,20 @@ push(NumItems, Bin, Meta, State = #state{qtab = QTab,
             Size = ets_obj_size(Bin, State),
             update_q_size(State, Size)
     end,
-    trim_q(State2#state{qseq = QSeq2, cs = Cs2});
+
+    trim_q(State2#state{qseq = QSeq2, cs = merge_consumers(Cs, Cs2)});
 push(NumItems, Bin, Meta, State = #state{shutting_down = true}) ->
     riak_repl2_rtq_proxy:push(NumItems, Bin, Meta),
     State.
+
+
+merge_consumers(MergedConsumers,[]) ->
+    MergedConsumers;
+merge_consumers(Cs, [NewConsumer | Rest]) ->
+    NewCs = lists:keyreplace(NewConsumer#c.name, #c.name, Cs, NewConsumer),
+    merge_consumers(NewCs, Rest).
+
+
 
 pull(Name, DeliverFun, State = #state{qtab = QTab, qseq = QSeq, cs = Cs, filtered_buckets_enabled = FEnabled, filtered_buckets = FilterBuckets}) ->
     CsNames = [C#c.name || C <- Cs],
