@@ -612,7 +612,8 @@ push(NumItems, Bin, Meta, State = #state{qtab = QTab,
     QEntry2 = set_local_forwards_meta(FilteredConsumers, QEntry),
 
     % Deliver to all, but skip if needed
-    DeliverAndCs2 = [maybe_deliver_item(C, QEntry2, FEnabled) || C <- Cs],
+    FilteredConsumersAtHeadOfQueue = [C || C <- FilteredConsumers, C#c.cseq == QSeq],
+    DeliverAndCs2 = [maybe_deliver_item(C, QEntry2, FEnabled) || C <- FilteredConsumersAtHeadOfQueue],
 
     {DeliverResults, Cs2} = lists:unzip(DeliverAndCs2),
     AllSkipped = lists:all(fun
@@ -620,7 +621,7 @@ push(NumItems, Bin, Meta, State = #state{qtab = QTab,
         (_) -> false
     end, DeliverResults),
     State2 = if
-        AllSkipped andalso length(FilteredConsumers) > 0 ->
+        AllSkipped andalso length(FilteredConsumersAtHeadOfQueue) > 0 ->
             State;
         true ->
             ets:insert(QTab, QEntry2),
