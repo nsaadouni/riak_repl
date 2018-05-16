@@ -620,14 +620,6 @@ push(NumItems, Bin, Meta, State = #state{shutting_down = true}) ->
     State.
 
 
-merge_consumers(MergedConsumers,[]) ->
-    MergedConsumers;
-merge_consumers(Cs, [NewConsumer | Rest]) ->
-    NewCs = lists:keyreplace(NewConsumer#c.name, #c.name, Cs, NewConsumer),
-    merge_consumers(NewCs, Rest).
-
-
-
 pull(Name, DeliverFun, State = #state{qtab = QTab, qseq = QSeq, cs = Cs, filtered_buckets_enabled = FEnabled, filtered_buckets = FilterBuckets}) ->
     CsNames = [C#c.name || C <- Cs],
      UpdCs = case lists:keytake(Name, #c.name, Cs) of
