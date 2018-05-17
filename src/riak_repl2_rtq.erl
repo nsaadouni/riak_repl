@@ -683,7 +683,7 @@ maybe_pull(QTab, QSeq, C = #c{cseq = CSeq, name = CName}, CsNames, DeliverFun, F
         false ->
             %% consumer is up to date with head, keep deliver function
             %% until something pushed
-            Fun = pull(CName, DeliverFun),
+            Fun = fun() -> pull(CName, DeliverFun) end,
             Funs = C#c.failed_deliver_funs,
             NewList = lists:append(Funs, [Fun]),
             C#c{failed_deliver_funs = NewList}
