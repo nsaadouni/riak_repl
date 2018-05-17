@@ -890,8 +890,15 @@ update_filtered_buckets_list(FilteringConfig) ->
     gen_server:call(?SERVER, {filtered_buckets, update_buckets, FilteringConfig}).
 
 build_consumer(C, DeliverFun) ->
-    DeliveryFuns = C#c.delivery_funs ++ [DeliverFun],
-    C#c{deliver = hd(DeliveryFuns), delivery_funs = tl(DeliveryFuns)}.
+
+    case C#c.deliver of
+        undefined ->
+            DeliveryFuns = C#c.delivery_funs ++ [DeliverFun],
+            C#c{deliver = hd(DeliveryFuns), delivery_funs = tl(DeliveryFuns)};
+        DeliverFun ->
+            DeliveryFuns = C#c.delivery_funs ++ [DeliverFun],
+            C#c{delivery_funs = DeliveryFuns}
+    end.
 
 get_all_delivery_funs(C) ->
     case C#c.deliver of
