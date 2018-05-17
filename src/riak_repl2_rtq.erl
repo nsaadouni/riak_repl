@@ -895,7 +895,7 @@ build_consumer(C, DeliverFun) ->
         undefined ->
             DeliveryFuns = C#c.delivery_funs ++ [DeliverFun],
             C#c{deliver = hd(DeliveryFuns), delivery_funs = tl(DeliveryFuns)};
-        DeliverFun ->
+        _ ->
             DeliveryFuns = C#c.delivery_funs ++ [DeliverFun],
             C#c{delivery_funs = DeliveryFuns}
     end.
