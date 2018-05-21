@@ -592,9 +592,9 @@ update_consumer_deliver(DeliverStatus, C = #c{delivery_funs = DeliveryFuns}) ->
         delivered ->
             case DeliveryFuns of
                 [] ->
-                    C;
+                    {DeliverStatus, C};
                 [Fun | Funs] ->
-                    C#c{deliver = Fun, delivery_funs = Funs}
+                    {DeliverStatus, #c{deliver = Fun, delivery_funs = Funs}}
             end;
         _ ->
             {DeliverStatus, C}
