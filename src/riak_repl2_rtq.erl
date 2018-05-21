@@ -84,8 +84,12 @@
             skips = 0,
             drops = 0, % number of dropped queue entries (not items)
             errs = 0,  % delivery errors
-            deliver,  % deliver function if pending, otherwise undefined
-            delivery_funs = [],
+
+            deliver_push,
+            deliver_pull,
+            delivery_funs_push = [],
+            delivery_funs_pull = [],
+
             delivered = false,  % used by the skip count.
             % skip_count is used to help the sink side determine if an item has
             % been dropped since the last delivery. The sink side can't
@@ -364,7 +368,7 @@ handle_call({register, Name}, _From, State = #state{qtab = QTab, qseq = QSeq, cs
                 false -> C#c.aseq
             end,
             UpdCs = [C#c{cseq = CSeq, drops = PrevDrops + Drops,
-                         deliver = undefined} | Cs2];
+                         deliver_push = undefined, deliver_pull = undefined} | Cs2];
         false ->
             %% New registration, start from the beginning
             CSeq = MinSeq,
@@ -606,10 +610,9 @@ push(NumItems, Bin, Meta, State = #state{qtab = QTab,
     AllConsumers = [Consumer#c.name || Consumer <- Cs],
     FilteredConsumers = filter_consumers(FEnabled, AllConsumers, BucketConfig, Buckets),
     QEntry2 = set_local_forwards_meta(FilteredConsumers, QEntry),
-    DeliverAndCs2 = [maybe_deliver_item(C, QEntry2, FEnabled) || C <- Cs],
+    DeliverAndCs2 = [maybe_deliver_item(C, QEntry2, FEnabled, push) || C <- Cs],
     {DeliverResults, Cs2} = lists:unzip(DeliverAndCs2),
 
-    %% TODO: change this function to say skipped or filtered, or changed filtered to skipped.
     AllSkipped = lists:all(fun
         (skipped) -> true;
         (_) -> false
@@ -665,22 +668,31 @@ maybe_pull(QTab, QSeq, C = #c{cseq = CSeq, name = CName}, CsNames, DeliverFun, F
                                 true ->
                                     % if the item can't be delivered due to cascading rt,
                                     % just keep trying.
-                                    case maybe_deliver_item(build_consumer(C, DeliverFun), QEntry2, FilteringEnabled) of
+                                    case maybe_deliver_item(build_consumer(C, DeliverFun, pull), QEntry2, FilteringEnabled, pull) of
                                         {skipped, C2} ->
-                                            maybe_pull(QTab, QSeq, C2, CsNames, DeliverFun, FilteringEnabled, FilteredBuckets);
+                                            C3 = C2#c{deliver_push = C#c.deliver_push,
+                                                deliver_pull = C#c.deliver_pull,
+                                                delivery_funs_push = C#c.delivery_funs_push,
+                                                delivery_funs_pull = C#c.delivery_funs_pull},
+                                            maybe_pull(QTab, QSeq, C3, CsNames, DeliverFun, FilteringEnabled, FilteredBuckets);
                                         {_WorkedOrNoFun, C2} ->
                                             C2
                                     end;
                                 false ->
                                     %% not removing any deliver function as we have purposely not used it
-                                    C#c{skips = 0, cseq = CSeq2, delivered = true}
+                                    C2 = C#c{skips = 0, cseq = CSeq2, delivered = true},
+                                    maybe_pull(QTab, QSeq, C2, CsNames, DeliverFun, FilteringEnabled, FilteredBuckets)
                             end;
                         _ ->
                             % if the item can't be delivered due to cascading rt,
                             % just keep trying.
-                            case maybe_deliver_item(build_consumer(C, DeliverFun), QEntry2, FilteringEnabled) of
+                            case maybe_deliver_item(build_consumer(C, DeliverFun, pull), QEntry2, FilteringEnabled, pull) of
                                 {skipped, C2} ->
-                                    maybe_pull(QTab, QSeq, C2, CsNames, DeliverFun, FilteringEnabled, FilteredBuckets);
+                                    C3 = C2#c{deliver_push = C#c.deliver_push,
+                                              deliver_pull = C#c.deliver_pull,
+                                              delivery_funs_push = C#c.delivery_funs_push,
+                                              delivery_funs_pull = C#c.delivery_funs_pull},
+                                    maybe_pull(QTab, QSeq, C3, CsNames, DeliverFun, FilteringEnabled, FilteredBuckets);
                                 {_WorkedOrNoFun, C2} ->
                                     C2
                             end
@@ -689,7 +701,7 @@ maybe_pull(QTab, QSeq, C = #c{cseq = CSeq, name = CName}, CsNames, DeliverFun, F
         false ->
             %% consumer is up to date with head, keep deliver function
             %% until something pushed
-            build_consumer(C, DeliverFun)
+            build_consumer(C, DeliverFun, push)
     end.
 
 % We can't filter if bucket filtering is disabled or if the bucket config is undefined
@@ -701,19 +713,19 @@ filter_if_enabled(true, Name, {_Bucket, AllowedRemotes} = _BucketConfig) ->
 filter_if_enabled(_, _, _) ->
     no_fun.
 
-deliver_if_can_route(false, Consumer, QEntry) ->
-    {delivered, deliver_item(Consumer, Consumer#c.deliver, QEntry)};
-deliver_if_can_route(true, Consumer, {Seq, _NumItem, _Bin, _Meta, {_Bucket, Remotes}} = QEntry) ->
+deliver_if_can_route(false, Consumer, QEntry, Flag) ->
+    {delivered, deliver_item(Consumer, QEntry, Flag)};
+deliver_if_can_route(true, Consumer, {Seq, _NumItem, _Bin, _Meta, {_Bucket, Remotes}} = QEntry, Flag) ->
     case allowed_to_route(Consumer#c.name, Remotes) of
         true ->
-            {delivered, deliver_item(Consumer, Consumer#c.deliver, QEntry)};
+            {delivered, deliver_item(Consumer, QEntry, Flag)};
         false ->
             {filtered, Consumer#c{cseq = Seq, aseq = Seq, filtered = Consumer#c.filtered + 1, delivered = true, skips=0}}
     end;
-deliver_if_can_route(_, Consumer, QEntry) ->
-    {delivered, deliver_item(Consumer, Consumer#c.deliver, QEntry)}.
+deliver_if_can_route(_, Consumer, QEntry, Flag) ->
+    {delivered, deliver_item(Consumer, QEntry, Flag)}.
 
-maybe_deliver_item(C = #c{deliver = undefined}, QEntry, FilteringEnabled) ->
+maybe_deliver_item(C = #c{deliver_push = undefined}, QEntry, FilteringEnabled, _Flag) ->
     {_Seq, _NumItem, _Bin, Meta, BucketConfig} = QEntry,
 
     Name = C#c.name,
@@ -728,7 +740,7 @@ maybe_deliver_item(C = #c{deliver = undefined}, QEntry, FilteringEnabled) ->
             filter_if_enabled(FilteringEnabled, Name, BucketConfig)
     end,
     {Cause, C};
-maybe_deliver_item(C, QEntry, FilteringEnabled) ->
+maybe_deliver_item(C, QEntry, FilteringEnabled, Flag) ->
     {Seq, _NumItem, _Bin, Meta, _BucketConfig} = QEntry,
     #c{name = Name} = C,
     Routed = case orddict:find(routed_clusters, Meta) of
@@ -742,28 +754,36 @@ maybe_deliver_item(C, QEntry, FilteringEnabled) ->
         true ->
             {skipped, C#c{cseq = Seq, aseq = Seq}};
         false ->
-            deliver_if_can_route(FilteringEnabled, C, QEntry)
+            deliver_if_can_route(FilteringEnabled, C, QEntry, Flag)
     end.
 
-deliver_item(C, DeliverFun, {Seq, _NumItem, _Bin, _Meta, _} = QEntry) ->
+deliver_item(C, {Seq, _NumItem, _Bin, _Meta, _} = QEntry, Flag) ->
+
+    {C2, DeliverFun} = case Flag of
+                           pull ->
+                               {C#c{deliver_pull = undefined}, C#c.deliver_pull};
+                           push ->
+                               {C#c{deliver_push = undefined}, C#c.deliver_push}
+                       end,
+
     try
-        Seq = C#c.cseq + 1, % bit of paranoia, remove after EQC
-        QEntry2 = set_skip_meta(QEntry, Seq, C),
+        Seq = C2#c.cseq + 1, % bit of paranoia, remove after EQC
+        QEntry2 = set_skip_meta(QEntry, Seq, C2),
         ok = DeliverFun(QEntry2),
         case Seq rem app_helper:get_env(riak_repl, rtq_latency_interval, 1000) of
             0 ->
-                C#c{cseq = Seq, deliver = undefined, delivered = true, skips = 0, last_seen = {Seq, os:timestamp()}};
+                C2#c{cseq = Seq, delivered = true, skips = 0, last_seen = {Seq, os:timestamp()}};
             _ ->
-                C#c{cseq = Seq, deliver = undefined, delivered = true, skips = 0}
+                C2#c{cseq = Seq, delivered = true, skips = 0}
         end
     catch
         Type:Error ->
             lager:warning("did not deliver object back to rtsource_helper, Reason: {~p,~p}", [Type, Error]),
-            lager:info("Seq: ~p   -> CSeq: ~p", [Seq, C#c.cseq]),
-            lager:info("consumer: ~p" ,[C]),
+            lager:info("Seq: ~p   -> CSeq: ~p", [Seq, C2#c.cseq]),
+            lager:info("consumer: ~p" ,[C2]),
             riak_repl_stats:rt_source_errors(),
             %% do not advance head so it will be delivered again
-            C#c{errs = C#c.errs + 1, deliver = undefined}
+            C2#c{errs = C2#c.errs + 1}
     end.
 
 %% Deliver an error if a delivery function is registered.
@@ -889,24 +909,42 @@ update_filtered_bucket_state(Enabled) ->
 update_filtered_buckets_list(FilteringConfig) ->
     gen_server:call(?SERVER, {filtered_buckets, update_buckets, FilteringConfig}).
 
-build_consumer(C, DeliverFun) ->
+build_consumer(C, DeliverFun, pull) ->
 
-    case C#c.deliver of
+    case C#c.deliver_pull of
         undefined ->
-            DeliveryFuns = C#c.delivery_funs ++ [DeliverFun],
-            C#c{deliver = hd(DeliveryFuns), delivery_funs = tl(DeliveryFuns)};
+            DeliveryFuns = C#c.delivery_funs_pull ++ [DeliverFun],
+            C#c{deliver_pull = hd(DeliveryFuns), delivery_funs_pull = tl(DeliveryFuns)};
         _ ->
-            DeliveryFuns = C#c.delivery_funs ++ [DeliverFun],
-            C#c{delivery_funs = DeliveryFuns}
+            DeliveryFuns = C#c.delivery_funs_pull ++ [DeliverFun],
+            C#c{delivery_funs_pull = DeliveryFuns}
+    end;
+
+build_consumer(C, DeliverFun, push) ->
+
+    case C#c.deliver_push of
+        undefined ->
+            DeliveryFuns = C#c.delivery_funs_push ++ [DeliverFun],
+            C#c{deliver_push = hd(DeliveryFuns), delivery_funs_push = tl(DeliveryFuns)};
+        _ ->
+            DeliveryFuns = C#c.delivery_funs_push ++ [DeliverFun],
+            C#c{delivery_funs_push = DeliveryFuns}
     end.
 
 get_all_delivery_funs(C) ->
-    case C#c.deliver of
-        undefined ->
-            C#c.delivery_funs;
-        Deliver ->
-            C#c.delivery_funs ++ [Deliver]
-    end.
+    DeliverFunsPull = case C#c.deliver_pull of
+                          undefined ->
+                              C#c.delivery_funs_pull;
+                          DeliverPush ->
+                              C#c.delivery_funs_pull ++ [DeliverPush]
+                      end,
+    DeliverFunsPush = case C#c.deliver_push of
+                          undefined ->
+                              C#c.delivery_funs_push;
+                          DeliverPull ->
+                              C#c.delivery_funs_push ++ [DeliverPull]
+                      end,
+    DeliverFunsPull ++ DeliverFunsPush.
 
 
 -ifdef(TEST).
