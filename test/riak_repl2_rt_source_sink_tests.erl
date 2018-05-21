@@ -313,6 +313,11 @@ start_source(NegotiatedVer) ->
             dict:new()
         end),
 
+    catch(meck:unload(riak_core_capability)),
+    meck:new(riak_core_capability, [passthrough]),
+    meck:expect(riak_core_capability, get, 1, fun(_) -> v1 end),
+    meck:expect(riak_core_capability, get, 2, fun(_, _) -> v1 end),
+
     catch(meck:unload(riak_core_cluster_mgr)),
     meck:new(riak_core_cluster_mgr, [passthrough]),
     meck:expect(riak_core_cluster_mgr, get_unshuffled_ipaddrs_of_cluster, fun(_Remote) -> {ok,[]} end ),
