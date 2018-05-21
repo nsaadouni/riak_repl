@@ -586,15 +586,16 @@ config_for_bucket(Bucket, Buckets) ->
     end.
 
 update_consumer_delivery_funs(DeliverAndConsumers) ->
-    [update_consumer_deliver(DeliverStatus, C) || {DeliverStatus, C} <- DeliverAndConsumers].
-update_consumer_deliver(DeliverStatus, C = #c{delivery_funs = DeliveryFuns}) ->
+    [recast_saved_deliver_funs(DeliverStatus, C) || {DeliverStatus, C} <- DeliverAndConsumers].
+recast_saved_deliver_funs(DeliverStatus, C = #c{delivery_funs = DeliveryFuns, name = Name}) ->
     case DeliverStatus of
         delivered ->
             case DeliveryFuns of
                 [] ->
                     {DeliverStatus, C};
-                [Fun | Funs] ->
-                    {DeliverStatus, C#c{deliver = Fun, delivery_funs = Funs}}
+                _ ->
+                    _ = [gen_server:cast(?SERVER, {pull, Name, DeliverFun}) || DeliverFun <- DeliveryFuns],
+                    {DeliverStatus, C#c{delivery_funs = []}}
             end;
         _ ->
             {DeliverStatus, C}
