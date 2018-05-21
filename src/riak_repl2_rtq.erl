@@ -594,7 +594,7 @@ update_consumer_deliver(DeliverStatus, C = #c{delivery_funs = DeliveryFuns}) ->
                 [] ->
                     {DeliverStatus, C};
                 [Fun | Funs] ->
-                    {DeliverStatus, #c{deliver = Fun, delivery_funs = Funs}}
+                    {DeliverStatus, C#c{deliver = Fun, delivery_funs = Funs}}
             end;
         _ ->
             {DeliverStatus, C}
@@ -677,9 +677,37 @@ maybe_pull(QTab, QSeq, C = #c{cseq = CSeq, name = CName}, CsNames, DeliverFun, F
                         {_, Config} when Config /= [] ->
                             case allowed_to_route(CName, Config) of
                                 true ->
+                                    case C#c.deliver of
+                                        undefined ->
+                                            % if the item can't be delivered due to cascading rt,
+                                            % just keep trying.
+                                            case maybe_deliver_item(C#c{deliver = DeliverFun}, QEntry2, FilteringEnabled) of
+                                                {skipped, C2} ->
+                                                    C3 = C2#c{
+                                                        deliver = C#c.deliver,
+                                                        delivery_funs = C#c.delivery_funs
+                                                    },
+                                                    maybe_pull(QTab, QSeq, C3, CsNames, DeliverFun, FilteringEnabled, FilteredBuckets);
+                                                {_WorkedOrNoFun, C2} ->
+                                                    C2
+                                            end;
+
+                                        %% we have a saved function due to being at the head of the queue, just add the function and let the push
+                                        %% functionality push the items out to the helpers using the saved deliverfuns
+                                        _ ->
+                                            save_consumer(C, DeliverFun)
+                                    end;
+                                false ->
+                                    %% not removing any deliver function as we have purposely not used it
+                                    C2 = C#c{skips = 0, cseq = CSeq2, delivered = true},
+                                    maybe_pull(QTab, QSeq, C2, CsNames, DeliverFun, FilteringEnabled, FilteredBuckets)
+                            end;
+                        _ ->
+                            case C#c.deliver of
+                                undefined ->
                                     % if the item can't be delivered due to cascading rt,
                                     % just keep trying.
-                                    case maybe_deliver_item(build_consumer(C, DeliverFun), QEntry2, FilteringEnabled) of
+                                    case maybe_deliver_item(C#c{deliver = DeliverFun}, QEntry2, FilteringEnabled) of
                                         {skipped, C2} ->
                                             C3 = C2#c{
                                                 deliver = C#c.deliver,
@@ -689,29 +717,18 @@ maybe_pull(QTab, QSeq, C = #c{cseq = CSeq, name = CName}, CsNames, DeliverFun, F
                                         {_WorkedOrNoFun, C2} ->
                                             C2
                                     end;
-                                false ->
-                                    %% not removing any deliver function as we have purposely not used it
-                                    C#c{skips = 0, cseq = CSeq2, delivered = true}
-                            end;
-                        _ ->
-                            % if the item can't be delivered due to cascading rt,
-                            % just keep trying.
-                            case maybe_deliver_item(build_consumer(C, DeliverFun), QEntry2, FilteringEnabled) of
-                                {skipped, C2} ->
-                                    C3 = C2#c{
-                                        deliver = C#c.deliver,
-                                        delivery_funs = C#c.delivery_funs
-                                    },
-                                    maybe_pull(QTab, QSeq, C3, CsNames, DeliverFun, FilteringEnabled, FilteredBuckets);
-                                {_WorkedOrNoFun, C2} ->
-                                    C2
+
+                                %% we have a saved function due to being at the head of the queue, just add the function and let the push
+                                %% functionality push the items out to the helpers using the saved deliverfuns
+                                _ ->
+                                    save_consumer(C, DeliverFun)
                             end
                     end
             end;
         false ->
             %% consumer is up to date with head, keep deliver function
             %% until something pushed
-            build_consumer(C, DeliverFun)
+            save_consumer(C, DeliverFun)
     end.
 
 % We can't filter if bucket filtering is disabled or if the bucket config is undefined
@@ -911,8 +928,7 @@ update_filtered_bucket_state(Enabled) ->
 update_filtered_buckets_list(FilteringConfig) ->
     gen_server:call(?SERVER, {filtered_buckets, update_buckets, FilteringConfig}).
 
-build_consumer(C, DeliverFun) ->
-
+save_consumer(C, DeliverFun) ->
     case C#c.deliver of
         undefined ->
             C#c{deliver = DeliverFun};
