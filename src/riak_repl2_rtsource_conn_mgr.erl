@@ -42,6 +42,7 @@
     connection_ref, % reference handed out by connection manager
     rb_timeout_tref, % Rebalance timeout timer reference
     rebalance_delay_fun,
+    rebalance_timer,
     max_delay,
     source_nodes,
     sink_nodes,
@@ -94,13 +95,16 @@ init([Remote]) ->
     E = dict:new(),
     MaxDelaySecs = app_helper:get_env(riak_repl, realtime_connection_rebalance_max_delay_secs, 120),
     M = fun(X) -> round(X * crypto:rand_uniform(0, 1000)) end,
+    RebalanceTimer = app_helper:get_env(riak_repl, realtime_rebalance_on_failure, 5),
+
+
 
     case riak_core_capability:get({riak_repl, realtime_connections}, legacy) of
         legacy ->
             case riak_core_connection_mgr:connect({rt_repl, Remote}, ?CLIENT_SPEC, legacy) of
                 {ok, Ref} ->
                     {ok, #state{version = legacy, remote = Remote, connection_ref = Ref, endpoints = E, rebalance_delay_fun = M,
-                        max_delay=MaxDelaySecs, source_nodes = [], sink_nodes = []}};
+                        rebalance_timer=RebalanceTimer*1000, max_delay=MaxDelaySecs, source_nodes = [], sink_nodes = []}};
                 {error, Reason}->
                     lager:warning("Error connecting to remote, verions: legacy"),
                     {stop, Reason}
@@ -117,7 +121,7 @@ init([Remote]) ->
                                                end,
 
                     {ok, #state{version = v1, remote = Remote, connection_ref = Ref, endpoints = E, rebalance_delay_fun = M,
-                        max_delay=MaxDelaySecs, source_nodes = SourceNodes, sink_nodes = SinkNodes}};
+                        rebalance_timer=RebalanceTimer*1000, max_delay=MaxDelaySecs, source_nodes = SourceNodes, sink_nodes = SinkNodes}};
                 {error, Reason}->
                     lager:warning("Error connecting to remote, verions: v1"),
                     {stop, Reason}
@@ -306,7 +310,7 @@ maybe_rebalance(State, now) ->
         no_leader ->
             lager:info("rebalancing triggered, but an error occured with regard to the leader in the data mgr, will rebalance in 5 seconds"),
             cancel_timer(State#state.rb_timeout_tref),
-            RbTimeoutTref = erlang:send_after(5000, self(), rebalance_now),
+            RbTimeoutTref = erlang:send_after(State#state.rebalance_timer, self(), rebalance_now),
             State#state{rb_timeout_tref = RbTimeoutTref};
         {NewSource, NewSink} ->
             case should_rebalance(State, NewSource, NewSink) of
@@ -318,18 +322,20 @@ maybe_rebalance(State, now) ->
                     lager:info("rebalancing triggered, but an inconsistent data was found in realtime connections on data mgr, will rebalance in 5 seconds"),
                     riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, State#state.remote, node(), dict:fetch_keys(State#state.endpoints)),
                     cancel_timer(State#state.rb_timeout_tref),
-                    RbTimeoutTref = erlang:send_after(5000, self(), rebalance_now),
+                    RbTimeoutTref = erlang:send_after(State#state.rebalance_timer, self(), rebalance_now),
                     State#state{rb_timeout_tref = RbTimeoutTref};
 
                 no_leader ->
                     lager:info("rebalancing triggered, but an error occured with regard to the leader in the data mgr, will rebalance in 5 seconds"),
                     cancel_timer(State#state.rb_timeout_tref),
-                    RbTimeoutTref = erlang:send_after(5000, self(), rebalance_now),
+                    RbTimeoutTref = erlang:send_after(State#state.rebalance_timer, self(), rebalance_now),
                     State#state{rb_timeout_tref = RbTimeoutTref};
 
                 rebalance_needed_empty_list_returned ->
                     lager:info("rebalancing triggered but get_ip_addrs_of_cluster returned [], will rebalance in 5 seconds"),
-                    State;
+                    cancel_timer(State#state.rb_timeout_tref),
+                    RbTimeoutTref = erlang:send_after(State#state.rebalance_timer, self(), rebalance_now),
+                    State#state{rb_timeout_tref = RbTimeoutTref};
 
                 {true, {equal, DropNodes, ConnectToNodes, _Primary, _Secondary, _ConnectedSinkNodes}} ->
                     lager:info("rebalancing triggered but avoided via active connection matching ~n"

@@ -405,15 +405,13 @@ become_proxy(State, LeaderNode) ->
     State#state{is_leader = false, leader_node = LeaderNode}.
 
 send_leader_data() ->
-    ConnMgrsPids = riak_repl2_rtsource_conn_sup:enabled(),
-    AllEndpoints =  [{Remote,ConnsList} || {Remote, ConnsList} <- lists:map(fun({R,Pid}) -> {R, dict:fetch_keys(riak_repl2_rtsource_conn_mgr:get_endpoints(Pid))} end, ConnMgrsPids)],
-    [gen_server:cast(?SERVER, {restore_realtime_connections, Remote, node(), ConnectionList}) || {Remote, ConnectionList} <- AllEndpoints].
+    AllEndpoints = [{Remote, dict:fetch_keys(riak_repl2_rtsource_conn_mgr:get_endpoints(Pid))} || {Remote, Pid} <- riak_repl2_rtsource_conn_sup:enabled()],
+    _ = [gen_server:cast(?SERVER, {restore_realtime_connections, Remote, node(), ConnectionList}) || {Remote, ConnectionList} <- AllEndpoints],
+    ok.
 
 
 
-proxy_cast(CastMsg, _State = #state{leader_node=Leader}) when Leader == undefined ->
-    erlang:send_after(5000, self(), {cast_again, CastMsg}),
-    ok;
+
 proxy_cast(CastMsg, _State = #state{leader_node=Leader}) ->
     try gen_server:call({?SERVER, Leader}, {proxy_cast_handle, CastMsg}, ?PROXY_CALL_TIMEOUT) of
         restoration_in_process ->
@@ -421,13 +419,10 @@ proxy_cast(CastMsg, _State = #state{leader_node=Leader}) ->
         ok -> ok
     catch
         exit:_Error ->
-            erlang:send_after(5000, self(), {cast_again, CastMsg})
+            ok
     end,
     ok.
 
-proxy_call(_Call, NoLeaderResult, State = #state{leader_node=Leader}) when Leader == undefined ->
-    lager:debug("data_mgr no leader call: ~p", [_Call]),
-    {reply, NoLeaderResult, State};
 proxy_call(Call, NoLeaderResult, State = #state{leader_node=Leader}) ->
     Reply = try gen_server:call({?SERVER, Leader}, Call, ?PROXY_CALL_TIMEOUT) of
                 R -> R
