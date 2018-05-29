@@ -465,7 +465,8 @@ diff_bloom({Ref, {merkle_diff, {{B, K}, _VClock}}}, #state{diff_ref=Ref, bloom=B
 
 %% Sent by the fullsync_helper "streaming" difference generator when it's done.
 %% @plu server <- s:helper : diff_done
-diff_bloom({Ref, diff_done}, #state{diff_ref=Ref, partition=Partition, bloom=Bloom} = State) ->
+diff_bloom({Ref, diff_done}, #state{diff_ref=Ref, partition=Partition, bloom=Bloom,
+                                    bucket_filtering_enabled = FilterEnabled, bucket_filtering_config = FilterConfig} = State) ->
     lager:info("Full-sync with site ~p; fullsync difference generator for ~p complete (completed in ~p secs)",
                [State#state.sitename, State#state.partition,
                 riak_repl_util:elapsed_secs(State#state.partition_start)]),
@@ -494,7 +495,7 @@ diff_bloom({Ref, diff_done}, #state{diff_ref=Ref, partition=Partition, bloom=Blo
                                 fun ?MODULE:bloom_fold/3,
                                 {Self, BloomSpec,
                                  State#state.client, State#state.transport,
-                                 State#state.socket, DiffSize, DiffSize},
+                                 State#state.socket, DiffSize, DiffSize, {FilterEnabled, FilterConfig}},
                                 false,
                                 [{iterator_refresh, true}]),
                             {raw, FoldRef, self()},
@@ -678,10 +679,10 @@ command_verb(pause_fullsync) ->
 %% This folder will send batches of differences to the client. Each batch is "WinSz"
 %% riak objects. After a batch is sent, it will pause itself and wait to be resumed
 %% by receiving "bloom_resume".
-bloom_fold(BK, V, {MPid, {serialized, SBloom}, Client, Transport, Socket, NSent, WinSz}) ->
+bloom_fold(BK, V, {MPid, {serialized, SBloom}, Client, Transport, Socket, NSent, WinSz, {FilterEnabled, FilterConfig}}) ->
     {ok, Bloom} = ebloom:deserialize(SBloom),
-    bloom_fold(BK, V, {MPid, Bloom, Client, Transport, Socket, NSent, WinSz});
-bloom_fold({B, K}, V, {MPid, Bloom, Client, Transport, Socket, 0, WinSz} = Acc) ->
+    bloom_fold(BK, V, {MPid, Bloom, Client, Transport, Socket, NSent, WinSz, {FilterEnabled, FilterConfig}});
+bloom_fold({B, K}, V, {MPid, Bloom, Client, Transport, Socket, 0, WinSz, {FilterEnabled, FilterConfig}} = Acc) ->
     Monitor = erlang:monitor(process, MPid),
     ?TRACE(lager:info("bloom_fold -> MPid(~p) : bloom_paused", [MPid])),
     gen_fsm:send_event(MPid, {self(), bloom_paused}),
@@ -695,47 +696,59 @@ bloom_fold({B, K}, V, {MPid, Bloom, Client, Transport, Socket, 0, WinSz} = Acc) 
         bloom_resume ->
             ?TRACE(lager:info("bloom_fold <- MPid(~p) : bloom_resume", [MPid])),
             erlang:demonitor(Monitor, [flush]),
-            bloom_fold({B,K}, V, {MPid, Bloom, Client, Transport, Socket, WinSz, WinSz});
+            bloom_fold({B,K}, V, {MPid, Bloom, Client, Transport, Socket, WinSz, WinSz, {FilterEnabled, FilterConfig}});
         {'DOWN', Monitor, process, MPid, _Reason} ->
             throw(receiver_down);
         _Other ->
             erlang:demonitor(Monitor, [flush]),
             ?TRACE(lager:info("bloom_fold <- ? : ~p", [_Other]))
     end;
-bloom_fold({{T, B}, K}, V, {MPid, Bloom, Client, Transport, Socket, NSent0, WinSz}) ->
-    NSent = case ebloom:contains(Bloom, <<T/binary, B/binary, K/binary>>) of
+bloom_fold({{T, B}, K}, V, {MPid, Bloom, Client, Transport, Socket, NSent0, WinSz, {FilterEnabled, FilterConfig}}) ->
+    NSent = case (FilterEnabled andalso lists:member(B, FilterConfig)) of
+        true ->
+            % We should be filtering this key, value - do not do bloom check
+            NSent0;
+        false ->
+            % We are not filtering this one, continue as normal
+            case ebloom:contains(Bloom, <<T/binary, B/binary, K/binary>>) of
                 true ->
                     case (catch riak_object:from_binary({T,B},K,V)) of
                         {'EXIT', _} ->
                             ok;
                         RObj ->
                             gen_fsm:sync_send_event(MPid,
-                                                    {diff_obj, RObj},
-                                                    infinity)
+                                {diff_obj, RObj},
+                                infinity)
                     end,
                     NSent0 - 1;
                 false ->
-                    ok,
                     NSent0
-            end,
-    {MPid, Bloom, Client, Transport, Socket, NSent, WinSz};
-bloom_fold({B, K}, V, {MPid, Bloom, Client, Transport, Socket, NSent0, WinSz}) ->
-    NSent = case ebloom:contains(Bloom, <<B/binary, K/binary>>) of
+            end
+    end,
+    {MPid, Bloom, Client, Transport, Socket, NSent, WinSz, {FilterEnabled, FilterConfig}};
+bloom_fold({B, K}, V, {MPid, Bloom, Client, Transport, Socket, NSent0, WinSz, {FilterEnabled, FilterConfig}}) ->
+    NSent = case (FilterEnabled andalso lists:member(B, FilterConfig)) of
                 true ->
-                    case (catch riak_object:from_binary(B,K,V)) of
-                        {'EXIT', _} ->
-                            ok;
-                        RObj ->
-                            gen_fsm:sync_send_event(MPid,
-                                                    {diff_obj, RObj},
-                                                    infinity)
-                    end,
-                    NSent0 - 1;
+                    % We should be filtering this key, value - do not do bloom check
+                    NSent0;
                 false ->
-                    ok,
-                    NSent0
+                    % We are not filtering this one, continue as normal
+                    case ebloom:contains(Bloom, <<B/binary, K/binary>>) of
+                        true ->
+                            case (catch riak_object:from_binary(B,K,V)) of
+                                {'EXIT', _} ->
+                                    ok;
+                                RObj ->
+                                    gen_fsm:sync_send_event(MPid,
+                                        {diff_obj, RObj},
+                                        infinity)
+                            end,
+                            NSent0 - 1;
+                        false ->
+                            NSent0
+                    end
             end,
-    {MPid, Bloom, Client, Transport, Socket, NSent, WinSz}.
+    {MPid, Bloom, Client, Transport, Socket, NSent, WinSz, {FilterEnabled, FilterConfig}}.
 
 wait_for_individual_partition(Partition, State=#state{work_dir=WorkDir, bucket_filtering_enabled = FilterEnabled,
                                                       bucket_filtering_config = FilterConfig}) ->
