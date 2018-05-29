@@ -12,7 +12,8 @@
 
 -export([clustername/1, clusters/1,clusterstats/1,
          connect/1, disconnect/1, connections/1,
-         realtime/1, fullsync/1, proxy_get/1
+         realtime/1, fullsync/1, proxy_get/1,
+         datamgr_stats/1
         ]).
 -export([rt_remotes_status/0,
          fs_remotes_status/0]).
@@ -342,6 +343,37 @@ connections([]) ->
     io:format("~-20s ~-20s ~-15s [Members]~n", ["Connection", "Cluster Name", "<Ctrl-Pid>"]),
     io:format("~-20s ~-20s ~-15s ---------~n", ["----------", "------------", "----------"]),
     _ = [showClusterConn(Conn) || Conn <- Conns],
+    ok.
+
+print_datamgr_conns({Remote, _Pid}) ->
+    ConnName = string_of_remote(Remote),
+
+    ConnDetails = riak_repl2_rtsource_conn_data_mgr:read(realtime_connections, ConnName),
+
+    %% A list of all the remotes the current node is connected to
+    RemoteConns = dict:fetch_keys(ConnDetails),
+
+    lists:map(fun(RemoteConnName) ->
+                % Fetching the key gives us a dict of Node => {IPPort, Primary}
+                RemoteConnDetails = dict:fetch(RemoteConnName, ConnDetails),
+                RemoteConnList    = dict:to_list(RemoteConnDetails),
+
+                lists:map(fun({RemoteNodeName, Conns}) ->
+                            [begin
+                                io:format("~-20s ~-20s ~-15s ~-5s", [RemoteConnName, RemoteNodeName, IP, Primary])
+                             end || {IP, Primary} <- Conns]
+                          end, RemoteConnList)
+              end, RemoteConns),
+    ok.
+
+datamgr_stats([]) ->
+    {ok, Conns} = riak_core_cluster_mgr:get_connections(),
+
+    io:format("~-20s ~-20s ~-12s ~-5s~n", ["Remote", "Node", "IP", "Primary"]),
+    io:format("~-20s ~-20s ~-25s ~-5s~n", ["----------", "------------", "---------------", "---------"]),
+
+    [ print_datamgr_conns(Conn) || Conn <- Conns],
+
     ok.
 
 connect([Address]) ->
