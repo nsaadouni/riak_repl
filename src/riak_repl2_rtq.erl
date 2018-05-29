@@ -657,7 +657,7 @@ pull(Name, DeliverFun, State = #state{qtab = QTab, qseq = QSeq, cs = Cs, filtere
 %% @doc check if the given remote name is allowed to be routed to when bucket filtering is enabled
 -spec allowed_to_route(list(), [list()]) -> boolean().
 allowed_to_route(RemoteName, RemoteNames) ->
-    RemoteName == "qm" orelse lists:member(RemoteName, RemoteNames).
+    RemoteName == "qm" orelse not lists:member(RemoteName, RemoteNames).
 
 maybe_pull(QTab, QSeq, C = #c{cseq = CSeq, name = CName}, CsNames, DeliverFun, FilteringEnabled, FilteredBuckets) ->
     CSeq2 = CSeq + 1,
