@@ -30,7 +30,7 @@ rtq_trim_test() ->
 ask(Pid) ->
     Self = self(),
     gen_server:call(Pid, {pull_with_ack, rtq_test,
-             fun ({Seq, NumItem, Bin, _Meta, _}) ->
+             fun ({Seq, NumItem, Bin, _Meta}) ->
                     Self ! {rtq_entry, {NumItem, Bin}},
                     gen_server:cast(Pid, {ack, rtq_test, Seq, os:timestamp()}),
                     ok
@@ -46,6 +46,10 @@ accumulate(Pid, Acc, C) ->
             Size = byte_size(B),
             accumulate(Pid, Acc+Size, C-1)
     end.
+
+set_filtering_rules(Pid) ->
+    FilteringConfig = [{<<"eqc_test">>, []}],
+    gen_server:call(Pid, {filtered_buckets, update_buckets, FilteringConfig}).
 
 status_test_() ->
     {setup, fun() ->
@@ -304,7 +308,7 @@ pull(N) ->
 
 pull() ->
     Self = self(),
-    riak_repl2_rtq:pull("overload_test", fun({Seq, _, _, _, _}) ->
+    riak_repl2_rtq:pull("overload_test", fun({Seq, _, _, _}) ->
         Self ! {seq, Seq},
         ok
     end),
@@ -315,7 +319,7 @@ get_seq() ->
 
 block_rtq_pull() ->
     Self = self(),
-    riak_repl2_rtq:pull("overload_test", fun({Seq, _, _, _, _}) ->
+    riak_repl2_rtq:pull("overload_test", fun({Seq, _, _, _}) ->
         receive
             continue ->
                 ok

@@ -394,8 +394,8 @@ pull(Name, Q) ->
     end,
     riak_repl2_rtq:pull(Name, F),
     receive
-        {Ref, {Seq, Size, Item, Meta, BucketFilteringConfig}} ->
-            lager:info("~p got ~p size ~p seq ~p meta ~p filtering config ~p~n", [Name, Item, Size, Seq, Meta, BucketFilteringConfig]),
+        {Ref, {Seq, Size, Item, Meta}} ->
+            lager:info("~p got ~p size ~p seq ~p meta ~p~n", [Name, Item, Size, Seq, Meta]),
             Q ! {Ref, ok},
             {Seq, Size, binary_to_term(Item)};
         {Ref, _Wut} ->
