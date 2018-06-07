@@ -177,12 +177,6 @@
     {default, "60s"}
 ]}.
 
-%% @doc Polling interval to check the nodes that are still up source side for realtime replication
-{mapping, "mdc.realtime_node_watcher_polling_interval", "riak_repl.realtime_node_watcher_polling_interval", [
-    {datatype, {duration, s}},
-    {default, "10s"}
-]}.
-
 %% @doc cluster polling interval to retrieve sink ip addresses for nodes that are up
 {mapping, "mdc.realtime_sink_cluster_polling_interval", "riak_repl.realtime_sink_cluster_polling_interval", [
     {datatype, {duration, s}},

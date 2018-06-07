@@ -20,13 +20,14 @@ data_manager_test_() ->
           meck:expect(riak_core_capability, get, 1, fun(_) -> v1 end),
           meck:expect(riak_core_capability, get, 2, fun(_, _) -> v1 end),
 
+          riak_core_node_watcher_events_start(),
+
           %% ring_trans
           riak_core_ring_manager_start(),
           %% nodes
           riak_core_node_watcher_start(),
           %% get_active_nodes, get_realtime_connection_data
           riak_repl_ring_start(),
-          application:set_env(riak_repl, realtime_node_watcher_polling_interval, 1),
           {ok, _Pid} = riak_repl2_rtsource_conn_data_mgr:start_link(),
           riak_repl2_rtsource_conn_sup_start(),
           riak_repl2_rtsource_conn_data_mgr:set_leader(node(), pid),
@@ -40,6 +41,7 @@ data_manager_test_() ->
           catch(meck:unload(riak_repl_ring)),
           catch(meck:unload(riak_repl2_rtsource_conn_sup)),
           catch(meck:unload(riak_core_capability)),
+          catch(meck:unload(riak_core_node_watcher_events)),
           ets:delete(mock_ring_test),
           timer:sleep(200),
           process_flag(trap_exit, false),
@@ -51,8 +53,8 @@ data_manager_test_() ->
           [
             {"Initialization",
               fun() ->
+                riak_repl2_rtsource_conn_data_mgr:node_watcher_update([riak_kv]),
                 timer:sleep(2500),
-
                 [{realtime_connections, RTC}] = ets:lookup(mock_ring_test, realtime_connections),
                 [{active_nodes, AN}] = ets:lookup(mock_ring_test, active_nodes),
                 ?assertMatch(RTC, dict:new()),
@@ -69,6 +71,9 @@ data_manager_test_() ->
                 riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, "remote", node_e, {ip5, port5}, true),
                 riak_repl2_rtsource_conn_data_mgr:write(realtime_connections, "remote", node_f, {ip6, port6}, true),
                 timer:sleep(100),
+
+                riak_repl2_rtsource_conn_data_mgr:node_watcher_update([riak_kv]),
+
 
                 NodeDict = dict:from_list([
                   {node_a, [{{ip1,port1},true}]},
@@ -227,7 +232,8 @@ data_manager_test_() ->
             {"Test 9 - Read 1 (Polling)",
               fun() ->
                 dynamic_node_watcher(?SOURCE_3),
-                timer:sleep(1200),
+                riak_repl2_rtsource_conn_data_mgr:node_watcher_update([riak_kv]),
+                timer:sleep(100),
                 ActiveNodes = riak_repl2_rtsource_conn_data_mgr:read(active_nodes),
                 [{active_nodes, AN}] = ets:lookup(mock_ring_test, active_nodes),
                 ?assertMatch(ActiveNodes, ?SOURCE_3),
@@ -238,7 +244,8 @@ data_manager_test_() ->
             {"Test 10 - Read 2 (Polling)",
               fun() ->
                 dynamic_node_watcher(?SOURCE_8),
-                timer:sleep(1200),
+                riak_repl2_rtsource_conn_data_mgr:node_watcher_update([riak_kv]),
+                timer:sleep(100),
                 ActiveNodes = riak_repl2_rtsource_conn_data_mgr:read(active_nodes),
                 [{active_nodes, AN}] = ets:lookup(mock_ring_test, active_nodes),
                 ?assertMatch(ActiveNodes, ?SOURCE_8),
@@ -280,6 +287,14 @@ riak_core_ring_manager_start() ->
       end
     end
   ).
+
+riak_core_node_watcher_events_start() ->
+  catch(meck:unload(riak_core_node_watcher_events)),
+  meck:new(riak_core_node_watcher_events, [passthrough]),
+  meck:expect(riak_core_node_watcher_events, add_sup_callback,
+    fun(_Fn) ->
+      ok
+    end).
 
 riak_core_node_watcher_start() ->
   catch(meck:unload(riak_core_node_watcher)),

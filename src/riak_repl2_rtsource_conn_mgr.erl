@@ -1,5 +1,4 @@
 -module(riak_repl2_rtsource_conn_mgr).
--author("nordine saadouni").
 -behaviour(gen_server).
 
 %% API
