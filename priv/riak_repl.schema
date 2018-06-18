@@ -183,6 +183,12 @@
     {default, "10s"}
 ]}.
 
+%% @doc riak_repl2_rtsource_conn_data_mgr polling interval to riak_core_capability module to find out when all nodes are upgraded to 2.2.7
+{mapping, "mdc.realtime_core_capability_polling_interval", "riak_repl.realtime_core_capability_polling_interval", [
+    {datatype, {duration, s}},
+    {default, "60s"}
+]}.
+
 %% @doc realtime sink replication minimum workers for poolboy
 {mapping, "mdc.rtsink_min_workers", "riak_repl.rtsink_min_workers", [
     {datatype, integer},
