@@ -564,11 +564,11 @@ unregister_q(Name, State = #state{qtab = QTab, cs = Cs}) ->
             {{error, not_registered}, State}
     end.
 
--spec filter_consumers(Enabled :: boolean(), AllConsumers :: [list()], BucketConfig :: [list()]) -> [list()].
+-spec filter_consumers(Enabled :: boolean(), AllConsumers :: [list()], Clusters :: [list()]) -> [list()].
 filter_consumers(_, AllConsumers, []) -> AllConsumers;
 filter_consumers(false, AllConsumers, _) -> AllConsumers;
 filter_consumers(true, AllConsumers, Clusters) ->
-            [Consumer || Consumer <- AllConsumers, allowed_to_route(Consumer, Clusters) ].
+            [Consumer || Consumer <- AllConsumers, consumer_not_blacklisted(Consumer, Clusters) ].
 
 %% Buckets -> {Bucket, [Consumers_names]}
 config_for_bucket(undefined, _) ->
@@ -616,11 +616,11 @@ push(NumItems, Bin, Meta, State = #state{qtab = QTab,
 
     AllConsumers = [Consumer#c.name || Consumer <- Cs],
 
-    ConfigForBucket = config_for_bucket(BucketName, FilteredBucketConfig),
-    FilteredConsumers = filter_consumers(FEnabled, AllConsumers, ConfigForBucket),
+    BlacklistedRemotes = config_for_bucket(BucketName, FilteredBucketConfig),
+    FilteredConsumers = filter_consumers(FEnabled, AllConsumers, BlacklistedRemotes),
     QEntry2 = set_local_forwards_meta(FilteredConsumers, QEntry),
 
-    DeliverAndCs2 = [maybe_deliver_item(C, QEntry2, FEnabled, ConfigForBucket) || C <- Cs],
+    DeliverAndCs2 = [maybe_deliver_item(C, QEntry2, FEnabled, BlacklistedRemotes) || C <- Cs],
     DeliverAndCs3 = update_consumer_delivery_funs(DeliverAndCs2),
     {DeliverResults, Cs3} = lists:unzip(DeliverAndCs3),
     AllSkipped = lists:all(fun
@@ -653,10 +653,10 @@ pull(Name, DeliverFun, State = #state{qtab = QTab, qseq = QSeq, cs = Cs, filtere
     State#state{cs = UpdCs}.
 
 %% @doc check if the given remote name is allowed to be routed to when bucket filtering is enabled
--spec allowed_to_route(atom() | list(), [list()]) -> boolean().
-allowed_to_route(RemoteNameAtom, RemoteNames) when is_atom(RemoteNameAtom) ->
-    allowed_to_route(atom_to_list(RemoteNameAtom), RemoteNames);
-allowed_to_route(RemoteName, RemoteNames) when is_list(RemoteName) ->
+-spec consumer_not_blacklisted(atom() | list(), [list()]) -> boolean().
+consumer_not_blacklisted(RemoteNameAtom, RemoteNames) when is_atom(RemoteNameAtom) ->
+    consumer_not_blacklisted(atom_to_list(RemoteNameAtom), RemoteNames);
+consumer_not_blacklisted(RemoteName, RemoteNames) when is_list(RemoteName) ->
     not lists:member(RemoteName, RemoteNames).
 
 maybe_pull(QTab, QSeq, C = #c{cseq = CSeq, name = CName}, CsNames, DeliverFun, FilteringEnabled, FilteredBuckets) ->
@@ -669,19 +669,19 @@ maybe_pull(QTab, QSeq, C = #c{cseq = CSeq, name = CName}, CsNames, DeliverFun, F
                     maybe_pull(QTab, QSeq, C2, CsNames, DeliverFun, FilteringEnabled, FilteredBuckets);
                 [QEntry] ->
                     BucketName = bucket_name_from_meta(QEntry),
-                    FilteredCsNames = filter_consumers(FilteringEnabled, CsNames, BucketName),
+                    BlacklistedRemotes = config_for_bucket(BucketName, FilteredBuckets),
+                    FilteredCsNames = filter_consumers(FilteringEnabled, CsNames, BlacklistedRemotes),
                     QEntry2 = set_local_forwards_meta(FilteredCsNames, QEntry),
-                    BucketConfig = config_for_bucket(BucketName, FilteredBuckets),
 
-                    case BucketConfig of
+                    case BlacklistedRemotes of
                         Config when Config /= [] ->
-                            case allowed_to_route(CName, Config) of
+                            case consumer_not_blacklisted(CName, Config) of
                                 true ->
                                     case C#c.deliver of
                                         undefined ->
                                             % if the item can't be delivered due to cascading rt,
                                             % just keep trying.
-                                            case maybe_deliver_item(C#c{deliver = DeliverFun}, QEntry2, FilteringEnabled, BucketConfig) of
+                                            case maybe_deliver_item(C#c{deliver = DeliverFun}, QEntry2, FilteringEnabled, BlacklistedRemotes) of
                                                 {skipped, C2} ->
                                                     C3 = C2#c{
                                                         deliver = C#c.deliver,
@@ -707,7 +707,7 @@ maybe_pull(QTab, QSeq, C = #c{cseq = CSeq, name = CName}, CsNames, DeliverFun, F
                                 undefined ->
                                     % if the item can't be delivered due to cascading rt,
                                     % just keep trying.
-                                    case maybe_deliver_item(C#c{deliver = DeliverFun}, QEntry2, FilteringEnabled, BucketConfig) of
+                                    case maybe_deliver_item(C#c{deliver = DeliverFun}, QEntry2, FilteringEnabled, BlacklistedRemotes) of
                                         {skipped, C2} ->
                                             C3 = C2#c{
                                                 deliver = C#c.deliver,
@@ -732,27 +732,27 @@ maybe_pull(QTab, QSeq, C = #c{cseq = CSeq, name = CName}, CsNames, DeliverFun, F
     end.
 
 % We can't filter if bucket filtering is disabled or if the bucket config is undefined
-filter_if_enabled(true, Name, AllowedRemotes) ->
-    case allowed_to_route(Name, AllowedRemotes) of
+filter_if_enabled(true, Name, BlacklistedRemotes) ->
+    case consumer_not_blacklisted(Name, BlacklistedRemotes) of
         true -> no_fun;
         false -> filtered
     end;
 filter_if_enabled(_, _, _) ->
     no_fun.
 
-deliver_if_can_route(false, Consumer, QEntry, _Remotes) ->
+deliver_if_can_route(false, Consumer, QEntry, _BlacklistedRemotes) ->
     {delivered, deliver_item(Consumer, Consumer#c.deliver, QEntry)};
-deliver_if_can_route(true, Consumer, {Seq, _NumItem, _Bin, _Meta} = QEntry, Remotes) ->
-    case allowed_to_route(Consumer#c.name, Remotes) of
+deliver_if_can_route(true, Consumer, {Seq, _NumItem, _Bin, _Meta} = QEntry, BlacklistedRemotes) ->
+    case consumer_not_blacklisted(Consumer#c.name, BlacklistedRemotes) of
         true ->
             {delivered, deliver_item(Consumer, Consumer#c.deliver, QEntry)};
         false ->
             {filtered, Consumer#c{cseq = Seq, aseq = Seq, filtered = Consumer#c.filtered + 1, delivered = true, skips=0}}
     end;
-deliver_if_can_route(_, Consumer, QEntry, _Remotes) ->
+deliver_if_can_route(_, Consumer, QEntry, _BlacklistedRemotes) ->
     {delivered, deliver_item(Consumer, Consumer#c.deliver, QEntry)}.
 
-maybe_deliver_item(C = #c{deliver = undefined}, QEntry, FilteringEnabled, BucketConfig) ->
+maybe_deliver_item(C = #c{deliver = undefined}, QEntry, FilteringEnabled, BlacklistedRemotes) ->
     {_Seq, _NumItem, _Bin, Meta} = QEntry,
 
     Name = C#c.name,
@@ -764,10 +764,10 @@ maybe_deliver_item(C = #c{deliver = undefined}, QEntry, FilteringEnabled, Bucket
         true ->
             skipped;
         false ->
-            filter_if_enabled(FilteringEnabled, Name, BucketConfig)
+            filter_if_enabled(FilteringEnabled, Name, BlacklistedRemotes)
     end,
     {Cause, C};
-maybe_deliver_item(C, QEntry, FilteringEnabled, BucketConfig) ->
+maybe_deliver_item(C, QEntry, FilteringEnabled, BlacklistedRemotes) ->
     {Seq, _NumItem, _Bin, Meta} = QEntry,
     #c{name = Name} = C,
     Routed = case orddict:find(routed_clusters, Meta) of
@@ -781,7 +781,7 @@ maybe_deliver_item(C, QEntry, FilteringEnabled, BucketConfig) ->
         true ->
             {skipped, C#c{cseq = Seq, aseq = Seq}};
         false ->
-            deliver_if_can_route(FilteringEnabled, C, QEntry, BucketConfig)
+            deliver_if_can_route(FilteringEnabled, C, QEntry, BlacklistedRemotes)
     end.
 
 deliver_item(C, DeliverFun, {Seq, _NumItem, _Bin, _Meta} = QEntry) ->
