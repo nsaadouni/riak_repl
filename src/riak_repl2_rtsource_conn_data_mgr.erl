@@ -92,6 +92,7 @@ legacy_init(State) ->
     riak_core_node_watcher_events:add_sup_callback(fun ?MODULE:node_watcher_update/1),
     CoreCapabilityPollingIntervalSecs = app_helper:get_env(riak_repl, realtime_core_capability_polling_interval, 60),
     CoreCapabilityPollingInterval = CoreCapabilityPollingIntervalSecs * 1000,
+    erlang:send_after(CoreCapabilityPollingInterval, self(), poll_core_capability),
     State#state{version = legacy, leader_node = undefined, is_leader = false, connections = dict:new(), active_nodes = [],
         restoration = false, core_capability_polling_interval = CoreCapabilityPollingInterval}.
 
@@ -102,6 +103,7 @@ v1_init(State) ->
                 case LeaderNode == node() of
                     true ->
                         EmptyDict = dict:new(),
+                        riak_core_ring_manager:ring_trans(fun riak_repl_ring:overwrite_realtime_connection_data/2, EmptyDict),
                         case riak_repl_ring:get_realtime_connection_data() of
                             EmptyDict ->
                                 {LeaderNode, true};
@@ -122,11 +124,9 @@ v1_init(State) ->
 
     C = dict:new(),
     AN = [],
-    riak_core_ring_manager:ring_trans(fun riak_repl_ring:overwrite_realtime_connection_data/2, C),
     riak_core_node_watcher_events:add_sup_callback(fun ?MODULE:node_watcher_update/1),
     CoreCapabilityPollingIntervalSecs = app_helper:get_env(riak_repl, realtime_core_capability_polling_interval, 60),
     CoreCapabilityPollingInterval = CoreCapabilityPollingIntervalSecs * 1000,
-
     State#state{version = v1, leader_node = Leader, is_leader = IsLeader, connections = C, active_nodes = AN, restoration = false,
         core_capability_polling_interval = CoreCapabilityPollingInterval}.
 
