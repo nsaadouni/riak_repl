@@ -1089,6 +1089,10 @@ simple_parse(Str) ->
     {value, Value, _Bs} = erl_eval:exprs(AbsForm, erl_eval:new_bindings()),
     Value.
 
+
+%% ========================================================================================================= %%
+%% Bucket Filtering (legacy)
+%% ========================================================================================================= %%
 add_filtered_bucket([BucketName, ClusterName]) ->
     lager:info("add filtered bucket: ~s, allowed to route to: ~p~n", [ClusterName, BucketName]),
     riak_core_ring_manager:ring_trans(fun riak_repl_ring:add_filtered_bucket/2,
@@ -1141,3 +1145,11 @@ print_bucket_filtering_config([]) ->
 
 enable_flag_to_list(B) when is_boolean(B) -> atom_to_list(B);
 enable_flag_to_list(_) -> "false".
+
+%% ========================================================================================================= %%
+%% Object Filtering
+%% ========================================================================================================= %%
+
+%% start
+%% stop
+%% load file.config

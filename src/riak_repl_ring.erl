@@ -515,6 +515,90 @@ get_nat_map(Ring) ->
 get_ensured_repl_config(Ring) ->
     get_repl_config(ensure_config(Ring)).
 
+overwrite_realtime_connection_data(Ring, Dictionary) ->
+    RC = get_repl_config(ensure_config(Ring)),
+    RC2 = dict:store(realtime_connections, Dictionary, RC),
+    case RC == RC2 of
+        true ->
+            %% nothing changed
+            {ignore, {not_changed, clustername}};
+        false ->
+            {new_ring, riak_core_ring:update_meta(
+                ?MODULE,
+                RC2,
+                Ring)}
+    end.
+
+get_realtime_connection_data() ->
+    case riak_core_ring_manager:get_my_ring() of
+        {ok, Ring} ->
+            RC = get_repl_config(ensure_config(Ring)),
+            get_value(realtime_connections, RC, dictionary);
+        RingError ->
+            RingError
+    end.
+
+overwrite_active_nodes(Ring, ActiveNodeList) ->
+    RC = get_repl_config(ensure_config(Ring)),
+    RC2 = dict:store(active_nodes, ActiveNodeList, RC),
+    case RC == RC2 of
+        true ->
+            %% nothing changed
+            {ignore, {not_changed, clustername}};
+        false ->
+            {new_ring, riak_core_ring:update_meta(
+                ?MODULE,
+                RC2,
+                Ring)}
+    end.
+
+overwrite_active_nodes_and_realtime_connection_data(Ring, {RealtimeDictionary, ActiveNodeList}) ->
+    RC = get_repl_config(ensure_config(Ring)),
+    RC2 = dict:store(active_nodes, ActiveNodeList, RC),
+    RC3 = dict:store(realtime_connections, RealtimeDictionary, RC2),
+    case RC == RC3 of
+        true ->
+            %% nothing changed
+            {ignore, {not_changed, clustername}};
+        false ->
+            {new_ring, riak_core_ring:update_meta(
+                ?MODULE,
+                RC3,
+                Ring)}
+    end.
+
+get_active_nodes() ->
+    case riak_core_ring_manager:get_my_ring() of
+        {ok, Ring} ->
+            RC = get_repl_config(ensure_config(Ring)),
+            get_value(active_nodes, RC, list);
+        RingError ->
+            RingError
+    end.
+
+%% ===================================== %%
+%% Helper Functions
+%% ===================================== %%
+get_value(Key, Dictionary, Type) ->
+    case dict:find(Key, Dictionary) of
+        {ok, X} ->
+            X;
+        error ->
+            case Type of
+                dictionary ->
+                    dict:new();
+                list ->
+                    []
+            end
+    end.
+%% ========================================================================================================= %%
+%% Object Filtering
+%% ========================================================================================================= %%
+
+
+%% ========================================================================================================= %%
+%% Bucket Filtering (legacy)
+%% ========================================================================================================= %%
 % Wrapper to check whether the ring has changed after setting a new metadata item
 -spec check_metadata_has_changed(ring(), riak_repl_dict(), riak_repl_dict()) -> {ignore, {atom(), atom()}} | {new_ring, ring()}.
 check_metadata_has_changed(Ring, RC, RC2) ->
@@ -662,82 +746,7 @@ remove_filtered_bucket(Ring, BucketName) ->
             RC3 = dict:store(filteredbuckets, BucketConfig2, RC),
             check_metadata_has_changed(Ring, RC, RC3)
     end.
-
-
-
-get_value(Key, Dictionary, Type) ->
-    case dict:find(Key, Dictionary) of
-        {ok, X} ->
-            X;
-        error ->
-            case Type of
-                dictionary ->
-                    dict:new();
-                list ->
-                    []
-            end
-    end.
-
-overwrite_realtime_connection_data(Ring, Dictionary) ->
-    RC = get_repl_config(ensure_config(Ring)),
-    RC2 = dict:store(realtime_connections, Dictionary, RC),
-    case RC == RC2 of
-        true ->
-            %% nothing changed
-            {ignore, {not_changed, clustername}};
-        false ->
-            {new_ring, riak_core_ring:update_meta(
-                ?MODULE,
-                RC2,
-                Ring)}
-    end.
-
-get_realtime_connection_data() ->
-    case riak_core_ring_manager:get_my_ring() of
-        {ok, Ring} ->
-            RC = get_repl_config(ensure_config(Ring)),
-            get_value(realtime_connections, RC, dictionary);
-        RingError ->
-            RingError
-    end.
-
-overwrite_active_nodes(Ring, ActiveNodeList) ->
-    RC = get_repl_config(ensure_config(Ring)),
-    RC2 = dict:store(active_nodes, ActiveNodeList, RC),
-    case RC == RC2 of
-        true ->
-            %% nothing changed
-            {ignore, {not_changed, clustername}};
-        false ->
-            {new_ring, riak_core_ring:update_meta(
-                ?MODULE,
-                RC2,
-                Ring)}
-    end.
-
-overwrite_active_nodes_and_realtime_connection_data(Ring, {RealtimeDictionary, ActiveNodeList}) ->
-    RC = get_repl_config(ensure_config(Ring)),
-    RC2 = dict:store(active_nodes, ActiveNodeList, RC),
-    RC3 = dict:store(realtime_connections, RealtimeDictionary, RC2),
-    case RC == RC3 of
-        true ->
-            %% nothing changed
-            {ignore, {not_changed, clustername}};
-        false ->
-            {new_ring, riak_core_ring:update_meta(
-                ?MODULE,
-                RC3,
-                Ring)}
-    end.
-
-get_active_nodes() ->
-    case riak_core_ring_manager:get_my_ring() of
-        {ok, Ring} ->
-            RC = get_repl_config(ensure_config(Ring)),
-            get_value(active_nodes, RC, list);
-        RingError ->
-            RingError
-    end.
+%% ========================================================================================================= %%
 
 
 %% unit tests
