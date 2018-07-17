@@ -164,21 +164,35 @@ do_repl_put(Object, B, true) ->
                     ok
             end,
 
+            %% This needs to grab the delete mode and check is backend_reap is enabled
+            %% Then grab riak_object:has_expire_time(Object) and check what to do with it from there (no need to reap!)
             case riak_kv_util:is_x_deleted(Object) of
-                true ->
-                    lager:debug("Incoming deleted obj ~p/~p", [B, K]),
-                    _ = reap(ReqId, B, K),
-                    %% block waiting for response
-                    wait_for_response(ReqId, "reap");
-                false ->
-                    lager:debug("Incoming obj ~p/~p", [B, K])
+                true -> _ = reap(ReqId, B, K, Object);
+                false -> lager:debug("Incoming obj ~p/~p", [B, K])
             end;
+
         cancel ->
             lager:debug("Skipping repl received object ~p/~p", [B, K])
     end.
 
-reap(ReqId, B, K) ->
-    riak_kv_get_fsm:start(ReqId, B, K, 1, ?REPL_FSM_TIMEOUT, self()).
+reap(ReqId, Bucket, Key, Object) ->
+    case riak_kv_util:backend_reap_mode(Bucket) of
+        {backend_reap, _BackendreapThreshold} ->
+            case riak_object:has_expire_time(Object) of
+                false ->
+                    reap(ReqId, Bucket, Key);
+                _ ->
+                    ok
+            end;
+        _ ->
+            reap(ReqId, Bucket, Key)
+    end.
+
+reap(ReqId, Bucket, Key) ->
+    lager:debug("Incoming deleted obj ~p/~p", [Bucket, Key]),
+    riak_kv_get_fsm:start(ReqId, Bucket, Key, 1, ?REPL_FSM_TIMEOUT, self()),
+    %% block waiting for response
+    wait_for_response(ReqId, "reap").
 
 wait_for_response(ReqId, Verb) ->
     receive
