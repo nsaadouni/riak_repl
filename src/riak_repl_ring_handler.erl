@@ -192,7 +192,41 @@ rt_update_events(Ring) ->
             RTCascadesFound
     end,
     application:set_env(riak_repl, realtime_cascades, RTCascades),
+%% ========================================================================================================= %%
+%% Object Filtering
+%% ========================================================================================================= %%
+    ObjectFilteringStatus = app_helper:get_env(riak_repl, object_filtering_status, disabled),
+    ObjectFilteringConfig = app_helper:get_env(riak_repl, object_filtering_config, []),
 
+    NewObjectFilteringStatus = case dict:find(object_filtering_status, RC) of
+                                   {ok, S} ->
+                                       S;
+                                   _ ->
+                                       disabled
+                               end,
+
+    NewObjectFilteringConfig = case dict:find(object_filtering_config, RC) of
+                                   {ok, C} ->
+                                       C;
+                                   _ ->
+                                       []
+                               end,
+
+    case ObjectFilteringStatus == NewObjectFilteringStatus of
+        true ->
+            ok;
+        false ->
+            application:set_env(riak_repl, object_filtering_status, NewObjectFilteringStatus)
+    end,
+    case ObjectFilteringConfig == NewObjectFilteringConfig of
+        true ->
+            ok;
+        false ->
+            application:set_env(riak_repl, object_filtering_config, NewObjectFilteringConfig)
+    end,
+%% ========================================================================================================= %%
+%% Bucket Filtering (legacy)
+%% ========================================================================================================= %%
     BucketFilteringEnabled = case dict:find(bucket_filtering_enabled, RC) of
                                  {ok, V} when is_boolean(V) ->
                                      V;
@@ -229,6 +263,7 @@ rt_update_events(Ring) ->
             application:set_env(riak_repl, filtered_buckets, FilteringConfig),
             riak_repl2_rtq:update_filtered_buckets_list(FilteringConfig)
     end,
+%% ========================================================================================================= %%
 
     %% always 'install' the hook, the postcommit hooks will be toggled by
     %% the rtenabled environment variable

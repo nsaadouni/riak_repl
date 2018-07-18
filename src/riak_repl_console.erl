@@ -13,8 +13,7 @@
 -export([clustername/1, clusters/1,clusterstats/1,
          connect/1, disconnect/1, connections/1,
          realtime/1, fullsync/1, proxy_get/1,
-         datamgr_stats/1
-        ]).
+         datamgr_stats/1]).
 -export([rt_remotes_status/0,
          fs_remotes_status/0]).
 
@@ -25,6 +24,7 @@
          server_stats/0,
          coordinator_stats/0,
          coordinator_srv_stats/0]).
+
 -export([modes/1, set_modes/1, get_modes/0,
          max_fssource_node/1,
          max_fssource_cluster/1,
@@ -37,17 +37,21 @@
          add_block_provider_redirect/1,
          show_block_provider_redirect/1,
          show_local_cluster_id/1,
-         delete_block_provider_redirect/1
-     ]).
--export([
-    add_filtered_bucket/1,
-    remove_filtered_bucket/1,
-    reset_filtered_buckets/1,
-    enable_bucket_filtering/1,
-    disable_bucket_filtering/1,
-    print_bucket_filtering_config/1,
-    remove_bucket_from_filtering/1
-]).
+         delete_block_provider_redirect/1]).
+
+-export([add_filtered_bucket/1,
+         remove_filtered_bucket/1,
+         reset_filtered_buckets/1,
+         enable_bucket_filtering/1,
+         disable_bucket_filtering/1,
+         print_bucket_filtering_config/1,
+         remove_bucket_from_filtering/1]).
+
+-export([object_filtering_enable/1,
+         object_filtering_disable/1,
+         object_filtering_load_config/1,
+         object_filtering_print_config/1,
+         object_filtering_check_config/1]).
 
 add_listener(Params) ->
     lager:warning(?V2REPLDEP, []),
@@ -1149,7 +1153,22 @@ enable_flag_to_list(_) -> "false".
 %% ========================================================================================================= %%
 %% Object Filtering
 %% ========================================================================================================= %%
+object_filtering_enable([]) ->
+    Reply = riak_repl2_object_filter:enable(),
+    io:format("~p ~n", [Reply]).
 
-%% start
-%% stop
-%% load file.config
+object_filtering_disable([]) ->
+    Reply = riak_repl2_object_filter:disable(),
+    io:format("~p ~n", [Reply]).
+
+object_filtering_load_config([ConfigPath]) ->
+    Reply = riak_repl2_object_filter:load_config(ConfigPath),
+    io:format("~p ~n", [Reply]).
+
+object_filtering_check_config([ConfigPath]) ->
+    Reply = riak_repl2_object_filter:check_config(ConfigPath),
+    io:format("~p ~n", [Reply]).
+
+object_filtering_print_config([]) ->
+    Reply = riak_repl2_object_filter:print_config(),
+    io:format("~p ~n", [Reply]).

@@ -56,7 +56,11 @@
          overwrite_realtime_connection_data/2,
          get_active_nodes/0,
          overwrite_active_nodes/2,
-         overwrite_active_nodes_and_realtime_connection_data/2
+         overwrite_active_nodes_and_realtime_connection_data/2,
+
+         overwrite_object_filtering_status/2,
+         overwrite_object_filtering_config/2,
+         get_object_filtering_data/0
          ]).
 
 -ifdef(TEST).
@@ -533,7 +537,7 @@ get_realtime_connection_data() ->
     case riak_core_ring_manager:get_my_ring() of
         {ok, Ring} ->
             RC = get_repl_config(ensure_config(Ring)),
-            get_value(realtime_connections, RC, dictionary);
+            get_value(realtime_connections, RC, dict:new());
         RingError ->
             RingError
     end.
@@ -571,30 +575,62 @@ get_active_nodes() ->
     case riak_core_ring_manager:get_my_ring() of
         {ok, Ring} ->
             RC = get_repl_config(ensure_config(Ring)),
-            get_value(active_nodes, RC, list);
+            get_value(active_nodes, RC, []);
         RingError ->
             RingError
+    end.
+%% ========================================================================================================= %%
+%% Object Filtering
+%% ========================================================================================================= %%
+overwrite_object_filtering_status(Ring, ObjectFilteringStatus) ->
+    RC = get_repl_config(ensure_config(Ring)),
+    RC2 = dict:store(object_filtering_status, ObjectFilteringStatus, RC),
+    case RC == RC2 of
+        true ->
+            %% nothing changed
+            {ignore, {not_changed, clustername}};
+        false ->
+            {new_ring, riak_core_ring:update_meta(
+                ?MODULE,
+                RC2,
+                Ring)}
+    end.
+
+overwrite_object_filtering_config(Ring, ObjectFilteringConfig) ->
+    RC = get_repl_config(ensure_config(Ring)),
+    RC2 = dict:store(object_filtering_config, ObjectFilteringConfig, RC),
+    case RC == RC2 of
+        true ->
+            %% nothing changed
+            {ignore, {not_changed, clustername}};
+        false ->
+            {new_ring, riak_core_ring:update_meta(
+                ?MODULE,
+                RC2,
+                Ring)}
+    end.
+
+get_object_filtering_data() ->
+    case riak_core_ring_manager:get_my_ring() of
+        {ok, Ring} ->
+            RC = get_repl_config(ensure_config(Ring)),
+            Status = get_value(object_filtering_status, RC, disabled),
+            Config = get_value(object_filtering_config, RC, []),
+            {Status, Config};
+        _RingError ->
+            {disabled, []}
     end.
 
 %% ===================================== %%
 %% Helper Functions
 %% ===================================== %%
-get_value(Key, Dictionary, Type) ->
+get_value(Key, Dictionary, Default) ->
     case dict:find(Key, Dictionary) of
         {ok, X} ->
             X;
         error ->
-            case Type of
-                dictionary ->
-                    dict:new();
-                list ->
-                    []
-            end
+            Default
     end.
-%% ========================================================================================================= %%
-%% Object Filtering
-%% ========================================================================================================= %%
-
 
 %% ========================================================================================================= %%
 %% Bucket Filtering (legacy)
