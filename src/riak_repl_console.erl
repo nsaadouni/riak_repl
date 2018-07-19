@@ -290,6 +290,7 @@ clustername([ClusterName]) ->
     ?LOG_USER_CMD("Set clustername to ~p", [ClusterName]),
     riak_core_ring_manager:ring_trans(fun riak_core_connection:set_symbolic_clustername/2,
                                       ClusterName),
+    application:set_env(riak_repl, clustername, ClusterName),
     ok.
 
 clusters([]) ->

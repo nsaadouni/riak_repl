@@ -66,6 +66,11 @@ start(_Type, _StartArgs) ->
         [v1, legacy],
         legacy
         ),
+    riak_core_capability:register(
+        {riak_repl, object_filtering_version},
+        [1.1, 1.0, 0],
+        0
+    ),
 
     %% skip Riak CS blocks
     case riak_repl_util:proxy_get_active() of
