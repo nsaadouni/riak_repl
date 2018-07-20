@@ -127,7 +127,8 @@ handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
     Strategy = decide_common_strategy(OurCaps, TheirCaps),
     {ObjectFilteringStatus, ObjectFilteringVersion, ObjectFilteringConfig} =
         maybe_get_object_filtering_configurations(OurCaps, TheirCaps, Socket, Transport, Cluster),
-    lager:error("Fullsync: ~p ~p ~p" ,[ObjectFilteringStatus, ObjectFilteringVersion, ObjectFilteringConfig]),
+    FullsyncObjectFilter = {fullsync, ObjectFilteringStatus, ObjectFilteringVersion, ObjectFilteringConfig},
+
 
 
 %% ========================================================================================================= %%
@@ -137,6 +138,8 @@ handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
 
     %% This is the list of buckets that we need to do bucket filtering with
     SharedBucketList = maybe_exchange_filtered_buckets(BucketFilteringEnabledOnBothSides, Cluster, Socket, Transport),
+
+    FullSyncBucketFilter = {BucketFilteringEnabledOnBothSides, SharedBucketList},
 %% ========================================================================================================= %%
 
     {_, ClientVer, _} = Proto,
@@ -151,7 +154,7 @@ handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
             {ok, FullsyncWorker} = riak_repl_keylist_server:start_link(Cluster,
                                                                        Transport, Socket,
                                                                        WorkDir, Client, ClientVer,
-                                                                       BucketFilteringEnabledOnBothSides, SharedBucketList),
+                                                                       FullsyncObjectFilter, FullSyncBucketFilter),
             _ = riak_repl_keylist_server:start_fullsync(FullsyncWorker, [Partition]),
             {reply, ok, State#state{transport=Transport, socket=Socket, cluster=Cluster,
                                     fullsync_worker=FullsyncWorker, work_dir=WorkDir,
@@ -431,7 +434,6 @@ maybe_get_object_filtering_configurations(OurCaps, TheirCaps, Socket, Transport,
 compare_object_filtering_status(OurCaps, TheirCaps, Default) ->
     OurObjectFiltering = proplists:get_value(object_filtering, OurCaps, not_supported),
     TheirObjectFiltering = proplists:get_value(object_filtering, TheirCaps, not_supported),
-%%    lager:error("{~p, ~p}", [OurObjectFiltering, TheirObjectFiltering]),
     case {OurObjectFiltering, TheirObjectFiltering} of
         {{enabled, OurVersion}, {enabled, TheirVersion}} -> {enabled, enabled, lists:min([OurVersion, TheirVersion])};
         {{disabled, OurVersion}, {enabled, TheirVersion}} -> {enabled, disabled, lists:min([OurVersion, TheirVersion])};

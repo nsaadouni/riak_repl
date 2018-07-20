@@ -168,7 +168,9 @@ handle_info(init_ack, State=#state{socket=Socket,
     Strategy = decide_common_strategy(OurCaps, TheirCaps),
     {ObjectFilteringStatus, ObjectFilteringVersion, ObjectFilteringConfig} =
         maybe_get_object_filtering_configurations(OurCaps, TheirCaps, Socket, Transport, Cluster),
-    lager:error("Fullsync: ~p ~p ~p" ,[ObjectFilteringStatus, ObjectFilteringVersion, ObjectFilteringConfig]),
+    FullsyncObjectFilter = {fullsync, ObjectFilteringStatus, ObjectFilteringVersion, ObjectFilteringConfig},
+
+
 
 %% ========================================================================================================= %%
 %% Bucket Filtering (legacy)
@@ -177,6 +179,8 @@ handle_info(init_ack, State=#state{socket=Socket,
 
     %% This is the list of buckets that we need to do bucket filtering with
     SharedBucketList = maybe_exchange_filtered_buckets(BucketFilteringEnabledOnBothSides, Cluster, Socket, Transport),
+
+    FullSyncBucketFilter = {BucketFilteringEnabledOnBothSides, SharedBucketList},
 %% ========================================================================================================= %%
 
     case Strategy of
@@ -186,7 +190,7 @@ handle_info(init_ack, State=#state{socket=Socket,
             {ok, WorkDir} = riak_repl_fsm_common:work_dir(Transport, Socket, Cluster),
             {ok, FullsyncWorker} = riak_repl_keylist_client:start_link(Cluster, Transport,
                                                                        Socket, WorkDir,
-                                                                       BucketFilteringEnabledOnBothSides, SharedBucketList),
+                                                                       FullsyncObjectFilter, FullSyncBucketFilter),
             {noreply, State#state{cluster=Cluster, fullsync_worker=FullsyncWorker, work_dir=WorkDir,
                                   strategy=keylist}};
         aae ->
@@ -312,7 +316,6 @@ maybe_get_object_filtering_configurations(OurCaps, TheirCaps, Socket, Transport,
 compare_object_filtering_status(OurCaps, TheirCaps, Default) ->
     OurObjectFiltering = proplists:get_value(object_filtering, OurCaps, not_supported),
     TheirObjectFiltering = proplists:get_value(object_filtering, TheirCaps, not_supported),
-%%    lager:error("{~p, ~p}", [OurObjectFiltering, TheirObjectFiltering]),
     case {OurObjectFiltering, TheirObjectFiltering} of
         {{enabled, OurVersion}, {enabled, TheirVersion}} -> {enabled, enabled, lists:min([OurVersion, TheirVersion])};
         {{disabled, OurVersion}, {enabled, TheirVersion}} -> {enabled, disabled, lists:min([OurVersion, TheirVersion])};

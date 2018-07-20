@@ -11,7 +11,7 @@
 %% API
 -export([start_link/1,
          stop/1,
-         make_keylist/5,
+         make_keylist/6,
          diff/4,
          diff_stream/5,
          itr_new/2]).
@@ -61,8 +61,8 @@ stop(Pid) ->
 %% Return {ok, Ref} if build starts successfully, then sends
 %% a gen_fsm event {Ref, keylist_built} to the OwnerFsm or
 %% a {Ref, {error, Reason}} event on failures
-make_keylist(Pid, Partition, Filename, FilterEnabled, FilterConfig) ->
-    riak_core_gen_server:call(Pid, {make_keylist, Partition, Filename, FilterEnabled, FilterConfig}, ?LONG_TIMEOUT).
+make_keylist(Pid, Partition, Filename, FilterEnabled, FilterConfig, FullsyncObjectFilter) ->
+    riak_core_gen_server:call(Pid, {make_keylist, Partition, Filename, FilterEnabled, FilterConfig, FullsyncObjectFilter}, ?LONG_TIMEOUT).
    
 %% Computes the difference between two keylist sorted files.
 %% Returns {ok, Ref} or {error, Reason}
@@ -94,7 +94,7 @@ handle_call(stop, _From, State) ->
     _ = file:delete(State#state.filename),
     {stop, normal, ok, State};
 %% request from client of server to write a keylist of hashed key/value to Filename for Partition
-handle_call({make_keylist, Partition, Filename, FilterEnabled, FilterConfig}, From, State) ->
+handle_call({make_keylist, Partition, Filename, FilterEnabled, FilterConfig, FullsyncObjectFilter}, From, State) ->
     Ref = make_ref(),
     riak_core_gen_server:reply(From, {ok, Ref}),
 
@@ -115,7 +115,7 @@ handle_call({make_keylist, Partition, Filename, FilterEnabled, FilterConfig}, Fr
                     Req = case riak_core_capability:get({riak_repl, bloom_fold}, false) of
                         true ->
                             riak_core_util:make_fold_req(fun ?MODULE:keylist_fold/3,
-                                                         {Self, 0, 0, FilterEnabled, FilterConfig},
+                                                         {Self, 0, 0, FilterEnabled, FilterConfig, FullsyncObjectFilter},
                                                          false,
                                                          [{iterator_refresh,
                                                                  true}]);
@@ -400,7 +400,7 @@ missing_key(PBKey, DiffState) ->
 %% modules are not the same.
 %%
 %% See http://www.javalimit.com/2010/05/passing-funs-to-other-erlang-nodes.html
-keylist_fold({B,Key}=K, V, {MPid, Count, Total, FilterEnabled, FilteredBucketsList}) ->
+keylist_fold({B,Key}=K, V, {MPid, Count, Total, FilterEnabled, FilteredBucketsList, FullsyncObjectFilter}) ->
     try
         case should_we_filter(FilterEnabled, B, FilteredBucketsList) of
             true ->
@@ -411,7 +411,7 @@ keylist_fold({B,Key}=K, V, {MPid, Count, Total, FilterEnabled, FilteredBucketsLi
                         ok = riak_core_gen_server:call(MPid, keylist_ack, infinity),
                         {MPid, 0, Total+1, FilterEnabled, FilteredBucketsList};
                     _ ->
-                        {MPid, Count+1, Total+1, FilterEnabled, FilteredBucketsList}
+                        {MPid, Count+1, Total+1, FilterEnabled, FilteredBucketsList, FullsyncObjectFilter}
                 end;
             false ->
                 H = hash_object(B,Key,V),
@@ -424,7 +424,7 @@ keylist_fold({B,Key}=K, V, {MPid, Count, Total, FilterEnabled, FilteredBucketsLi
                         ok = riak_core_gen_server:call(MPid, keylist_ack, infinity),
                         {MPid, 0, Total+1, FilterEnabled, FilteredBucketsList};
                     _ ->
-                        {MPid, Count+1, Total+1, FilterEnabled, FilteredBucketsList}
+                        {MPid, Count+1, Total+1, FilterEnabled, FilteredBucketsList, FullsyncObjectFilter}
                 end
         end
     catch _:_ ->
