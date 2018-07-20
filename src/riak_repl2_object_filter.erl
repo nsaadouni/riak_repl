@@ -13,7 +13,10 @@
     supported_match_types/1,
     get_versioned_config/1,
     get_versioned_config/2,
-    create_config_for_remote_cluster/2
+    create_config_for_remote_cluster/2,
+    get_config/0,
+    get_status/0,
+    get_version/0
 ]).
 
 %% gen_server callbacks
@@ -31,46 +34,36 @@
 -define(CONFIG, app_helper:get_env(riak_repl, object_filtering_config, [])).
 -define(VERSION, app_helper:get_env(riak_repl, object_filtering_version, 0)).
 -define(CLUSTERNAME, app_helper:get_env(riak_repl, clustername, "undefined")).
--define(CURRENT_VERSION, 1.1).
+-define(CURRENT_VERSION, 1.0).
 
 -record(state, {}).
 
 %%%===================================================================
 %%% Macro Helper Functions
 %%%===================================================================
-supported_match_types(1.1) ->
-    [bucket, metadata, key];
+%%supported_match_types(1.1) ->
+%%    [bucket, metadata, key];
 supported_match_types(1.0) ->
     [bucket, metadata];
 supported_match_types(_) ->
     [].
 
-supported_filter_types(1.1) ->
-    supported_filter_types(1.0);
+%%supported_filter_types(1.1) ->
+%%    supported_filter_types(1.0);
 supported_filter_types(1.0) ->
     [blacklist, whitelist];
 supported_filter_types(_) ->
     [].
 
 %%%===================================================================
-%%% API
-%%%===================================================================
-start_link() ->
-    gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
-enable()->
-    gen_server:call(?SERVER, enable).
-disable()->
-    gen_server:call(?SERVER, disable).
-check_config(ConfigFilePath) ->
-    gen_server:call(?SERVER, {check_config, ConfigFilePath}).
-load_config(ConfigFilePath) ->
-    gen_server:call(?SERVER, {load_config, ConfigFilePath}).
-print_config() ->
-    gen_server:call(?SERVER, print_config).
-
-%%%===================================================================
 %%% API (Function Callbacks)
 %%%===================================================================
+get_config() ->
+    get_versioned_config(?VERSION).
+get_status()->
+    ?STATUS.
+get_version() ->
+    ?VERSION.
 get_versioned_config(Version) ->
     get_versioned_config(?CONFIG, Version).
 get_versioned_config(Config, Version) ->
@@ -129,6 +122,21 @@ invert_config_helper(ClusterName, [{{MatchType, MatchValue}, {FilterType, Remote
 
 
 %%%===================================================================
+%%% API
+%%%===================================================================
+start_link() ->
+    gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
+enable()->
+    gen_server:call(?SERVER, enable).
+disable()->
+    gen_server:call(?SERVER, disable).
+check_config(ConfigFilePath) ->
+    gen_server:call(?SERVER, {check_config, ConfigFilePath}).
+load_config(ConfigFilePath) ->
+    gen_server:call(?SERVER, {load_config, ConfigFilePath}).
+print_config() ->
+    gen_server:call(?SERVER, print_config).
+%%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
 init([]) ->
@@ -137,6 +145,7 @@ init([]) ->
     application:set_env(riak_repl, object_filtering_config, Config),
     Version = riak_core_capability:get({riak_repl, object_filtering_version}, 0),
     application:set_env(riak_repl, object_filtering_version, Version),
+    application:set_env(riak_repl, clustername, riak_core_connection:symbolic_clustername()),
     case Version == ?CURRENT_VERSION of
         false ->
             erlang:send_after(5000, self(), poll_core_capability);
@@ -204,8 +213,9 @@ object_filtering_config_file(Action, Path) ->
                     case Action of
                         check -> ok;
                         load ->
-                            riak_core_ring_manager:ring_trans(fun riak_repl_ring:overwrite_object_filtering_config/2, FilteringRules),
-                            application:set_env(riak_repl, object_filtering_config, FilteringRules),
+                            SortedConfig = sort_config(FilteringRules),
+                            riak_core_ring_manager:ring_trans(fun riak_repl_ring:overwrite_object_filtering_config/2, SortedConfig),
+                            application:set_env(riak_repl, object_filtering_config, SortedConfig),
                             ok
                     end;
                 Error2 ->
@@ -216,28 +226,48 @@ object_filtering_config_file(Action, Path) ->
     end.
 
 object_filtering_config() ->
-    lists:flatten(io_lib:format("~p", [{?STATUS, ?CONFIG}])).
+    {print_config, {?VERSION, ?STATUS, ?CONFIG}}.
 
 
-check_filtering_rules([]) -> lists:flatten(io_lib:format("[Object Filtering Version: ~p], Error: No rules are present in the file", [?VERSION]));
+check_filtering_rules([]) -> {error, {no_rules, ?VERSION}};
 check_filtering_rules(FilteringRules) -> check_filtering_rules_helper(FilteringRules, 1).
 check_filtering_rules_helper([], _) -> ok;
-check_filtering_rules_helper([{{MatchType, _MatchValue}, {FilterType, _RemoteNodes}} | RestOfRules], N) ->
-    case lists:member(MatchType, ?SUPPORTED_MATCH_TYPES(?VERSION)) of
-        true ->
-            case lists:member(FilterType, ?SUPPORTED_FILTER_TYPES(?VERSION)) of
-                true ->
-                    check_filtering_rules_helper(RestOfRules, N+1);
-                false ->
-                    FilterTypeError = lists:flatten(io_lib:format("[Object Filtering Version: ~p] Error: [Rule ~p] Filter Type: ~p not supported, only ~p are supported",
-                        [?VERSION, N, FilterType, ?SUPPORTED_FILTER_TYPES(?VERSION)])),
-                    FilterTypeError
-            end;
+check_filtering_rules_helper([{{MatchType, MatchValue}, {FilterType, _RemoteNodes}} | RestOfRules], N) ->
+    case duplicate_rule({MatchType, MatchValue}, RestOfRules) of
         false ->
-            MatchTypeError = lists:flatten(io_lib:format("[Object Filtering Version: ~p] Error: [Rule ~p] Match Type: ~p not supported, only ~p are supported",
-                [?VERSION, N, MatchType, ?SUPPORTED_MATCH_TYPES(?VERSION)])),
-            MatchTypeError
+            case lists:member(MatchType, ?SUPPORTED_MATCH_TYPES(?VERSION)) of
+                true ->
+                    case lists:member(FilterType, ?SUPPORTED_FILTER_TYPES(?VERSION)) of
+                        true ->
+                            check_filtering_rules_helper(RestOfRules, N+1);
+                        false ->
+                            {error, {filter_type, ?VERSION, N, FilterType, ?SUPPORTED_FILTER_TYPES(?VERSION)}}
+                    end;
+                false ->
+                    {error, {match_type, ?VERSION, N, MatchType, ?SUPPORTED_MATCH_TYPES(?VERSION)}}
+            end;
+        true ->
+            {error, {duplicate_rule, ?VERSION, N, MatchType, MatchValue}}
     end.
+
+
+duplicate_rule(Rule, RestOfRules) ->
+    case lists:keyfind(Rule, 1, RestOfRules) of
+        false ->
+            false;
+        _ ->
+            true
+    end.
+
+sort_config(Config) ->
+    sort_config_helper(Config, []).
+sort_config_helper([], Sorted) ->
+    Sorted;
+sort_config_helper([Rule = {_, {blacklist, _}} | Rest], Sorted) ->
+    sort_config_helper(Rest, Sorted++[Rule]);
+sort_config_helper([Rule | Rest], Sorted) ->
+    sort_config_helper(Rest, [Rule]++Sorted).
+
 
 
 

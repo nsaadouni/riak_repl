@@ -1155,21 +1155,47 @@ enable_flag_to_list(_) -> "false".
 %% Object Filtering
 %% ========================================================================================================= %%
 object_filtering_enable([]) ->
-    Reply = riak_repl2_object_filter:enable(),
-    io:format("~p ~n", [Reply]).
+    Response = riak_repl2_object_filter:enable(),
+    decode_response(Response).
 
 object_filtering_disable([]) ->
-    Reply = riak_repl2_object_filter:disable(),
-    io:format("~p ~n", [Reply]).
+    Response = riak_repl2_object_filter:disable(),
+    decode_response(Response).
 
 object_filtering_load_config([ConfigPath]) ->
-    Reply = riak_repl2_object_filter:load_config(ConfigPath),
-    io:format("~p ~n", [Reply]).
+    Response = riak_repl2_object_filter:load_config(ConfigPath),
+    decode_response(Response).
 
 object_filtering_check_config([ConfigPath]) ->
-    Reply = riak_repl2_object_filter:check_config(ConfigPath),
-    io:format("~p ~n", [Reply]).
+    Response = riak_repl2_object_filter:check_config(ConfigPath),
+    decode_response(Response).
 
 object_filtering_print_config([]) ->
-    Reply = riak_repl2_object_filter:print_config(),
-    io:format("~p ~n", [Reply]).
+    Response = riak_repl2_object_filter:print_config(),
+    decode_response(Response).
+
+decode_response(ok) ->
+    io:format("ok ~n");
+decode_response({print_config, {Version, Status, Config}}) ->
+    io:format("Version: ~p ~n", [Version]),
+    io:format("Status: ~p ~n",[Status]),
+    print_config(Config);
+decode_response({error,{duplicate_rule, Version, N, MatchType, MatchValue}}) ->
+    io:format("[Object Filtering Version: ~p] Error: [Rule ~p] Duplicate rule found for: ~p, ~p ~n",
+    [Version, N, MatchType, MatchValue]);
+decode_response({error, {match_type, Version, N, MatchType, SupportedMatchTypes}}) ->
+    io:format("[Object Filtering Version: ~p] Error: [Rule ~p] Match Type: ~p not supported, only ~p are supported ~n",
+    [Version, N, MatchType, SupportedMatchTypes]);
+decode_response({error, {filter_type, Version, N, FilterType, SupportedFilterTypes}}) ->
+    io:format("[Object Filtering Version: ~p] Error: [Rule ~p] Filter Type: ~p not supported, only ~p are supported ~n",
+    [Version, N, FilterType, SupportedFilterTypes]);
+decode_response({error, {no_rules, Version}}) ->
+    io:format("[Object Filtering Version: ~p], Error: No rules are present in the file ~n", [Version]);
+decode_response({error, Error}) ->
+    io:format("File error: ~p ~n", [Error]).
+
+
+print_config([]) -> ok;
+print_config([Rule | Rest]) ->
+    io:format("~p. ~n", [Rule]),
+    print_config(Rest).

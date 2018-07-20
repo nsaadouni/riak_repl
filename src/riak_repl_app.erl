@@ -68,7 +68,7 @@ start(_Type, _StartArgs) ->
         ),
     riak_core_capability:register(
         {riak_repl, object_filtering_version},
-        [1.1, 1.0, 0],
+        [1.0, 0],
         0
     ),
 

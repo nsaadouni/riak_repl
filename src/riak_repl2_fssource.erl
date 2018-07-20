@@ -125,10 +125,19 @@ handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
     OurCaps = decide_our_caps(RequestedStrategy),
     TheirCaps = maybe_exchange_caps(CommonMajor, OurCaps, Socket, Transport),
     Strategy = decide_common_strategy(OurCaps, TheirCaps),
+    {ObjectFilteringStatus, ObjectFilteringVersion, ObjectFilteringConfig} =
+        maybe_get_object_filtering_configurations(OurCaps, TheirCaps, Socket, Transport, Cluster),
+    lager:error("Fullsync: ~p ~p ~p" ,[ObjectFilteringStatus, ObjectFilteringVersion, ObjectFilteringConfig]),
+
+
+%% ========================================================================================================= %%
+%% Bucket Filtering (legacy)
+%% ========================================================================================================= %%
     BucketFilteringEnabledOnBothSides = compare_bucket_filtering_flags(OurCaps, TheirCaps),
 
     %% This is the list of buckets that we need to do bucket filtering with
     SharedBucketList = maybe_exchange_filtered_buckets(BucketFilteringEnabledOnBothSides, Cluster, Socket, Transport),
+%% ========================================================================================================= %%
 
     {_, ClientVer, _} = Proto,
 
@@ -310,7 +319,10 @@ decide_our_caps(RequestedStrategy) ->
             {true, keylist} -> keylist;
             {true, _UnSupportedStrategy} -> RequestedStrategy
         end,
-    [{strategy, SupportedStrategy}, {bucket_filtering, riak_repl_util:bucket_filtering_enabled()}].
+    OFStatus = riak_repl2_object_filter:get_status(),
+    OFVersion = riak_repl2_object_filter:get_version(),
+    ObjectFiltering = {object_filtering, {OFStatus, OFVersion}},
+    [{strategy, SupportedStrategy}, {bucket_filtering, riak_repl_util:bucket_filtering_enabled()}, ObjectFiltering].
 
 %% decide what strategy to use, given our own capabilties and those
 %% of the remote source.
@@ -372,6 +384,9 @@ maybe_soft_exit(Reason, State) ->
             {stop, normal, State}
     end.
 
+%% ========================================================================================================= %%
+%% Bucket Filtering (legacy)
+%% ========================================================================================================= %%
 compare_bucket_filtering_flags(OurCaps, TheirCaps) ->
     OurBucketFilteringState = proplists:get_value(bucket_filtering, OurCaps, false),
     TheirBucketFilteringState = proplists:get_value(bucket_filtering, TheirCaps, false),
@@ -397,3 +412,53 @@ maybe_exchange_filtered_buckets(true, ClusterName, Socket, Transport) ->
     Transport:send(Socket, term_to_binary(BucketsToClusterName)),
     %% is this too lazy?
     lists:usort(BucketsToClusterName ++ TheirConfig).
+
+%% ========================================================================================================= %%
+%% Object Filtering
+%% ========================================================================================================= %%
+maybe_get_object_filtering_configurations(OurCaps, TheirCaps, Socket, Transport, Cluster) ->
+    Default = {disabled, 0},
+    case compare_object_filtering_status(OurCaps, TheirCaps, Default) of
+        {enabled, OurStatus, AgreedVersion} ->
+            AgreedAdditionalConfig = recieve_remote_config(Socket, Transport),
+            ok = send_remote_config(Cluster, AgreedVersion, Transport, Socket),
+            AgreedConfig = decide_on_config(AgreedAdditionalConfig, OurStatus, AgreedVersion),
+            {enabled, AgreedVersion, AgreedConfig};
+        _ ->
+            {disabled, 0, []}
+    end.
+
+compare_object_filtering_status(OurCaps, TheirCaps, Default) ->
+    OurObjectFiltering = proplists:get_value(object_filtering, OurCaps, not_supported),
+    TheirObjectFiltering = proplists:get_value(object_filtering, TheirCaps, not_supported),
+%%    lager:error("{~p, ~p}", [OurObjectFiltering, TheirObjectFiltering]),
+    case {OurObjectFiltering, TheirObjectFiltering} of
+        {{enabled, OurVersion}, {enabled, TheirVersion}} -> {enabled, enabled, lists:min([OurVersion, TheirVersion])};
+        {{disabled, OurVersion}, {enabled, TheirVersion}} -> {enabled, disabled, lists:min([OurVersion, TheirVersion])};
+        {{enabled, OurVersion}, {disabled, TheirVersion}} -> {enabled, enabled, lists:min([OurVersion, TheirVersion])};
+        _ -> Default
+    end.
+
+recieve_remote_config(Socket, Transport) ->
+    case Transport:recv(Socket, 0, ?PEERINFO_TIMEOUT) of
+        {ok, Data} ->
+            binary_to_term(Data);
+        {Error, Socket} ->
+            throw(Error);
+        {Error, Socket, Reason} ->
+            throw({Error, Reason})
+    end.
+
+send_remote_config(Cluster, AgreedVersion, Transport, Socket) ->
+    ConfigForRemote = riak_repl2_object_filter:create_config_for_remote_cluster(Cluster, AgreedVersion),
+    Transport:send(Socket, term_to_binary(ConfigForRemote)),
+    ok.
+
+decide_on_config(AgreedAdditionalConfig, OurStatus, AgreedVersion) ->
+    VersionedConfig = riak_repl2_object_filter:get_versioned_config(AgreedVersion),
+    case OurStatus of
+        enabled ->
+            VersionedConfig ++ AgreedAdditionalConfig;
+        _ ->
+            AgreedAdditionalConfig
+    end.
