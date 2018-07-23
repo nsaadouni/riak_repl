@@ -6,6 +6,7 @@
     start_link/0,
     enable/0,
     disable/0,
+    clear_config/0,
     check_config/1,
     load_config/1,
     print_config/0,
@@ -80,7 +81,9 @@ create_config_for_remote_cluster(ClusterName, AgreedVersion) ->
     Config = get_versioned_config(AgreedVersion),
     invert_config(ClusterName, Config).
 
-allowed_remotes(Remotes, {{whitelist, Whitelist}, {blacklist, Blacklist}}) ->
+allowed_remotes(Remotes, {{whitelist, _}, {blacklist, Blacklist}, {matched_rules, {0,_}}}) ->
+    Remotes -- Blacklist;
+allowed_remotes(Remotes, {{whitelist, Whitelist}, {blacklist, Blacklist}, {matched_rules, {_WN, _BN}}}) ->
     WhitelistedRemotes = sets:to_list(sets:intersection(sets:from_list(Remotes), sets:from_list(Whitelist))),
     WhitelistedRemotes -- Blacklist.
 
@@ -91,9 +94,11 @@ filter({fullsync, enabled, 0, _, _}, _) ->
 filter({fullsync, enabled, Version, Config, RemoteName}, Object) ->
     Bucket = riak_object:bucket(Object),
     Metadatas = riak_object:get_metadatas(Object),
-    FilteredRemotes = filter_helper(Version, Config, {Bucket, Metadatas}, {{whitelist, []}, {blacklist, []}}),
+    FilteredRemotes = filter_helper(Version, Config, {Bucket, Metadatas}, {{whitelist, []}, {blacklist, []}, {matched_rules, {0,0}}}),
     AllowedRemotes = allowed_remotes([RemoteName], FilteredRemotes),
-    lists:member(RemoteName, AllowedRemotes).
+    Result = lists:member(RemoteName, AllowedRemotes),
+    lager:info("fullsync filter ~n [bucket ~p], ~n [metadata ~p], ~n, [allowed remotes ~p], ~n [filtered remotes ~p], ~n -> result ~p", [Bucket, Metadatas, AllowedRemotes, FilteredRemotes, Result]),
+    Result.
 
 
 
@@ -167,10 +172,13 @@ match_metadata(MatchKey, MatchValue, [Dict | Rest]) ->
     end.
 
 
-add_filtered_remote(whitelist, RemoteNodes, {{whitelist, W}, {blacklist, B}}) ->
-    {{whitelist, W++RemoteNodes}, {blacklist, B}};
-add_filtered_remote(blacklist, RemoteNodes, {{whitelist, W}, {blacklist, B}}) ->
-    {{whitelist, W}, {blacklist, B++RemoteNodes}}.
+add_filtered_remote(whitelist, RemoteNodes, {{whitelist, _W}, {blacklist, B}, {matched_rules, {0, BN}}}) ->
+    {{whitelist, RemoteNodes}, {blacklist, B}, {matched_rules, {1, BN}}};
+add_filtered_remote(whitelist, RemoteNodes, {{whitelist, W}, {blacklist, B}, {matched_rules, {WN, BN}}}) ->
+    NewW = sets:to_list(sets:intersection(sets:from_list(RemoteNodes), sets:from_list(W))),
+    {{whitelist, NewW}, {blacklist, B}, {matched_rules, {WN+1, BN}}};
+add_filtered_remote(blacklist, RemoteNodes, {{whitelist, W}, {blacklist, B}, {matched_rules, {WN, BN}}}) ->
+    {{whitelist, W}, {blacklist, B++RemoteNodes}, {matched_rules, {WN, BN+1}}}.
 
 
 
@@ -185,6 +193,8 @@ enable()->
     gen_server:call(?SERVER, enable).
 disable()->
     gen_server:call(?SERVER, disable).
+clear_config() ->
+    gen_server:call(?SERVER, clear_config).
 check_config(ConfigFilePath) ->
     gen_server:call(?SERVER, {check_config, ConfigFilePath}).
 load_config(ConfigFilePath) ->
@@ -219,6 +229,8 @@ handle_call(Request, _From, State) ->
                        object_filtering_config_file(check, Path);
                    {load_config, Path} ->
                        object_filtering_config_file(load, Path);
+                   clear_config ->
+                       object_filtering_clear_config();
                    print_config ->
                        object_filtering_config();
                    _ ->
@@ -282,6 +294,11 @@ object_filtering_config_file(Action, Path) ->
 
 object_filtering_config() ->
     {print_config, {?VERSION, ?STATUS, ?CONFIG}}.
+
+object_filtering_clear_config() ->
+    application:set_env(riak_repl, object_filtering_config, []),
+    riak_core_ring_manager:ring_trans(fun riak_repl_ring:overwrite_object_filtering_config/2, []),
+    ok.
 
 
 check_filtering_rules([]) -> {error, {no_rules, ?VERSION}};

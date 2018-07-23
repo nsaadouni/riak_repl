@@ -49,6 +49,7 @@
 
 -export([object_filtering_enable/1,
          object_filtering_disable/1,
+         object_filtering_clear_config/1,
          object_filtering_load_config/1,
          object_filtering_print_config/1,
          object_filtering_check_config/1]).
@@ -1160,6 +1161,10 @@ object_filtering_enable([]) ->
 
 object_filtering_disable([]) ->
     Response = riak_repl2_object_filter:disable(),
+    decode_response(Response).
+
+object_filtering_clear_config([]) ->
+    Response = riak_repl2_object_filter:clear_config(),
     decode_response(Response).
 
 object_filtering_load_config([ConfigPath]) ->
