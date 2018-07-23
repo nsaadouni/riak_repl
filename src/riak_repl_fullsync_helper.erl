@@ -288,8 +288,7 @@ unpack_key(K) ->
 
 %% Hash an object, making sure the vclock is in sorted order
 %% as it varies depending on whether it has been pruned or not
-hash_object(B,K,RObjBin) ->
-    RObj = riak_object:from_binary(B,K,RObjBin),
+hash_object(RObj) ->
     Vclock = riak_object:vclock(RObj),
     UpdObj = riak_object:set_vclock(RObj, lists:sort(Vclock)),
     %% can't use the new binary version yet
@@ -404,36 +403,28 @@ keylist_fold({B,Key}=K, V, {MPid, Count, Total, FilterEnabled, FilteredBucketsLi
     try
         case should_we_filter(FilterEnabled, B, FilteredBucketsList) of
             true ->
-                % We don't count filtered buckets in the total count
-                case Count of
-                    100 ->
-                        %% send keylist_ack to "self" every 100 key/value hashes
-                        ok = riak_core_gen_server:call(MPid, keylist_ack, infinity),
-                        {MPid, 0, Total+1, FilterEnabled, FilteredBucketsList};
-                    _ ->
-                        {MPid, Count+1, Total+1, FilterEnabled, FilteredBucketsList, FullsyncObjectFilter}
-                end;
+                ok;
             false ->
-                H = hash_object(B,Key,V),
-                Bin = term_to_binary({pack_key(K), H}),
-                %% write key/value hash to file
-                riak_core_gen_server:cast(MPid, {keylist, Bin}),
-                case Count of
-                    100 ->
-                        %% send keylist_ack to "self" every 100 key/value hashes
-                        ok = riak_core_gen_server:call(MPid, keylist_ack, infinity),
-                        {MPid, 0, Total+1, FilterEnabled, FilteredBucketsList};
-                    _ ->
-                        {MPid, Count+1, Total+1, FilterEnabled, FilteredBucketsList, FullsyncObjectFilter}
+                RObj = riak_object:from_binary(B,Key,V),
+                case riak_repl2_object_filter:filter(FullsyncObjectFilter, RObj) of
+                    true ->
+                        H = hash_object(RObj),
+                        Bin = term_to_binary({pack_key(K), H}),
+                        %% write key/value hash to file
+                        riak_core_gen_server:cast(MPid, {keylist, Bin});
+                    false ->
+                        ok
                 end
-        end
+        end,
+        check_keylist_ack(Count, MPid, Total, FilterEnabled, FilteredBucketsList, FullsyncObjectFilter)
     catch _:_ ->
-            {MPid, Count, Total, FilterEnabled, FilteredBucketsList}
+            {MPid, Count, Total, FilterEnabled, FilteredBucketsList, FullsyncObjectFilter}
     end;
 %% legacy support for the 2-tuple accumulator in 1.2.0 and earlier
 keylist_fold({B,Key}=K, V, {MPid, Count}) ->
     try
-        H = hash_object(B, Key, V),
+        RObj = riak_object:from_binary(B,Key,V),
+        H = hash_object(RObj),
         Bin = term_to_binary({pack_key(K), H}),
         %% write key/value hash to file
         riak_core_gen_server:cast(MPid, {keylist, Bin}),
@@ -451,3 +442,13 @@ keylist_fold({B,Key}=K, V, {MPid, Count}) ->
 
 should_we_filter(Enabled, B, BucketsList) ->
     Enabled andalso lists:member(B, BucketsList).
+
+check_keylist_ack(Count, MPid, Total, FilterEnabled, FilteredBucketsList, FullsyncObjectFilter) ->
+    case Count of
+        100 ->
+            %% send keylist_ack to "self" every 100 key/value hashes
+            ok = riak_core_gen_server:call(MPid, keylist_ack, infinity),
+            {MPid, 0, Total+1, FilterEnabled, FilteredBucketsList, FullsyncObjectFilter};
+        _ ->
+            {MPid, Count+1, Total+1, FilterEnabled, FilteredBucketsList, FullsyncObjectFilter}
+    end.

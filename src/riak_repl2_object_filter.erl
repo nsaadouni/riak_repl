@@ -16,7 +16,9 @@
     create_config_for_remote_cluster/2,
     get_config/0,
     get_status/0,
-    get_version/0
+    get_version/0,
+    allowed_remotes/2,
+    filter/2
 ]).
 
 %% gen_server callbacks
@@ -78,6 +80,21 @@ create_config_for_remote_cluster(ClusterName, AgreedVersion) ->
     Config = get_versioned_config(AgreedVersion),
     invert_config(ClusterName, Config).
 
+allowed_remotes(Remotes, {{whitelist, Whitelist}, {blacklist, Blacklist}}) ->
+    WhitelistedRemotes = sets:to_list(sets:intersection(sets:from_list(Remotes), sets:from_list(Whitelist))),
+    WhitelistedRemotes -- Blacklist.
+
+filter({fullsync, disabled, _, _, _}, _) ->
+    false;
+filter({fullsync, enabled, 0, _, _}, _) ->
+    false;
+filter({fullsync, enabled, Version, Config, RemoteName}, Object) ->
+    Bucket = riak_object:bucket(Object),
+    Metadatas = riak_object:get_metadatas(Object),
+    FilteredRemotes = filter_helper(Version, Config, {Bucket, Metadatas}, {{whitelist, []}, {blacklist, []}}),
+    AllowedRemotes = allowed_remotes([RemoteName], FilteredRemotes),
+    lists:member(RemoteName, AllowedRemotes).
+
 
 
 %%%===================================================================
@@ -118,6 +135,44 @@ invert_config_helper(ClusterName, [{{MatchType, MatchValue}, {FilterType, Remote
                     invert_config_helper(ClusterName, Rest, NewConfig)
             end
     end.
+
+filter_helper(0, _Config, {_Bucket, _Metadatas}, FilteredRemotes) ->
+    FilteredRemotes;
+filter_helper(_V, [], _D, FilteredRemotes) ->
+    FilteredRemotes;
+filter_helper(Version, [{{MatchType, MatchValue}, {FilterType, RemoteNodes}} | RestOfRules], Data, FilteredRemotes) ->
+    case does_data_match_rule(MatchType, MatchValue, Data) of
+        true ->
+            NewFilteredRemotes = add_filtered_remote(FilterType, RemoteNodes, FilteredRemotes),
+            filter_helper(Version, RestOfRules, Data, NewFilteredRemotes);
+        false ->
+            filter_helper(Version, RestOfRules, Data, FilteredRemotes)
+    end.
+
+
+
+does_data_match_rule(bucket, MatchBucket, {Bucket, _Metadatas}) ->
+    MatchBucket == Bucket;
+does_data_match_rule(metadata, {MatchKey, MatchValue}, {_Bucket, Metadatas}) ->
+    match_metadata(MatchKey, MatchValue, Metadatas).
+
+match_metadata(_, _, []) ->
+    false;
+match_metadata(MatchKey, MatchValue, [Dict | Rest]) ->
+    case dict:find(MatchKey, Dict) of
+        {ok, MatchValue} ->
+            true;
+        _ ->
+            match_metadata(MatchKey, MatchValue, Rest)
+    end.
+
+
+add_filtered_remote(whitelist, RemoteNodes, {{whitelist, W}, {blacklist, B}}) ->
+    {{whitelist, W++RemoteNodes}, {blacklist, B}};
+add_filtered_remote(blacklist, RemoteNodes, {{whitelist, W}, {blacklist, B}}) ->
+    {{whitelist, W}, {blacklist, B++RemoteNodes}}.
+
+
 
 
 

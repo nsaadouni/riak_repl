@@ -706,48 +706,56 @@ bloom_fold({B, K}, V, {MPid, Bloom, Client, Transport, Socket, 0, WinSz, Fullsyn
     end;
 bloom_fold({{T, B}, K}, V, {MPid, Bloom, Client, Transport, Socket, NSent0, WinSz, FullsyncObjectFilter, {FilterEnabled, FilterConfig}}) ->
     NSent = case (FilterEnabled andalso lists:member(B, FilterConfig)) of
-        true ->
-            % We should be filtering this key, value - do not do bloom check
-            NSent0;
         false ->
-            % We are not filtering this one, continue as normal
             case ebloom:contains(Bloom, <<T/binary, B/binary, K/binary>>) of
                 true ->
                     case (catch riak_object:from_binary({T,B},K,V)) of
                         {'EXIT', _} ->
-                            ok;
+                            NSent0 - 1;
                         RObj ->
-                            gen_fsm:sync_send_event(MPid,
-                                {diff_obj, RObj},
-                                infinity)
-                    end,
-                    NSent0 - 1;
+                            case riak_repl2_object_filter:filter(FullsyncObjectFilter, RObj) of
+                                true ->
+                                    NSent0;
+                                false ->
+                                    gen_fsm:sync_send_event(MPid,
+                                        {diff_obj, RObj},
+                                        infinity),
+                                    NSent0 - 1
+                            end
+                    end;
                 false ->
                     NSent0
-            end
+            end;
+        true ->
+            % We should be filtering this key, value - do not do bloom check
+            NSent0
     end,
     {MPid, Bloom, Client, Transport, Socket, NSent, WinSz, FullsyncObjectFilter, {FilterEnabled, FilterConfig}};
 bloom_fold({B, K}, V, {MPid, Bloom, Client, Transport, Socket, NSent0, WinSz, FullsyncObjectFilter, {FilterEnabled, FilterConfig}}) ->
     NSent = case (FilterEnabled andalso lists:member(B, FilterConfig)) of
-                true ->
-                    % We should be filtering this key, value - do not do bloom check
-                    NSent0;
                 false ->
-                    % We are not filtering this one, continue as normal
                     case ebloom:contains(Bloom, <<B/binary, K/binary>>) of
                         true ->
                             case (catch riak_object:from_binary(B,K,V)) of
                                 {'EXIT', _} ->
-                                    ok;
+                                    NSent0 - 1;
                                 RObj ->
-                                    gen_fsm:sync_send_event(MPid,
-                                        {diff_obj, RObj},
-                                        infinity)
-                            end,
-                            NSent0 - 1;
+                                    case riak_repl2_object_filter:filter(FullsyncObjectFilter, RObj) of
+                                        true ->
+                                            NSent0;
+                                        false ->
+                                            gen_fsm:sync_send_event(MPid,
+                                                {diff_obj, RObj},
+                                                infinity),
+                                            NSent0 - 1
+                                    end
+                            end;
                         false ->
                             NSent0
-                    end
+                    end;
+                true ->
+                    % We should be filtering this key, value - do not do bloom check
+                    NSent0
             end,
     {MPid, Bloom, Client, Transport, Socket, NSent, WinSz, FullsyncObjectFilter, {FilterEnabled, FilterConfig}}.
 

@@ -127,7 +127,7 @@ handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
     Strategy = decide_common_strategy(OurCaps, TheirCaps),
     {ObjectFilteringStatus, ObjectFilteringVersion, ObjectFilteringConfig} =
         maybe_get_object_filtering_configurations(OurCaps, TheirCaps, Socket, Transport, Cluster),
-    FullsyncObjectFilter = {fullsync, ObjectFilteringStatus, ObjectFilteringVersion, ObjectFilteringConfig},
+    FullsyncObjectFilter = {fullsync, ObjectFilteringStatus, ObjectFilteringVersion, ObjectFilteringConfig, Cluster},
 
 
 
