@@ -128,7 +128,6 @@ handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
     {ObjectFilteringStatus, ObjectFilteringVersion, ObjectFilteringConfig} =
         maybe_get_object_filtering_configurations(OurCaps, TheirCaps, Socket, Transport, Cluster),
     FullsyncObjectFilter = {fullsync, ObjectFilteringStatus, ObjectFilteringVersion, ObjectFilteringConfig, Cluster},
-    lager:info("fullsync filter ~p", [FullsyncObjectFilter]),
 
 
 

@@ -100,9 +100,9 @@ filter({fullsync, enabled, Version, Config, RemoteName}, Object) ->
     Metadatas = riak_object:get_metadatas(Object),
     FilteredRemotes = filter_helper(Version, Config, {Bucket, Metadatas}, {{whitelist, []}, {blacklist, []}, {matched_rules, {0,0}}}),
     AllowedRemotes = allowed_remotes([RemoteName], FilteredRemotes),
-    not lists:member(RemoteName, AllowedRemotes).
-
-
+    Result = not lists:member(RemoteName, AllowedRemotes),
+    lager:info("fullsync filter ~n Remote ~p ~n Filterted Remotes ~p ~n Allowed Remotes ~p ~n Result ~p", [RemoteName, FilteredRemotes, AllowedRemotes, Result]),
+    Result.
 
 %%%===================================================================
 %%% API (Function Callbacks) Helper Functions
