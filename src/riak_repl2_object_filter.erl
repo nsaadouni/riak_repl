@@ -313,7 +313,7 @@ check_filtering_rules_helper([{{MatchType, MatchValue}, {FilterType, RemoteNodes
                 true ->
                     case lists:member(FilterType, ?SUPPORTED_FILTER_TYPES(?VERSION)) of
                         true ->
-                            case is_list(RemoteNodes) of
+                            case is_list_of_names(RemoteNodes) of
                                 true ->
                                     check_filtering_rules_helper(RestOfRules, N+1);
                                 false ->
@@ -346,6 +346,17 @@ sort_config_helper([Rule = {_, {blacklist, _}} | Rest], Sorted) ->
     sort_config_helper(Rest, Sorted++[Rule]);
 sort_config_helper([Rule | Rest], Sorted) ->
     sort_config_helper(Rest, [Rule]++Sorted).
+
+is_list_of_names([]) -> false;
+is_list_of_names(Names) -> is_list_of_names_helper(Names).
+is_list_of_names_helper([]) -> true;
+is_list_of_names_helper([Name|Rest]) ->
+    case is_list(Name) of
+        true ->
+            is_list_of_names_helper(Rest);
+        false ->
+            false
+    end.
 
 %% ===================================================================
 %% EUnit tests
