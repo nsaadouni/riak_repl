@@ -1194,6 +1194,9 @@ decode_response({error, {match_type, Version, N, MatchType, SupportedMatchTypes}
 decode_response({error, {filter_type, Version, N, FilterType, SupportedFilterTypes}}) ->
     io:format("[Object Filtering Version: ~p] Error: [Rule ~p] Filter Type: ~p not supported, only ~p are supported ~n",
     [Version, N, FilterType, SupportedFilterTypes]);
+decode_response({error, {filter_value, Version, N, RemoteNodes, SupportedFilterValueTypes}}) ->
+    io:format("[Object Filtering Version: ~p] Error: [Rule ~p] Filter Value: ~p not supported, only ~p are supported ~n",
+        [Version, N, RemoteNodes, SupportedFilterValueTypes]);
 decode_response({error, {no_rules, Version}}) ->
     io:format("[Object Filtering Version: ~p], Error: No rules are present in the file ~n", [Version]);
 decode_response({error, Error}) ->

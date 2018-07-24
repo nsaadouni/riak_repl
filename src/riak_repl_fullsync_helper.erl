@@ -407,12 +407,12 @@ keylist_fold({B,Key}=K, V, {MPid, Count, Total, FilterEnabled, FilteredBucketsLi
             false ->
                 RObj = riak_object:from_binary(B,Key,V),
                 case riak_repl2_object_filter:filter(FullsyncObjectFilter, RObj) of
-                    true ->
+                    false ->
                         H = hash_object(RObj),
                         Bin = term_to_binary({pack_key(K), H}),
                         %% write key/value hash to file
                         riak_core_gen_server:cast(MPid, {keylist, Bin});
-                    false ->
+                    true ->
                         ok
                 end
         end,

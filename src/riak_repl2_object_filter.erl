@@ -1,6 +1,10 @@
 -module(riak_repl2_object_filter).
 -behaviour(gen_server).
 
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
 %% API
 -export([
     start_link/0,
@@ -96,9 +100,7 @@ filter({fullsync, enabled, Version, Config, RemoteName}, Object) ->
     Metadatas = riak_object:get_metadatas(Object),
     FilteredRemotes = filter_helper(Version, Config, {Bucket, Metadatas}, {{whitelist, []}, {blacklist, []}, {matched_rules, {0,0}}}),
     AllowedRemotes = allowed_remotes([RemoteName], FilteredRemotes),
-    Result = lists:member(RemoteName, AllowedRemotes),
-    lager:info("fullsync filter ~n [bucket ~p], ~n [metadata ~p], ~n, [allowed remotes ~p], ~n [filtered remotes ~p], ~n -> result ~p", [Bucket, Metadatas, AllowedRemotes, FilteredRemotes, Result]),
-    Result.
+    not lists:member(RemoteName, AllowedRemotes).
 
 
 
@@ -128,13 +130,13 @@ invert_config_helper(ClusterName, [{{MatchType, MatchValue}, {FilterType, Remote
                 true ->
                     invert_config_helper(ClusterName, Rest, NewConfig);
                 false ->
-                    Rule = [{{MatchType, MatchValue}, {blacklist, ?CLUSTERNAME}}],
+                    Rule = [{{MatchType, MatchValue}, {blacklist, [?CLUSTERNAME]}}],
                     invert_config_helper(ClusterName, Rest, NewConfig++Rule)
             end;
         blacklist ->
             case lists:member(ClusterName, RemoteNodes) of
                 true ->
-                    Rule = [{{MatchType, MatchValue}, {blacklist, ?CLUSTERNAME}}],
+                    Rule = [{{MatchType, MatchValue}, {blacklist, [?CLUSTERNAME]}}],
                     invert_config_helper(ClusterName, Rest, NewConfig++Rule);
                 false ->
                     invert_config_helper(ClusterName, Rest, NewConfig)
@@ -304,14 +306,19 @@ object_filtering_clear_config() ->
 check_filtering_rules([]) -> {error, {no_rules, ?VERSION}};
 check_filtering_rules(FilteringRules) -> check_filtering_rules_helper(FilteringRules, 1).
 check_filtering_rules_helper([], _) -> ok;
-check_filtering_rules_helper([{{MatchType, MatchValue}, {FilterType, _RemoteNodes}} | RestOfRules], N) ->
+check_filtering_rules_helper([{{MatchType, MatchValue}, {FilterType, RemoteNodes}} | RestOfRules], N) ->
     case duplicate_rule({MatchType, MatchValue}, RestOfRules) of
         false ->
             case lists:member(MatchType, ?SUPPORTED_MATCH_TYPES(?VERSION)) of
                 true ->
                     case lists:member(FilterType, ?SUPPORTED_FILTER_TYPES(?VERSION)) of
                         true ->
-                            check_filtering_rules_helper(RestOfRules, N+1);
+                            case is_list(RemoteNodes) of
+                                true ->
+                                    check_filtering_rules_helper(RestOfRules, N+1);
+                                false ->
+                                    {error, {filter_value, ?VERSION, N, RemoteNodes, lists}}
+                            end;
                         false ->
                             {error, {filter_type, ?VERSION, N, FilterType, ?SUPPORTED_FILTER_TYPES(?VERSION)}}
                     end;
@@ -340,9 +347,252 @@ sort_config_helper([Rule = {_, {blacklist, _}} | Rest], Sorted) ->
 sort_config_helper([Rule | Rest], Sorted) ->
     sort_config_helper(Rest, [Rule]++Sorted).
 
+%% ===================================================================
+%% EUnit tests
+%% ===================================================================
+-ifdef(TEST).
+
+object_filter_test() ->
+    {spawn,
+        [setup,
+            fun setup/0,
+            [
+                fun fullsync_filter_test/0,
+                fun fullsync_config_for_remote_cluster_test/0
+            ]
+        ]
+    }.
+
+setup() ->
+    riak_repl_test_util:start_test_ring(),
+    riak_repl_test_util:start_lager().
+
+fullsync_filter_test() ->
+    [fullsync_filter_test(N) || N <- lists:seq(1,3)].
+
+%% Testing Version 0 (for rolling upgrade, no filtering should start)
+fullsync_filter_test(1) ->
+    RObj = riak_object:new(<<"bucket">>, <<"key">>, <<"value">>),
+    Config = [{{bucket, <<"bucket">>}, {whitelist, [remote_name]}}],
+    ?assertEqual(false, filter({fullsync, disabled, 0, [], remote_name}, RObj)),
+    ?assertEqual(false, filter({fullsync, disabled, 0, Config, remote_name}, RObj)),
+    ?assertEqual(false, filter({fullsync, enabled, 0, [], remote_name}, RObj)),
+    ?assertEqual(false, filter({fullsync, enabled, 0, Config, remote_name}, RObj));
+
+%% Testing 1.0 disabled
+fullsync_filter_test(2) ->
+    MetaData = dict:from_list([{filter, test}]),
+    RObj = riak_object:new(<<"bucket">>, <<"key">>, <<"value">>, MetaData),
+    BucketConfig = [{{bucket, <<"bucket">>}, {whitelist, [remote_name]}}],
+    MetaDataConfig = [{{metadata, {filter, test}}, {whitelist, [remote_name]}}],
+    BucketAndMetaDataConfig = BucketConfig ++ MetaDataConfig,
+
+    ?assertEqual(false, filter({fullsync, disabled, 1.0, [], remote_name}, RObj)),
+    ?assertEqual(false, filter({fullsync, disabled, 1.0, BucketConfig, remote_name}, RObj)),
+    ?assertEqual(false, filter({fullsync, disabled, 1.0, MetaDataConfig, remote_name}, RObj)),
+    ?assertEqual(false, filter({fullsync, disabled, 1.0, BucketAndMetaDataConfig, remote_name}, RObj));
+
+%% Testing 1.0 blacklisting and whitelisting
+fullsync_filter_test(3) ->
+    MetaData = dict:from_list([{filter, 1}]),
+    RObj = riak_object:new(<<"bucket-1">>, <<"key">>, <<"value">>, MetaData),
+    AllowBucket1Config = [{{bucket, <<"bucket-1">>}, {whitelist, [remote_name]}}],
+    AllowBucket2Config = [{{bucket, <<"bucket-2">>}, {whitelist, [remote_name]}}],
+    AllowMetaData1Config = [{{metadata, {filter, 1}}, {whitelist, [remote_name]}}],
+    AllowMetaData2Config = [{{metadata, {filter, 2}}, {whitelist, [remote_name]}}],
+    WhitelistBlockBucket1Config = [{{bucket, <<"bucket-1">>}, {whitelist, [anything_other_remote]}}],
+    WhitelistBlockMetaData1Config = [{{metadata, {filter, 1}}, {whitelist, [anything_other_remote]}}],
+    BlacklistAllowBucket1Config = [{{bucket, <<"bucket-1">>}, {blacklist, [anything_other_remote]}}],
+    BlacklistAllowMetaData1Config = [{{metadata, {filter, 1}}, {blacklist, [anything_other_remote]}}],
+    BlacklistBlockBucket1Config = [{{bucket, <<"bucket-1">>}, {blacklist, [remote_name]}}],
+    BlacklistBlockMetaData1Config = [{{metadata, {filter, 1}}, {blacklist, [remote_name]}}],
+    ?assertEqual(false, filter({fullsync, disabled, 1.0, [], remote_name}, RObj)),
+    ?assertEqual(false, filter({fullsync, disabled, 1.0, AllowBucket1Config, remote_name}, RObj)),
+    ?assertEqual(false, filter({fullsync, disabled, 1.0, AllowBucket2Config, remote_name}, RObj)),
+    ?assertEqual(false, filter({fullsync, disabled, 1.0, AllowMetaData1Config, remote_name}, RObj)),
+    ?assertEqual(false, filter({fullsync, disabled, 1.0, AllowMetaData2Config, remote_name}, RObj)),
+    ?assertEqual(false, filter({fullsync, enabled, 1.0, [], remote_name}, RObj)),
+    ?assertEqual(false, filter({fullsync, enabled, 1.0, AllowBucket1Config, remote_name}, RObj)),
+    ?assertEqual(false, filter({fullsync, enabled, 1.0, AllowBucket2Config, remote_name}, RObj)),
+    ?assertEqual(false, filter({fullsync, enabled, 1.0, AllowMetaData1Config, remote_name}, RObj)),
+    ?assertEqual(false, filter({fullsync, enabled, 1.0, AllowMetaData2Config, remote_name}, RObj)),
+    ?assertEqual(true, filter({fullsync, enabled, 1.0, WhitelistBlockBucket1Config, remote_name}, RObj)),
+    ?assertEqual(true, filter({fullsync, enabled, 1.0, WhitelistBlockMetaData1Config, remote_name}, RObj)),
+    ?assertEqual(false, filter({fullsync, enabled, 1.0, BlacklistAllowBucket1Config, remote_name}, RObj)),
+    ?assertEqual(false, filter({fullsync, enabled, 1.0, BlacklistAllowMetaData1Config, remote_name}, RObj)),
+    ?assertEqual(true, filter({fullsync, enabled, 1.0, BlacklistBlockBucket1Config, remote_name}, RObj)),
+    ?assertEqual(true, filter({fullsync, enabled, 1.0, BlacklistBlockMetaData1Config, remote_name}, RObj)).
+
+fullsync_config_for_remote_cluster_test() ->
+    [fullsync_config_for_remote_cluster_test(N) || N <- lists:seq(1,14)].
+
+fullsync_config_for_remote_cluster_test(1) ->
+    RemoteName = test_cluster,
+    SourceConfig = [],
+    ExpectedConfig = [],
+    application:set_env(riak_repl, object_filtering_config, SourceConfig),
+    ?assertEqual(ExpectedConfig, create_config_for_remote_cluster(RemoteName, 1.0));
+fullsync_config_for_remote_cluster_test(2) ->
+    RemoteName = test_cluster,
+    SourceConfig = [{{bucket, <<"bucket">>}, {whitelist, [RemoteName]}}],
+    ExpectedConfig = [],
+    application:set_env(riak_repl, object_filtering_config, SourceConfig),
+    ?assertEqual(ExpectedConfig, create_config_for_remote_cluster(RemoteName, 1.0));
+fullsync_config_for_remote_cluster_test(3) ->
+    RemoteName = test_cluster,
+    SourceName = source_cluster,
+    SourceConfig = [{{bucket, <<"bucket">>}, {whitelist, [any_other_cluster]}}],
+    ExpectedConfig = [{{bucket, <<"bucket">>}, {blacklist, [SourceName]}}],
+    application:set_env(riak_repl, object_filtering_config, SourceConfig),
+    application:set_env(riak_repl, clustername, SourceName),
+    ?assertEqual(ExpectedConfig, create_config_for_remote_cluster(RemoteName, 1.0));
+fullsync_config_for_remote_cluster_test(4) ->
+    RemoteName = test_cluster,
+    SourceName = source_cluster,
+    SourceConfig = [{{bucket, <<"bucket">>}, {blacklist, [RemoteName]}}],
+    ExpectedConfig = [{{bucket, <<"bucket">>}, {blacklist, [SourceName]}}],
+    application:set_env(riak_repl, object_filtering_config, SourceConfig),
+    application:set_env(riak_repl, clustername, SourceName),
+    ?assertEqual(ExpectedConfig, create_config_for_remote_cluster(RemoteName, 1.0));
+fullsync_config_for_remote_cluster_test(5) ->
+    RemoteName = test_cluster,
+    SourceName = source_cluster,
+    SourceConfig = [{{bucket, <<"bucket">>}, {blacklist, [any_other_cluster]}}],
+    ExpectedConfig = [],
+    application:set_env(riak_repl, object_filtering_config, SourceConfig),
+    application:set_env(riak_repl, clustername, SourceName),
+    ?assertEqual(ExpectedConfig, create_config_for_remote_cluster(RemoteName, 1.0));
+fullsync_config_for_remote_cluster_test(6) ->
+    RemoteName = test_cluster,
+    SourceName = source_cluster,
+    SourceConfig =
+        [
+            {{bucket, <<"bucket-1">>}, {blacklist, [RemoteName]}},
+            {{bucket, <<"bucket-2">>}, {whitelist, [any_other_cluster]}}
+
+        ],
+    ExpectedConfig = [],
+    application:set_env(riak_repl, object_filtering_config, SourceConfig),
+    application:set_env(riak_repl, object_filtering_version, 1.0),
+    application:set_env(riak_repl, clustername, SourceName),
+    ?assertEqual(ExpectedConfig, create_config_for_remote_cluster(RemoteName, 0));
+fullsync_config_for_remote_cluster_test(7) ->
+    RemoteName = test_cluster,
+    SourceName = source_cluster,
+    SourceConfig =
+        [
+            {{bucket, <<"bucket-1">>}, {blacklist, [RemoteName]}},
+            {{bucket, <<"bucket-2">>}, {whitelist, [any_other_cluster]}}
+
+        ],
+    ExpectedConfig =
+        [
+            {{bucket, <<"bucket-1">>}, {blacklist, [SourceName]}},
+            {{bucket, <<"bucket-2">>}, {blacklist, [SourceName]}}
+
+        ],
+    application:set_env(riak_repl, object_filtering_config, SourceConfig),
+    application:set_env(riak_repl, object_filtering_version, 1.0),
+    application:set_env(riak_repl, clustername, SourceName),
+    ?assertEqual(ExpectedConfig, create_config_for_remote_cluster(RemoteName, 1.0));
+
+%% ================================================================================================== %%
+
+fullsync_config_for_remote_cluster_test(8) ->
+    RemoteName = test_cluster,
+    SourceConfig = [{{metadata, {filter, test}}, {whitelist, [RemoteName]}}],
+    ExpectedConfig = [],
+    application:set_env(riak_repl, object_filtering_config, SourceConfig),
+    ?assertEqual(ExpectedConfig, create_config_for_remote_cluster(RemoteName, 1.0));
+fullsync_config_for_remote_cluster_test(9) ->
+    RemoteName = test_cluster,
+    SourceName = source_cluster,
+    SourceConfig = [{{metadata, {filter, test}}, {whitelist, [any_other_cluster]}}],
+    ExpectedConfig = [{{metadata, {filter, test}}, {blacklist, [SourceName]}}],
+    application:set_env(riak_repl, object_filtering_config, SourceConfig),
+    application:set_env(riak_repl, clustername, SourceName),
+    ?assertEqual(ExpectedConfig, create_config_for_remote_cluster(RemoteName, 1.0));
+fullsync_config_for_remote_cluster_test(10) ->
+    RemoteName = test_cluster,
+    SourceName = source_cluster,
+    SourceConfig = [{{metadata, {filter, test}}, {blacklist, [RemoteName]}}],
+    ExpectedConfig = [{{metadata, {filter, test}}, {blacklist, [SourceName]}}],
+    application:set_env(riak_repl, object_filtering_config, SourceConfig),
+    application:set_env(riak_repl, clustername, SourceName),
+    ?assertEqual(ExpectedConfig, create_config_for_remote_cluster(RemoteName, 1.0));
+fullsync_config_for_remote_cluster_test(11) ->
+    RemoteName = test_cluster,
+    SourceName = source_cluster,
+    SourceConfig = [{{metadata, {filter, test}}, {blacklist, [any_other_cluster]}}],
+    ExpectedConfig = [],
+    application:set_env(riak_repl, object_filtering_config, SourceConfig),
+    application:set_env(riak_repl, clustername, SourceName),
+    ?assertEqual(ExpectedConfig, create_config_for_remote_cluster(RemoteName, 1.0));
+fullsync_config_for_remote_cluster_test(12) ->
+    RemoteName = test_cluster,
+    SourceName = source_cluster,
+    SourceConfig =
+        [
+            {{metadata, {filter, test_1}}, {blacklist, [RemoteName]}},
+            {{metadata, {filter, test_2}}, {whitelist, [any_other_cluster]}}
+
+        ],
+    ExpectedConfig = [],
+    application:set_env(riak_repl, object_filtering_config, SourceConfig),
+    application:set_env(riak_repl, object_filtering_version, 1.0),
+    application:set_env(riak_repl, clustername, SourceName),
+    ?assertEqual(ExpectedConfig, create_config_for_remote_cluster(RemoteName, 0));
+fullsync_config_for_remote_cluster_test(13) ->
+    RemoteName = test_cluster,
+    SourceName = source_cluster,
+    SourceConfig =
+        [
+            {{metadata, {filter, test_1}}, {blacklist, [RemoteName]}},
+            {{metadata, {filter, test_2}}, {whitelist, [any_other_cluster]}}
+
+        ],
+    ExpectedConfig =
+        [
+            {{metadata, {filter, test_1}}, {blacklist, [SourceName]}},
+            {{metadata, {filter, test_2}}, {blacklist, [SourceName]}}
+
+        ],
+    application:set_env(riak_repl, object_filtering_config, SourceConfig),
+    application:set_env(riak_repl, object_filtering_version, 1.0),
+    application:set_env(riak_repl, clustername, SourceName),
+    ?assertEqual(ExpectedConfig, create_config_for_remote_cluster(RemoteName, 1.0));
+
+%% ================================================================================================== %%
+
+fullsync_config_for_remote_cluster_test(14) ->
+    RemoteName = test_cluster,
+    SourceName = source_cluster,
+    SourceConfig =
+        [
+            {{bucket, <<"bucket-1">>}, {blacklist, [any_other_cluster, RemoteName, another_cluster]}},
+            {{bucket, <<"bucket-2">>}, {blacklist, [any_other_cluster, another_cluster]}},
+            {{bucket, <<"bucket-3">>}, {whitelist, [any_other_cluster, RemoteName, another_cluster]}},
+            {{bucket, <<"bucket-4">>}, {whitelist, [any_other_cluster, another_cluster]}},
+            {{metadata, {filter, test_1}}, {blacklist, [any_other_cluster, RemoteName, another_cluster]}},
+            {{metadata, {filter, test_2}}, {blacklist, [any_other_cluster, another_cluster]}},
+            {{metadata, {filter, test_3}}, {whitelist, [any_other_cluster, RemoteName, another_cluster]}},
+            {{metadata, {filter, test_4}}, {whitelist, [any_other_cluster, another_cluster]}}
+
+        ],
+    ExpectedConfig =
+        [
+            {{bucket, <<"bucket-1">>}, {blacklist, [SourceName]}},
+            {{bucket, <<"bucket-4">>}, {blacklist, [SourceName]}},
+            {{metadata, {filter, test_1}}, {blacklist, [SourceName]}},
+            {{metadata, {filter, test_4}}, {blacklist, [SourceName]}}
+
+
+        ],
+    application:set_env(riak_repl, object_filtering_config, SourceConfig),
+    application:set_env(riak_repl, object_filtering_version, 1.0),
+    application:set_env(riak_repl, clustername, SourceName),
+    ?assertEqual(ExpectedConfig, create_config_for_remote_cluster(RemoteName, 1.0)).
 
 
 
-
-
-
+-endif.
