@@ -49,7 +49,7 @@
         skipping=false,
         bucket_filtering_config = [],
         bucket_filtering_enabled = false,
-        fullsync_object_filter = {fullsync, disabled, 0, []}
+        fullsync_object_filter = {fullsync, disabled, 0, [], "undefiend"}
     }).
 
 start_link(SiteName, Transport, Socket, WorkDir, FullsyncObjectFilter, {FilterEnabled, FilterConfig}) ->

@@ -139,7 +139,7 @@ handle_call({make_keylist, Partition, Filename, FilterEnabled, FilterConfig, Ful
                                     %% total is 0, sorry
                                     riak_core_gen_server:cast(Self,
                                                               {kl_finish, 0});
-                                {FoldRef, {Self, _, Total, _, _}} ->
+                                {FoldRef, {Self, _Count, Total, _FilterEnabled, _FilterConfig, _FullsyncObjectFilter}} ->
                                     riak_core_gen_server:cast(Self,
                                                               {kl_finish, Total});
                                 {'DOWN', MonRef, process, VNodePid, Reason} ->
