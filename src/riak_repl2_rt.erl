@@ -245,7 +245,9 @@ do_ring_trans(F, A) ->
     end.
 
 set_bucket_meta(Obj) ->
-    M = orddict:new(),
+    M0 = orddict:new(),
+    ObjectFilteringRules = riak_repl2_object_filter:get_filter_rules(Obj),
+    M = orddict:store(?BT_OBJECT_FILTERING_RULES, ObjectFilteringRules, M0),
     case riak_object:bucket(Obj) of
         {Type, B} ->
             PropsHash = riak_repl_bucket_type_util:property_hash(Type),

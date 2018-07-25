@@ -177,4 +177,6 @@ merge_forwards_and_routed_meta({_, _, _, Meta} = QEntry, Remote) ->
     Meta2 = orddict:erase(local_forwards, Meta),
     Routed2 = lists:usort(Routed ++ LocalForwards ++ [Self]),
     Meta3 = orddict:store(routed_clusters, Routed2, Meta2),
-    setelement(4, QEntry, Meta3).
+    Meta4 = orddict:erase(?BT_OBJECT_FILTERING_RULES, Meta3),
+    setelement(4, QEntry, Meta4).
+

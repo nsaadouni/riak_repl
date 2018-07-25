@@ -1,4 +1,5 @@
 -module(riak_repl2_object_filter).
+-include("riak_repl.hrl").
 -behaviour(gen_server).
 
 -ifdef(TEST).
@@ -13,18 +14,18 @@
     clear_config/0,
     check_config/1,
     load_config/1,
-    print_config/0,
-    supported_filter_types/1,
-    supported_match_types/1,
+    print_config/0]).
+
+-export([
     get_versioned_config/1,
     get_versioned_config/2,
     create_config_for_remote_cluster/2,
     get_config/0,
     get_status/0,
     get_version/0,
-    allowed_remotes/2,
-    filter/2
-]).
+    get_filter_rules/1,
+    filter/2,
+    filter/3]).
 
 %% gen_server callbacks
 -export([init/1,
@@ -42,6 +43,8 @@
 -define(VERSION, app_helper:get_env(riak_repl, object_filtering_version, 0)).
 -define(CLUSTERNAME, app_helper:get_env(riak_repl, clustername, "undefined")).
 -define(CURRENT_VERSION, 1.0).
+
+-define(DEFAULT_FILTERING_RULES, {{whitelist, []}, {blacklist, []}, {matched_rules, {0,0}}}).
 
 -record(state, {}).
 
@@ -85,22 +88,29 @@ create_config_for_remote_cluster(ClusterName, AgreedVersion) ->
     Config = get_versioned_config(AgreedVersion),
     invert_config(ClusterName, Config).
 
-allowed_remotes(Remotes, {{whitelist, _}, {blacklist, Blacklist}, {matched_rules, {0,_}}}) ->
-    Remotes -- Blacklist;
-allowed_remotes(Remotes, {{whitelist, Whitelist}, {blacklist, Blacklist}, {matched_rules, {_WN, _BN}}}) ->
-    WhitelistedRemotes = sets:to_list(sets:intersection(sets:from_list(Remotes), sets:from_list(Whitelist))),
-    WhitelistedRemotes -- Blacklist.
+get_filter_rules(Object) ->
+    case ?STATUS of
+        enabled ->
+            Bucket = riak_object:bucket(Object),
+            Metadatas = riak_object:get_metadatas(Object),
+            filter_helper(?VERSION, ?CONFIG, {Bucket, Metadatas}, ?DEFAULT_FILTERING_RULES);
+        disabled ->
+            ?DEFAULT_FILTERING_RULES
+    end.
 
-filter({fullsync, disabled, _, _, _}, _) ->
+filter({fullsync, disabled, _Version, _Config, _RemoteName}, _Object) ->
     false;
-filter({fullsync, enabled, 0, _, _}, _) ->
+filter({fullsync, enabled, 0, _Config, _RemoteName}, _Object) ->
     false;
 filter({fullsync, enabled, Version, Config, RemoteName}, Object) ->
     Bucket = riak_object:bucket(Object),
     Metadatas = riak_object:get_metadatas(Object),
-    FilteredRemotes = filter_helper(Version, Config, {Bucket, Metadatas}, {{whitelist, []}, {blacklist, []}, {matched_rules, {0,0}}}),
+    FilteredRemotes = filter_helper(Version, Config, {Bucket, Metadatas}, ?DEFAULT_FILTERING_RULES),
     AllowedRemotes = allowed_remotes([RemoteName], FilteredRemotes),
     not lists:member(RemoteName, AllowedRemotes).
+
+filter(realtime, RemoteName, Meta) ->
+    realtime_filter(?STATUS, RemoteName, Meta).
 
 %%%===================================================================
 %%% API (Function Callbacks) Helper Functions
@@ -180,9 +190,26 @@ add_filtered_remote(whitelist, RemoteNodes, {{whitelist, W}, {blacklist, B}, {ma
 add_filtered_remote(blacklist, RemoteNodes, {{whitelist, W}, {blacklist, B}, {matched_rules, {WN, BN}}}) ->
     {{whitelist, W}, {blacklist, B++RemoteNodes}, {matched_rules, {WN, BN+1}}}.
 
+allowed_remotes(Remotes, ?DEFAULT_FILTERING_RULES) ->
+    Remotes;
+allowed_remotes(Remotes, {{whitelist, []}, {blacklist, Blacklist}, {matched_rules, {0,_}}}) ->
+    Remotes -- Blacklist;
+allowed_remotes(Remotes, {{whitelist, Whitelist}, {blacklist, []}, {matched_rules, {_, 0}}}) ->
+    sets:to_list(sets:intersection(sets:from_list(Remotes), sets:from_list(Whitelist)));
+allowed_remotes(Remotes, {{whitelist, Whitelist}, {blacklist, Blacklist}, {matched_rules, {_WN, _BN}}}) ->
+    WhitelistedRemotes = sets:to_list(sets:intersection(sets:from_list(Remotes), sets:from_list(Whitelist))),
+    WhitelistedRemotes -- Blacklist.
 
-
-
+realtime_filter(enabled, RemoteName, Meta) ->
+    case orddict:find(?BT_OBJECT_FILTERING_RULES, Meta) of
+        {ok, ObjectFilteringRules} ->
+            AllowedRemotes = allowed_remotes([RemoteName], ObjectFilteringRules),
+            not lists:member(RemoteName, AllowedRemotes);
+        _ ->
+            false
+    end;
+realtime_filter(disabled, _, _) ->
+    false.
 
 %%%===================================================================
 %%% API

@@ -616,11 +616,15 @@ push(NumItems, Bin, Meta, State = #state{qtab = QTab,
 
     AllConsumers = [Consumer#c.name || Consumer <- Cs],
 
-    BlacklistedRemotes = config_for_bucket(BucketName, FilteredBucketConfig),
-    FilteredConsumers = filter_consumers(FEnabled, AllConsumers, BlacklistedRemotes),
-    QEntry2 = set_local_forwards_meta(FilteredConsumers, QEntry),
+%% ========================================================================================================= %%
+%% Bucket Filtering (legacy)
+%% ========================================================================================================= %%
+    BFBlacklistedRemotes = config_for_bucket(BucketName, FilteredBucketConfig),
+    BFFilteredConsumers = filter_consumers(FEnabled, AllConsumers, BFBlacklistedRemotes),
+    QEntry2 = set_local_forwards_meta(BFFilteredConsumers, QEntry),
+%% ========================================================================================================= %%
 
-    DeliverAndCs2 = [maybe_deliver_item(C, QEntry2, FEnabled, BlacklistedRemotes) || C <- Cs],
+    DeliverAndCs2 = [maybe_deliver_item(C, QEntry2, FEnabled, BFBlacklistedRemotes) || C <- Cs],
     DeliverAndCs3 = update_consumer_delivery_funs(DeliverAndCs2),
     {DeliverResults, Cs3} = lists:unzip(DeliverAndCs3),
     AllSkipped = lists:all(fun
@@ -628,7 +632,7 @@ push(NumItems, Bin, Meta, State = #state{qtab = QTab,
         (_) -> false
     end, DeliverResults),
     State2 = if
-        AllSkipped andalso length(FilteredConsumers) > 0 ->
+        AllSkipped andalso length(BFFilteredConsumers) > 0 ->
             State;
         true ->
             ets:insert(QTab, QEntry2),
@@ -731,25 +735,42 @@ maybe_pull(QTab, QSeq, C = #c{cseq = CSeq, name = CName}, CsNames, DeliverFun, F
             save_consumer(C, DeliverFun)
     end.
 
+filter({Enabled, Name, BlacklistRemotes}, {ConsumerName, Meta}) ->
+    case riak_repl2_object_filter:filter(realtime, ConsumerName, Meta) of
+        true ->
+            filtered;
+        false ->
+            bucket_filter_if_enabled(Enabled, Name, BlacklistRemotes)
+    end.
+
 % We can't filter if bucket filtering is disabled or if the bucket config is undefined
-filter_if_enabled(true, Name, BlacklistedRemotes) ->
+bucket_filter_if_enabled(true, Name, BlacklistedRemotes) ->
     case consumer_not_blacklisted(Name, BlacklistedRemotes) of
         true -> no_fun;
         false -> filtered
     end;
-filter_if_enabled(_, _, _) ->
+bucket_filter_if_enabled(_, _, _) ->
     no_fun.
 
-deliver_if_can_route(false, Consumer, QEntry, _BlacklistedRemotes) ->
+deliver_if_can_route({FilteringEnabled, BlacklistedRemotes}, Consumer, QEntry) ->
+    {Seq, _NumItem, _Bin, Meta} = QEntry,
+    case riak_repl2_object_filter:filter(realtime, Consumer#c.name, Meta) of
+        true ->
+            {filtered, Consumer#c{cseq = Seq, aseq = Seq, filtered = Consumer#c.filtered + 1, delivered = true, skips=0}};
+        false ->
+            bucket_filtering_deliver_if_can_route(FilteringEnabled, Consumer, QEntry, BlacklistedRemotes)
+    end.
+
+bucket_filtering_deliver_if_can_route(false, Consumer, QEntry, _BlacklistedRemotes) ->
     {delivered, deliver_item(Consumer, Consumer#c.deliver, QEntry)};
-deliver_if_can_route(true, Consumer, {Seq, _NumItem, _Bin, _Meta} = QEntry, BlacklistedRemotes) ->
+bucket_filtering_deliver_if_can_route(true, Consumer, {Seq, _NumItem, _Bin, _Meta} = QEntry, BlacklistedRemotes) ->
     case consumer_not_blacklisted(Consumer#c.name, BlacklistedRemotes) of
         true ->
             {delivered, deliver_item(Consumer, Consumer#c.deliver, QEntry)};
         false ->
             {filtered, Consumer#c{cseq = Seq, aseq = Seq, filtered = Consumer#c.filtered + 1, delivered = true, skips=0}}
     end;
-deliver_if_can_route(_, Consumer, QEntry, _BlacklistedRemotes) ->
+bucket_filtering_deliver_if_can_route(_, Consumer, QEntry, _BlacklistedRemotes) ->
     {delivered, deliver_item(Consumer, Consumer#c.deliver, QEntry)}.
 
 maybe_deliver_item(C = #c{deliver = undefined}, QEntry, FilteringEnabled, BlacklistedRemotes) ->
@@ -764,7 +785,7 @@ maybe_deliver_item(C = #c{deliver = undefined}, QEntry, FilteringEnabled, Blackl
         true ->
             skipped;
         false ->
-            filter_if_enabled(FilteringEnabled, Name, BlacklistedRemotes)
+            filter({FilteringEnabled, Name, BlacklistedRemotes}, {C#c.name, Meta})
     end,
     {Cause, C};
 maybe_deliver_item(C, QEntry, FilteringEnabled, BlacklistedRemotes) ->
@@ -781,7 +802,7 @@ maybe_deliver_item(C, QEntry, FilteringEnabled, BlacklistedRemotes) ->
         true ->
             {skipped, C#c{cseq = Seq, aseq = Seq}};
         false ->
-            deliver_if_can_route(FilteringEnabled, C, QEntry, BlacklistedRemotes)
+            deliver_if_can_route({FilteringEnabled, BlacklistedRemotes}, C, QEntry)
     end.
 
 deliver_item(C, DeliverFun, {Seq, _NumItem, _Bin, _Meta} = QEntry) ->

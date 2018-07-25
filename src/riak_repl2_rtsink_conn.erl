@@ -311,9 +311,11 @@ maybe_push(Binary, Meta) ->
             ok;
         always ->
           lager:debug("app env either set to always, or in default; doing cascade"),
-          List = riak_repl_util:from_wire(Binary),
+          Object = riak_repl_util:from_wire(Binary),
+          ObjectFilteringRules = riak_repl2_object_filter:get_filter_rules(Object),
           Meta2 = orddict:erase(skip_count, Meta),
-          riak_repl2_rtq:push(length(List), Binary, Meta2)
+          Meta3 = orddict:store(?BT_OBJECT_FILTERING_RULES, ObjectFilteringRules, Meta2),
+          riak_repl2_rtq:push(length(Object), Binary, Meta3)
     end.
 
 %% Note match on Seq
