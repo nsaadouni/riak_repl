@@ -979,10 +979,7 @@ from_wire(w2, BinObjList) ->
 from_wire(<<131, _Rest/binary>>=BinObjTerm) ->
     binary_to_term(BinObjTerm);
 %% @doc Convert from wire version w2, which has bucket type information
-from_wire(<<?MAGIC:8/integer, ?W2_VER:8/integer,
-            TLen:32/integer, T:TLen/binary,
-            BLen:32/integer, B:BLen/binary,
-            KLen:32/integer, K:KLen/binary, BinObj/binary>>) ->
+from_wire(<<?MAGIC:8/integer, ?W2_VER:8/integer, TLen:32/integer, T:TLen/binary, BLen:32/integer, B:BLen/binary, KLen:32/integer, K:KLen/binary, BinObj/binary>>) ->
     case T of
         <<>> ->
             riak_object:from_binary(B, K, BinObj);

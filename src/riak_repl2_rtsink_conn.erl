@@ -291,31 +291,33 @@ recv(TcpBin, State = #state{transport = T, socket = S}) ->
             recv(Cont, do_write_objects(Seq, {BinObjs, Meta}, State))
     end.
 
-make_donefun({Binary, Meta}, Me, Ref, Seq) ->
+make_donefun({Binary, Meta}, Me, Ref, Seq, Ver) ->
     Done = fun() ->
         Skips = orddict:fetch(skip_count, Meta),
         gen_server:cast(Me, {ack, Ref, Seq, Skips}),
-        maybe_push(Binary, Meta)
+        maybe_push(Binary, Meta, Ver)
     end,
     {Done, Binary, Meta};
-make_donefun(Binary, Me, Ref, Seq) when is_binary(Binary) ->
+make_donefun(Binary, Me, Ref, Seq, _Ver) when is_binary(Binary) ->
     Done = fun() ->
         gen_server:cast(Me, {ack, Ref, Seq, 0})
     end,
     {Done, Binary}.
 
-maybe_push(Binary, Meta) ->
+maybe_push(Binary, Meta, Ver) ->
     case app_helper:get_env(riak_repl, realtime_cascades, always) of
         never ->
             lager:debug("Skipping cascade due to app env setting"),
             ok;
         always ->
           lager:debug("app env either set to always, or in default; doing cascade"),
-          Object = riak_repl_util:from_wire(Binary),
+          BinaryObject = riak_repl_util:from_wire(Binary),
+          Object = riak_repl_util:from_wire(Binary, Ver),
+          lager:error("object filtering maybe push ~p", [Object]),
           ObjectFilteringRules = riak_repl2_object_filter:get_filter_rules(Object),
           Meta2 = orddict:erase(skip_count, Meta),
           Meta3 = orddict:store(?BT_OBJECT_FILTERING_RULES, ObjectFilteringRules, Meta2),
-          riak_repl2_rtq:push(length(Object), Binary, Meta3)
+          riak_repl2_rtq:push(length(BinaryObject), Binary, Meta3)
     end.
 
 %% Note match on Seq
@@ -326,7 +328,7 @@ do_write_objects(Seq, BinObjsMeta, State = #state{max_pending = MaxPending,
                                               acked_seq = AckedSeq,
                                               ver = Ver}) ->
     Me = self(),
-    case make_donefun(BinObjsMeta, Me, Ref, Seq) of
+    case make_donefun(BinObjsMeta, Me, Ref, Seq, Ver) of
         {DoneFun, BinObjs, Meta} ->
             case riak_repl_bucket_type_util:bucket_props_match(Meta) of
                 true ->
