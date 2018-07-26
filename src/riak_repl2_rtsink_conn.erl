@@ -291,34 +291,40 @@ recv(TcpBin, State = #state{transport = T, socket = S}) ->
             recv(Cont, do_write_objects(Seq, {BinObjs, Meta}, State))
     end.
 
-make_donefun({Binary, Meta}, Me, Ref, Seq, Ver) ->
-    Done = fun() ->
+make_donefun({Binary, Meta}, Me, Ref, Seq) ->
+    Done = fun(ObjectFilteringRules) ->
         Skips = orddict:fetch(skip_count, Meta),
         gen_server:cast(Me, {ack, Ref, Seq, Skips}),
-        maybe_push(Binary, Meta, Ver)
+        maybe_push(Binary, Meta, ObjectFilteringRules)
     end,
     {Done, Binary, Meta};
-make_donefun(Binary, Me, Ref, Seq, _Ver) when is_binary(Binary) ->
-    Done = fun() ->
+make_donefun(Binary, Me, Ref, Seq) when is_binary(Binary) ->
+    Done = fun(_ObjectFiltering) ->
         gen_server:cast(Me, {ack, Ref, Seq, 0})
     end,
     {Done, Binary}.
 
-maybe_push(Binary, Meta, Ver) ->
+maybe_push(Binary, Meta, ObjectFilteringRules) ->
     case app_helper:get_env(riak_repl, realtime_cascades, always) of
         never ->
             lager:debug("Skipping cascade due to app env setting"),
             ok;
         always ->
           lager:debug("app env either set to always, or in default; doing cascade"),
-          BinaryObject = riak_repl_util:from_wire(Binary),
-          Object = riak_repl_util:from_wire(Binary, Ver),
-          lager:error("object filtering maybe push ~p", [Object]),
-          ObjectFilteringRules = riak_repl2_object_filter:get_filter_rules(Object),
+          List = riak_repl_util:from_wire(Binary),
           Meta2 = orddict:erase(skip_count, Meta),
-          Meta3 = orddict:store(?BT_OBJECT_FILTERING_RULES, ObjectFilteringRules, Meta2),
-          riak_repl2_rtq:push(length(BinaryObject), Binary, Meta3)
+          Meta3 = add_object_filtering_rules_to_meta(Meta2, ObjectFilteringRules),
+          riak_repl2_rtq:push(length(List), Binary, Meta3)
     end.
+
+add_object_filtering_rules_to_meta(Meta, []) ->
+    lager:error("object filtering rules failed to return the default"),
+    Meta;
+add_object_filtering_rules_to_meta(Meta, [Rules]) ->
+    orddict:store(?BT_OBJECT_FILTERING_RULES, Rules, Meta);
+add_object_filtering_rules_to_meta(Meta, [_Rules | _Rest]) ->
+    lager:error("object filtering, repl binary has more than one object!"),
+    Meta.
 
 %% Note match on Seq
 do_write_objects(Seq, BinObjsMeta, State = #state{max_pending = MaxPending,
@@ -328,7 +334,7 @@ do_write_objects(Seq, BinObjsMeta, State = #state{max_pending = MaxPending,
                                               acked_seq = AckedSeq,
                                               ver = Ver}) ->
     Me = self(),
-    case make_donefun(BinObjsMeta, Me, Ref, Seq, Ver) of
+    case make_donefun(BinObjsMeta, Me, Ref, Seq) of
         {DoneFun, BinObjs, Meta} ->
             case riak_repl_bucket_type_util:bucket_props_match(Meta) of
                 true ->
